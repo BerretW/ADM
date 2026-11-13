@@ -68,6 +68,22 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
 
 Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `referenceCorrection` and `rigId`. It is blocked only by structural errors (missing or duplicate roles, wrong hierarchy). Pose deviations only warn. Open spec questions are listed in [SPEC_GAPS.md](../adm-standard/SPEC_GAPS.md).
 
+### Material textures (Sollumz-style)
+
+The material panel (Properties › Material › ADM, and the sidebar Shaders tab) has a **Texture Parameters**
+box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlusion and Emissive.
+
+- Empty slot: pick an existing image, create a **New** one or **Open** a file. The colour space is set
+  automatically (sRGB for colour, Non-Color for data maps).
+- Filled slot: swap or reload the image, choose **UV0/UV1**, interpolation and extension, and edit
+  slot extras (Alpha From Texture, normal Scale, occlusion strength, emission strength).
+  **X** removes the texture and keeps the factor values.
+- The slots edit the same node chain the exporter traces, so nothing new is stored in the file.
+  Hand-built node setups are shown as *custom node setup* and are never overwritten.
+- For custom shaders, the box is the portable PBR fallback. Shader parameters of type `TEXTURE` are
+  listed separately under **Shader Texture Parameters**. Picking a custom shader syncs its parameters
+  automatically; **Sync Parameters** is highlighted when they are out of date.
+
 ### Material animation
 
 1. In the material panel, set the **Animation ID** (or *Auto*).
@@ -127,6 +143,7 @@ The draft leaves some points open. This add-on resolves them as follows:
 blender -b --factory-startup --python tests/test_fixtures.py
 blender -b --factory-startup --python tests/test_workflow.py
 blender -b --factory-startup --python tests/test_skeleton_blender.py
+blender -b --factory-startup --python tests/test_material_slots.py
 ```
 
 From the workspace root: `python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4` runs without Blender.

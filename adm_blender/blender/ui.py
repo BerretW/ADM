@@ -858,6 +858,81 @@ def _vec_prop(layout, owner, attr, n, text=""):
         row.prop(owner, attr, index=i, text=text if i == 0 else "")
 
 
+def _uv_layer_names(context):
+    ob = context.object
+    return [layer.name for layer in ob.data.uv_layers] if ob is not None and ob.type == "MESH" else []
+
+
+def draw_texture_slots(lay, context, mat):
+    """Sollumz-style texture parameter list for the portable PBR record."""
+    from . import materials as M
+    p = mat.adm
+    box = lay.box()
+    title = "Texture Parameters" if p.shader == "CORE" else "Texture Parameters (portable PBR fallback)"
+    box.label(text=title, icon="TEXTURE")
+    if M.principled_of(mat) is None:
+        box.label(text="No Principled BSDF: use Convert Materials To ADM", icon="ERROR")
+        return
+    uv_names = _uv_layer_names(context)
+    for sid, label, key, _nc, icon in M.TEXTURE_SLOTS:
+        state, node = M.slot_state(mat, sid)
+        col = box.column(align=True)
+        head = col.row(align=True)
+        head.label(text=label, icon=icon)
+        if state == "CUSTOM":
+            head.label(text="custom node setup", icon="NODETREE")
+            continue
+        if node is None:
+            col.template_ID(p, "pick_" + sid.lower(), new="image.new", open="image.open")
+            continue
+        head.operator("adm.material_texture_clear", text="", icon="X").slot = sid
+        col.template_ID(node, "image", new="image.new", open="image.open")
+        if node.image is None:
+            col.label(text="Empty slot: pick an image or remove it", icon="ERROR")
+        row = col.row(align=True)
+        uvi = M.slot_uv_index(node, uv_names)
+        for i in (0, 1):
+            op = row.operator("adm.material_texture_uv", text=f"UV{i}", depress=uvi == i)
+            op.slot, op.index = sid, i
+        row.prop(node, "interpolation", text="")
+        row.prop(node, "extension", text="")
+        sub = col.column(align=True)
+        sub.use_property_split = True
+        sub.use_property_decorate = False
+        bsdf = M.principled_of(mat)
+        if sid == "BASE_COLOR":
+            linked = M.slot_alpha_linked(mat)
+            r = sub.row(align=True)
+            r.operator("adm.material_texture_alpha", text="Alpha From Texture", icon="IMAGE_RGB_ALPHA",
+                       depress=linked).use = not linked
+        elif sid == "NORMAL":
+            nm = M.normal_map_node(mat)
+            if nm is not None:
+                sub.prop(nm.inputs["Strength"], "default_value", text="Scale")
+        elif sid == "OCCLUSION":
+            sub.prop(p, "occlusion_strength", text="Strength")
+        elif sid == "EMISSIVE":
+            sub.prop(bsdf.inputs["Emission Strength"], "default_value", text="Strength")
+    if uv_names and len(uv_names) < 2:
+        box.label(text="UV1 needs a second UV map on the mesh", icon="INFO")
+
+
+def _draw_param_row(box, v, prm, typ):
+    r = box.row(align=True)
+    r.prop(v, "use", text="")
+    sub = r.row(align=True)
+    sub.active = v.use
+    sub.label(text=v.name)
+    if typ == "F32":
+        sub.prop(v, "value_f", text="")
+    elif typ in ("VEC2", "VEC3", "VEC4"):
+        _vec_prop(sub, v, "value_vec", K.SHADER_NUMERIC_DIMS[typ])
+    elif typ == "BOOL":
+        sub.prop(v, "value_bool", text="")
+    if prm.get("animatable"):
+        r.operator("adm.material_key_param", icon="KEYFRAME", text="").name = v.name
+
+
 def draw_material(lay, context, mat):
     from .materials import scene_shader_registry
     p = mat.adm
@@ -867,7 +942,6 @@ def draw_material(lay, context, mat):
     col.prop(p, "alpha_mode")
     if p.alpha_mode in {"MASK", "AUTO"}:
         col.prop(p, "alpha_cutoff")
-    col.prop(p, "occlusion_strength")
     lay.operator("adm.convert_materials", icon="MATERIAL")
 
     box = lay.box()
@@ -911,28 +985,32 @@ def draw_material(lay, context, mat):
         if params is None:
             col.label(text="Pick a shader definition (ADM > Shaders)", icon="ERROR")
         else:
-            box.operator("adm.material_sync_params", icon="FILE_REFRESH")
-            for v in p.params:
-                prm = params.get(v.name)
-                if prm is None:
-                    continue
-                typ = prm.get("type")
-                r = box.row(align=True)
-                r.prop(v, "use", text="")
-                sub = r.row(align=True)
-                sub.active = v.use
-                sub.label(text=v.name)
-                if typ == "F32":
-                    sub.prop(v, "value_f", text="")
-                elif typ in ("VEC2", "VEC3", "VEC4"):
-                    _vec_prop(sub, v, "value_vec", K.SHADER_NUMERIC_DIMS[typ])
-                elif typ == "BOOL":
-                    sub.prop(v, "value_bool", text="")
-                else:
-                    sub.template_ID(v, "image", open="image.open")
-                    sub.prop(v, "tex_coord", text="UV")
-                if prm.get("animatable"):
-                    r.operator("adm.material_key_param", icon="KEYFRAME", text="").name = v.name
+            in_sync = sorted(v.name for v in p.params) == sorted(params)
+            r = box.row()
+            r.alert = not in_sync
+            r.operator("adm.material_sync_params", icon="FILE_REFRESH",
+                       text="Sync Parameters" if in_sync else "Sync Parameters (out of date)")
+            tex = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") == "TEXTURE"]
+            val = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") != "TEXTURE"]
+            if tex:
+                tb = box.box()
+                tb.label(text="Shader Texture Parameters", icon="TEXTURE")
+                for v, prm in tex:
+                    c = tb.column(align=True)
+                    r = c.row(align=True)
+                    r.prop(v, "use", text="")
+                    r.label(text=v.name)
+                    r.prop(v, "tex_coord", text="UV")
+                    c.template_ID(v, "image", new="image.new", open="image.open")
+                    if prm.get("description"):
+                        c.label(text=prm["description"])
+            if val:
+                vb = box.box()
+                vb.label(text="Shader Value Parameters", icon="PROPERTIES")
+                for v, prm in val:
+                    _draw_param_row(vb, v, prm, prm.get("type"))
+
+    draw_texture_slots(lay, context, mat)
 
     clip = _active_clip(context)
     box = lay.box()

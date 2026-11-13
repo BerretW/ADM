@@ -408,6 +408,8 @@ class MaterialExporter:
                 ti = self.texture_from_node(base["node"], True)
                 out["baseColorTexture"] = self._ref(ti, base["node"], uv_names)
                 factor = base["factor"] if isinstance(base["factor"], list) else [base["factor"]] * 3
+            elif base["node"] is not None:
+                self.warn(f"material '{mat.name}': Base Color texture node has no image, skipped")
             else:
                 self.warn(f"material '{mat.name}': Base Color node setup not representable, using default value")
         alpha_in = bsdf.inputs["Alpha"]
@@ -902,4 +904,246 @@ def convert_to_adm_material(mat):
                 nt.links.new(old.inputs[name].links[0].from_socket, bsdf.inputs["Base Color"])
                 break
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return True
+
+
+# ================================================================================================
+# PBR texture slots (Sollumz-style texture parameters on the material panel)
+# ================================================================================================
+# The slots edit exactly the node chains the exporter traces, so no extra state is stored.
+TEXTURE_SLOTS = (
+    # id, label, ADM material key, non-color data, icon
+    ("BASE_COLOR", "Base Color", "baseColorTexture", False, "COLOR"),
+    ("METALLIC_ROUGHNESS", "Metallic-Roughness", "metallicRoughnessTexture", True, "NODE_MATERIAL"),
+    ("NORMAL", "Normal", "normalTexture", True, "NORMALS_FACE"),
+    ("OCCLUSION", "Occlusion", "occlusionTexture", True, "SHADING_SOLID"),
+    ("EMISSIVE", "Emissive", "emissiveTexture", False, "LIGHT_SUN"),
+)
+SLOT_IDS = tuple(s[0] for s in TEXTURE_SLOTS)
+_SLOT_INPUTS = {"BASE_COLOR": ("Base Color", "Alpha"), "METALLIC_ROUGHNESS": ("Roughness", "Metallic"),
+                "EMISSIVE": ("Emission Color",), "NORMAL": (), "OCCLUSION": ()}
+
+
+def _slot_info(slot):
+    return next(s for s in TEXTURE_SLOTS if s[0] == slot)
+
+
+def normal_map_node(mat):
+    bsdf = principled_of(mat)
+    s = _from(bsdf.inputs["Normal"]) if bsdf is not None else None
+    return s.node if s is not None and s.node.type == "NORMAL_MAP" else None
+
+
+def slot_state(mat, slot):
+    """('NONE' | 'TEXTURE' | 'CUSTOM', image texture node or None) for a PBR texture slot.
+
+    CUSTOM means the BSDF input is driven by a node setup the slot editor must not overwrite.
+    """
+    if mat is None or mat.node_tree is None:
+        return "NONE", None
+    if slot == "OCCLUSION":
+        n = mat.node_tree.nodes.get(OCCLUSION_NODE)
+        return ("TEXTURE", n) if n is not None and n.type == "TEX_IMAGE" else ("NONE", None)
+    bsdf = principled_of(mat)
+    if bsdf is None:
+        return "NONE", None
+    if slot == "NORMAL":
+        sock = bsdf.inputs["Normal"]
+        if not sock.is_linked:
+            return "NONE", None
+        nm = normal_map_node(mat)
+        if nm is None:
+            return "CUSTOM", None
+        sock = nm.inputs["Color"]
+        if not sock.is_linked:
+            return "NONE", None
+        t = trace(sock)
+        return ("TEXTURE", t["node"]) if t and t["node"] is not None else ("CUSTOM", None)
+    custom = False
+    for name in _SLOT_INPUTS[slot][:1] if slot != "METALLIC_ROUGHNESS" else _SLOT_INPUTS[slot]:
+        sock = bsdf.inputs[name]
+        if not sock.is_linked:
+            continue
+        t = trace(sock)
+        if t is not None and t["node"] is not None:
+            return "TEXTURE", t["node"]
+        custom = True
+    return ("CUSTOM", None) if custom else ("NONE", None)
+
+
+def slot_texture_node(mat, slot):
+    state, node = slot_state(mat, slot)
+    return node if state == "TEXTURE" else None
+
+
+def _set_colorspace(image, non_color):
+    if image is None:
+        return
+    try:
+        image.colorspace_settings.name = "Non-Color" if non_color else "sRGB"
+    except TypeError:
+        pass
+
+
+def set_slot_image(mat, slot, image):
+    """Assign ``image`` to a PBR texture slot, creating the node chain the exporter reads."""
+    convert_to_adm_material(mat)
+    _, label, _, non_color, _ = _slot_info(slot)
+    state, node = slot_state(mat, slot)
+    if state == "CUSTOM":
+        raise ValueError(f"{label} is driven by a custom node setup; edit it in the Shader Editor")
+    if node is not None:
+        node.image = image
+        _set_colorspace(image, non_color)
+        return node
+    nt = mat.node_tree
+    bsdf = principled_of(mat)
+    x = bsdf.location.x - 900
+    y = bsdf.location.y + 300 - 300 * SLOT_IDS.index(slot)
+    tn = _tex_node(nt, image, None, non_color, x, y, label)
+    _set_colorspace(image, non_color)
+    if slot == "BASE_COLOR":
+        nt.links.new(tn.outputs["Color"], bsdf.inputs["Base Color"])
+        if mat.adm.alpha_mode in ("BLEND", "MASK") and not bsdf.inputs["Alpha"].is_linked:
+            nt.links.new(tn.outputs["Alpha"], bsdf.inputs["Alpha"])
+    elif slot == "METALLIC_ROUGHNESS":
+        sep = nt.nodes.new("ShaderNodeSeparateColor")
+        sep.location = (x + 320, y)
+        nt.links.new(tn.outputs["Color"], sep.inputs[0])
+        nt.links.new(sep.outputs["Green"], bsdf.inputs["Roughness"])
+        nt.links.new(sep.outputs["Blue"], bsdf.inputs["Metallic"])
+    elif slot == "NORMAL":
+        nm = normal_map_node(mat)
+        if nm is None:
+            nm = nt.nodes.new("ShaderNodeNormalMap")
+            nm.location = (x + 450, y)
+            nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+        nt.links.new(tn.outputs["Color"], nm.inputs["Color"])
+    elif slot == "OCCLUSION":
+        tn.name = OCCLUSION_NODE
+        tn.label = "Occlusion (ADM)"
+    elif slot == "EMISSIVE":
+        nt.links.new(tn.outputs["Color"], bsdf.inputs["Emission Color"])
+        if bsdf.inputs["Emission Strength"].default_value <= 0.0:
+            bsdf.inputs["Emission Strength"].default_value = 1.0
+    return tn
+
+
+def _chain_nodes(socket, end):
+    """Nodes between ``socket`` and the texture node ``end`` (inclusive of ``end``)."""
+    nodes = set()
+    s = _from(socket)
+    guard = 0
+    while s is not None and guard < 16:
+        guard += 1
+        nodes.add(s.node)
+        if s.node == end:
+            return nodes
+        linked = [i for i in s.node.inputs if i.is_linked and i.enabled]
+        s = _from(linked[0]) if len(linked) == 1 else None
+    return nodes if end in nodes else set()
+
+
+def clear_slot(mat, slot):
+    """Remove a slot's texture, keeping the constant factors its node chain applied."""
+    node = slot_texture_node(mat, slot)
+    if node is None:
+        return False
+    nt = mat.node_tree
+    bsdf = principled_of(mat)
+    doomed = {node}
+    for name in _SLOT_INPUTS[slot]:
+        sock = bsdf.inputs[name]
+        t = trace(sock)
+        if t is None or t["node"] != node:
+            continue
+        doomed |= _chain_nodes(sock, node)
+        f = t["factor"]
+        for link in list(sock.links):
+            nt.links.remove(link)
+        if sock.type == "RGBA":
+            rgb = f if isinstance(f, list) else [f] * 3
+            sock.default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+        else:
+            sock.default_value = float(_scalar(f))
+    if slot == "NORMAL":
+        nm = normal_map_node(mat)
+        if nm is not None:
+            doomed.add(nm)
+    uv = _from(node.inputs["Vector"])
+    if uv is not None and uv.node.type == "UVMAP":
+        doomed.add(uv.node)
+    for n in doomed:
+        if all(link.to_node in doomed or link.to_node == bsdf
+               for o in n.outputs for link in o.links):
+            nt.nodes.remove(n)
+    return True
+
+
+def slot_uv_index(node, uv_names):
+    return _uv_index(node, list(uv_names)) if node is not None else 0
+
+
+def set_slot_uv(mat, slot, index, uv_names):
+    """Route a slot texture through UV map ``index`` (0 = default UV, 1 = second UV of the mesh)."""
+    node = slot_texture_node(mat, slot)
+    if node is None:
+        return False
+    nt = mat.node_tree
+    uv_names = list(uv_names) or list(UV_NAMES)
+    s = _from(node.inputs["Vector"])
+    uvn = s.node if s is not None and s.node.type == "UVMAP" else None
+    if index == 0:
+        if uvn is not None and len([lk for o in uvn.outputs for lk in o.links]) == 1:
+            nt.nodes.remove(uvn)
+        elif uvn is not None:
+            for link in list(node.inputs["Vector"].links):
+                nt.links.remove(link)
+        name = ""
+    else:
+        name = uv_names[1] if len(uv_names) > 1 else UV_NAMES[1]
+        if uvn is None:
+            uvn = nt.nodes.new("ShaderNodeUVMap")
+            uvn.location = (node.location.x - 220, node.location.y)
+            nt.links.new(uvn.outputs["UV"], node.inputs["Vector"])
+        uvn.uv_map = name
+    if slot == "NORMAL":
+        nm = normal_map_node(mat)
+        if nm is not None:
+            nm.uv_map = name
+    return True
+
+
+def slot_alpha_linked(mat):
+    node = slot_texture_node(mat, "BASE_COLOR")
+    bsdf = principled_of(mat)
+    if node is None or bsdf is None:
+        return False
+    t = trace(bsdf.inputs["Alpha"])
+    return t is not None and t["node"] == node
+
+
+def set_slot_alpha(mat, use):
+    """Drive BSDF Alpha from the base color texture alpha (the only alpha source ADM exports)."""
+    node = slot_texture_node(mat, "BASE_COLOR")
+    if node is None:
+        return False
+    nt = mat.node_tree
+    bsdf = principled_of(mat)
+    sock = bsdf.inputs["Alpha"]
+    if use:
+        if not slot_alpha_linked(mat):
+            for link in list(sock.links):
+                nt.links.remove(link)
+            nt.links.new(node.outputs["Alpha"], sock)
+        return True
+    if slot_alpha_linked(mat):
+        t = trace(sock)
+        doomed = _chain_nodes(sock, node) - {node}
+        for link in list(sock.links):
+            nt.links.remove(link)
+        sock.default_value = float(_scalar(t["factor"]))
+        for n in doomed:
+            if not any(link.to_node not in doomed for o in n.outputs for link in o.links):
+                nt.nodes.remove(n)
     return True

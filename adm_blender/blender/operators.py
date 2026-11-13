@@ -932,8 +932,100 @@ class ADM_OT_expression_preview(bpy.types.Operator):
 
 
 def _active_material(context):
+    mat = getattr(context, "material", None)
+    if mat is not None:
+        return mat
     ob = context.object
     return ob.active_material if ob is not None else None
+
+
+def _uv_names(context):
+    ob = context.object
+    if ob is not None and ob.type == "MESH":
+        return [layer.name for layer in ob.data.uv_layers]
+    return []
+
+
+_SLOT_ITEMS = [("BASE_COLOR", "Base Color", ""), ("METALLIC_ROUGHNESS", "Metallic-Roughness", ""),
+               ("NORMAL", "Normal", ""), ("OCCLUSION", "Occlusion", ""), ("EMISSIVE", "Emissive", "")]
+
+
+class _SlotOp:
+    bl_options = {"REGISTER", "UNDO"}
+    slot: EnumProperty(items=_SLOT_ITEMS)
+
+    @classmethod
+    def poll(cls, context):
+        return _active_material(context) is not None
+
+
+class ADM_OT_material_texture_open(_SlotOp, bpy.types.Operator):
+    """Load an image file into this ADM texture slot (creates the matching node chain)"""
+    bl_idname = "adm.material_texture_open"
+    bl_label = "Open Texture"
+    filepath: StringProperty(subtype="FILE_PATH")
+    filter_image: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
+    filter_folder: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        from .materials import set_slot_image
+        try:
+            img = bpy.data.images.load(self.filepath, check_existing=True)
+            set_slot_image(_active_material(context), self.slot, img)
+        except (RuntimeError, ValueError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class ADM_OT_material_texture_clear(_SlotOp, bpy.types.Operator):
+    """Remove the texture from this slot (constant factors are kept)"""
+    bl_idname = "adm.material_texture_clear"
+    bl_label = "Remove Texture"
+
+    def execute(self, context):
+        from .materials import clear_slot
+        if not clear_slot(_active_material(context), self.slot):
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class ADM_OT_material_texture_uv(_SlotOp, bpy.types.Operator):
+    """Choose which UV map (texCoord 0 or 1) the texture uses"""
+    bl_idname = "adm.material_texture_uv"
+    bl_label = "Texture UV"
+    index: IntProperty(min=0, max=1)
+
+    def execute(self, context):
+        from .materials import set_slot_uv
+        if not set_slot_uv(_active_material(context), self.slot, self.index, _uv_names(context)):
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class ADM_OT_material_texture_alpha(bpy.types.Operator):
+    """Use the base color texture alpha channel as material alpha"""
+    bl_idname = "adm.material_texture_alpha"
+    bl_label = "Use Texture Alpha"
+    bl_options = {"REGISTER", "UNDO"}
+    use: BoolProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return _active_material(context) is not None
+
+    def execute(self, context):
+        from .materials import set_slot_alpha
+        mat = _active_material(context)
+        if not set_slot_alpha(mat, self.use):
+            return {"CANCELLED"}
+        if self.use and mat.adm.alpha_mode == "OPAQUE":
+            mat.adm.alpha_mode = "AUTO"
+        return {"FINISHED"}
 
 
 class ADM_OT_material_auto_animation_id(bpy.types.Operator):
@@ -1150,6 +1242,8 @@ CLASSES = (
     ADM_OT_list_add, ADM_OT_list_remove, ADM_OT_list_move,
     ADM_OT_clips_from_actions, ADM_OT_play_clip, ADM_OT_events_from_markers, ADM_OT_expression_preview,
     ADM_OT_material_auto_animation_id, ADM_OT_material_sync_params, ADM_OT_material_layers_from_pbr,
+    ADM_OT_material_texture_open, ADM_OT_material_texture_clear, ADM_OT_material_texture_uv,
+    ADM_OT_material_texture_alpha,
     ADM_OT_material_link_clip, ADM_OT_material_key_param,
     ADM_OT_validate_model, ADM_OT_validate_library, ADM_OT_validate_file, ADM_OT_clear_report,
 )

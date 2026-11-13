@@ -255,14 +255,47 @@ class ADMLayerRecord(PropertyGroup):
 
 
 # --- materials -------------------------------------------------------------------------------------
+def _texture_pick_update(slot):
+    attr = "pick_" + slot.lower()
+
+    def update(self, context):
+        img = getattr(self, attr)
+        if img is None:
+            return
+        from .materials import set_slot_image
+        try:
+            set_slot_image(self.id_data, slot, img)
+        finally:
+            setattr(self, attr, None)
+    return update
+
+
+def _custom_shader_update(self, context):
+    sdef = context.scene.adm_anim.shaders.get(self.custom_shader) if context and context.scene else None
+    if sdef is not None:
+        from .materials import sync_material_params
+        sync_material_params(self.id_data, sdef)
+
+
+def _pick(slot, label):
+    return PointerProperty(name=label, type=bpy.types.Image, update=_texture_pick_update(slot),
+                           description=f"Pick or open an image for the {label} texture slot")
+
+
 class ADMMaterialProps(PropertyGroup):
+    pick_base_color: _pick("BASE_COLOR", "Base Color")
+    pick_metallic_roughness: _pick("METALLIC_ROUGHNESS", "Metallic-Roughness")
+    pick_normal: _pick("NORMAL", "Normal")
+    pick_occlusion: _pick("OCCLUSION", "Occlusion")
+    pick_emissive: _pick("EMISSIVE", "Emissive")
     alpha_mode: EnumProperty(name="Alpha Mode", default="AUTO", items=[
         ("AUTO", "Auto", "Derive from the node tree / render method"),
         ("OPAQUE", "Opaque", ""), ("MASK", "Mask", ""), ("BLEND", "Blend", "")])
     alpha_cutoff: FloatProperty(name="Alpha Cutoff", default=0.5, min=0.0, max=1.0)
     occlusion_strength: FloatProperty(name="Occlusion Strength", default=1.0, min=0.0, max=1.0)
     shader: EnumProperty(name="Shader", items=SHADER_KINDS, default="CORE")
-    custom_shader: StringProperty(name="Custom Shader", description="id@version of a scene shader definition")
+    custom_shader: StringProperty(name="Custom Shader", description="id@version of a scene shader definition",
+                                  update=_custom_shader_update)
     animation_id: StringProperty(name="Animation ID",
                                  description="Portable material binding key for shader/PBR animation tracks "
                                              "([a-z][a-z0-9_]*, unique per model)")
