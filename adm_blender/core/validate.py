@@ -1218,6 +1218,40 @@ class AdmValidator(_Base):
                         if not _is_vec(q, 4) or abs(math.sqrt(sum(x * x for x in q)) - 1) > 1e-4:
                             self.r.error("PROFILE_CORRECTION_QUAT", f"{p}.referenceCorrection.{role}",
                                          "must be a unit quaternion")
+            if pid == SP.HUMANOID and isinstance(roles, dict):
+                rc = prof.get("referenceCorrection")
+                if not isinstance(rc, dict):
+                    self.r.error("PROFILE_CORRECTION_REQUIRED", p + ".referenceCorrection",
+                                 "humanoid.vrm1 requires normalized corrections for semantic binding")
+                else:
+                    for role, node in roles.items():
+                        if role not in rc:
+                            self.r.error("PROFILE_CORRECTION_REQUIRED", f"{p}.referenceCorrection.{role}",
+                                         "missing normalized correction for mapped humanoid role")
+                            continue
+                        q = rc[role]
+                        if not _is_vec(q, 4) or not _is_int(node) or node >= len(self.nodes):
+                            continue
+                        chain = []
+                        current = node
+                        while current is not None:
+                            chain.append(current)
+                            current = self.parent[current]
+                        rest = (0.0, 0.0, 0.0, 1.0)
+                        for current in reversed(chain):
+                            local = self.nodes[current].get("rotation", [0.0, 0.0, 0.0, 1.0])
+                            x, y, z, w = rest
+                            a, b, c, d = local
+                            rest = (w*a + x*d + y*c - z*b,
+                                    w*b - x*c + y*d + z*a,
+                                    w*c + x*b - y*a + z*d,
+                                    w*d - x*a - y*b - z*c)
+                        expected = (-rest[0], -rest[1], -rest[2], rest[3])
+                        err = min(max(abs(a - b) for a, b in zip(q, expected)),
+                                  max(abs(a + b) for a, b in zip(q, expected)))
+                        if err > 1e-4:
+                            self.r.error("PROFILE_CORRECTION_MISMATCH", f"{p}.referenceCorrection.{role}",
+                                         f"differs from inverse rest rotation (max component error {err:.6g})")
             if "rigId" in prof:
                 rid = prof["rigId"]
                 if not isinstance(rid, str) or not RIG_ID_RE.match(rid):
@@ -1232,23 +1266,29 @@ class AdmValidator(_Base):
                             self.r.error("RIG_ID_MISMATCH", p + ".rigId", f"declared {rid} but computed {calc}")
 
     def _check_reference_alignment(self, p, pid, roles):
-        """Advisory geometric check of the rest pose against the profile reference pose (SPEC_GAP tolerance)."""
+        """Check the rest pose against the registered profile reference directions."""
         joints = {}
         for role, node in roles.items():
             if _is_int(node) and node < len(self.nodes) and self.world[node] is not None:
                 joints[node] = {"parent": None, "head": mat_translation(self.world[node])}
         role_bone = {r: n for r, n in roles.items() if n in joints}
         if SK.facing_mirrored(pid, joints, role_bone):
-            self.r.warning("PROFILE_REFERENCE_FACING", p, "left/right role joints are mirrored: the rest pose faces "
-                                                          "+Z, the ADM reference pose faces -Z with +X on the "
-                                                          "character's right")
+            message = ("left/right role joints are mirrored: ADM reference pose faces -Z with +X on the "
+                       "character's right")
+            if pid == SP.HUMANOID:
+                self.r.error("PROFILE_REFERENCE_FACING", p, message)
+            else:
+                self.r.warning("PROFILE_REFERENCE_FACING", p, message)
             return
         tol = SP.get(pid)["referencePose"]["toleranceDeg"]
         for chk, ang in SK.pose_deviations(pid, joints, role_bone):
             if ang > tol:
-                self.r.warning("PROFILE_REFERENCE_ALIGNMENT", f"{p}.roles.{chk['from']}",
-                               f"{chk['from']}->{chk['to']} deviates {ang:.1f} deg from reference direction "
-                               f"{chk['direction']} (advisory tolerance {tol:g} deg)")
+                message = (f"{chk['from']}->{chk['to']} deviates {ang:.1f} deg from reference direction "
+                           f"{chk['direction']} (tolerance {tol:g} deg)")
+                if pid == SP.HUMANOID:
+                    self.r.error("PROFILE_REFERENCE_ALIGNMENT", f"{p}.roles.{chk['from']}", message)
+                else:
+                    self.r.warning("PROFILE_REFERENCE_ALIGNMENT", f"{p}.roles.{chk['from']}", message)
 
     # face ----------------------------------------------------------------------------------------
     def morph_node_targets(self, node_index):
@@ -1650,8 +1690,12 @@ class AnimValidator(_Base):
                 self.r.error("LIBRARY_SOURCE_HEIGHT", "library.sourceHeight", "must be a finite number > 0")
         elif "sourceHeight" in lib:
             self.r.error("LIBRARY_SOURCE_HEIGHT", "library.sourceHeight", "requires motionScale SOURCE_HEIGHT")
-        if "rootMotionSource" in lib and lib["rootMotionSource"] != "hips":
-            self.r.error("LIBRARY_ROOT_SOURCE", "library.rootMotionSource", "only \"hips\" is defined")
+        if "rootMotionSource" in lib:
+            if lib["rootMotionSource"] != "hips":
+                self.r.error("LIBRARY_ROOT_SOURCE", "library.rootMotionSource", "only \"hips\" is defined")
+            if lib.get("targetProfile") != SP.HUMANOID or lib.get("binding") != "SEMANTIC":
+                self.r.error("LIBRARY_ROOT_SOURCE", "library.rootMotionSource",
+                             "v1 root-motion source hips requires SEMANTIC humanoid.vrm1")
 
     def semantic_roles(self):
         tp = self.lib.get("targetProfile")
@@ -1793,11 +1837,10 @@ class AnimValidator(_Base):
                                      f"profile {self.lib.get('targetProfile')} does not define role 'root'")
                     if path == "scale":
                         self.r.error("CHANNEL_SEMANTIC_SCALE", cp, "scale tracks are forbidden for SEMANTIC binding")
-                    if path == "translation" and ident not in ("hips", "root"):
+                    if path == "translation" and ident != "hips":
                         self.r.error("CHANNEL_SEMANTIC_TRANSLATION", cp,
-                                     "SEMANTIC translation is only allowed for hips/root")
-                    if path == "translation" and (ident == "root" or (
-                            ident == "hips" and self.lib.get("rootMotionSource") == "hips")):
+                                     "SEMANTIC translation is only allowed for the registered hips role")
+                    if path == "translation" and ident == "hips" and self.lib.get("rootMotionSource") == "hips":
                         root_tracks += 1
                 else:
                     if path == "translation":
@@ -1867,14 +1910,15 @@ class AnimValidator(_Base):
                     self.check_quaternion_sampler(info, cp)
                 elif info is not None and bounds is not None and out_type == want:
                     self.check_value_bounds(info, bounds[0], bounds[1], cp)
-        if clip.get("rootMotion") == "EXTRACT" and self.lib.get("targetProfile") == K.MODEL_ANY_PROFILE:
-            self.r.error("CLIP_MODEL_ANY_EXTRACT", p + ".rootMotion", "model.any.v1 forbids rootMotion EXTRACT")
-        elif clip.get("rootMotion") == "EXTRACT":
-            if binding == "SEMANTIC" and root_tracks == 0:
-                self.r.error("CLIP_ROOT_TRACK", p, "EXTRACT requires a root translation track (role 'root' or "
-                                                   "hips with library.rootMotionSource='hips')")
-            elif binding == "EXACT" and bone_tracks == 0:
-                self.r.error("CLIP_ROOT_TRACK", p, "EXTRACT requires a root transform channel")
+        if clip.get("rootMotion") == "EXTRACT":
+            if self.lib.get("targetProfile") == K.MODEL_ANY_PROFILE:
+                self.r.error("CLIP_MODEL_ANY_EXTRACT", p + ".rootMotion", "model.any.v1 forbids rootMotion EXTRACT")
+            elif binding != "SEMANTIC" or self.lib.get("targetProfile") != SP.HUMANOID:
+                self.r.error("CLIP_ROOT_UNSUPPORTED", p + ".rootMotion",
+                             "v1 EXTRACT is supported only for SEMANTIC humanoid.vrm1")
+            elif self.lib.get("rootMotionSource") != "hips" or root_tracks != 1:
+                self.r.error("CLIP_ROOT_TRACK", p,
+                             "EXTRACT requires exactly one hips translation track and library.rootMotionSource='hips'")
 
     def check_events(self, events, p, dur):
         if not isinstance(events, list):

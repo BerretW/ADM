@@ -110,21 +110,18 @@ def solve_points(A, B, C, P, pole):
     if l1 <= 1e-6 or l2 <= 1e-6:
         return {"status": INVALID}
     d = length(sub(P, A))
-    lo, hi = abs(l1 - l2) + EPS, l1 + l2 - EPS
-    if lo <= hi:
-        d_solved = min(max(d, lo), hi)
-        status = SOLVED if lo <= d <= hi else CLAMPED
-    else:
-        # documented zero-fold rule: fully folded/extended endpoint nearest to d, h = 0
-        d_solved = abs(l1 - l2) if d < (abs(l1 - l2) + l1 + l2) / 2 else l1 + l2
-        d_solved = max(d_solved, EPS)
-        status = CLAMPED
-    if d > EPS:
+    d_min, d_max = abs(l1 - l2), l1 + l2
+    d_solved = min(max(d, d_min), d_max)
+    status = SOLVED if d_min <= d <= d_max else CLAMPED
+    if d > 1e-8:
         u = scale(sub(P, A), 1.0 / d)
     elif length(sub(C, A)) > 0:
         u = normalize(sub(C, A))
     else:
         u = normalize(sub(B, A))
+    if d_solved <= 1e-8:
+        return {"status": status, "mid": B, "end": A, "d": d,
+                "d_solved": d_solved}
     v = sub(pole, scale(u, dot(pole, u)))
     if length(v) < 1e-8:
         ax = least_aligned_axis(u)

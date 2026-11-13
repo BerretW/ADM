@@ -279,7 +279,7 @@ class IKTests(unittest.TestCase):
         P = (-0.1, -2.0, 0.0)
         r = IK.solve_chain(A, B, C, ident, ident, ident, P, (0, 0, -1), 1.0)
         self.assertEqual(r["status"], IK.CLAMPED)
-        reach = IK.length(IK.sub(B, A)) + IK.length(IK.sub(C, B)) - IK.EPS
+        reach = IK.length(IK.sub(B, A)) + IK.length(IK.sub(C, B))
         self.assertAlmostEqual(IK.length(IK.sub(r["end"], A)), reach, places=9)
         z = IK.solve_chain(A, B, C, ident, ident, ident, (0.3, 0.3, 0.3), (0, 0, -1), 0.0)
         self.assertEqual(z["root_local"], ident)
@@ -302,6 +302,14 @@ class IKTests(unittest.TestCase):
         # fallback pole = least aligned axis of u (-Y) -> X; the knee bends toward +X
         self.assertGreater(s["mid"][0], A[0] + 1e-3)
         self.assertAlmostEqual(IK.length(IK.sub(s["mid"], A)), IK.length(IK.sub(B, A)), places=9)
+
+    def test_solver_equal_length_zero_fold_is_deterministic(self):
+        A, B, C = (0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0)
+        solved = IK.solve_points(A, B, C, A, (0.0, 0.0, 1.0))
+        self.assertEqual(solved["status"], IK.SOLVED)
+        self.assertEqual(solved["mid"], B)
+        self.assertEqual(solved["end"], A)
+        self.assertEqual(solved["d_solved"], 0.0)
 
 
 class CompatibilityTests(unittest.TestCase):

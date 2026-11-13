@@ -64,9 +64,8 @@ def library_channel_roles(doc):
 def check_library_compat(context, arm, doc, allow_provisional=True):
     """Compatibility level of a validated .adm_anim document with ``arm``.
 
-    Returns (level, reasons, rig_warnings).  Structural rig errors (role mapping) make SEMANTIC
-    binding INCOMPATIBLE; reference pose deviations are advisory (numeric tolerance is a SPEC_GAP)
-    and are returned as warnings.
+    Returns (level, reasons, rig_warnings). Structural rig errors and humanoid reference-pose
+    deviations make SEMANTIC binding INCOMPATIBLE; provisional animal diagnostics remain warnings.
     """
     from .export_adm import EXPORT_BLOCKING_RIG_CODES
     from .rig import assignments, joint_table

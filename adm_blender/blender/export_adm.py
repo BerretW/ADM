@@ -27,7 +27,7 @@ MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
 EXPORT_BLOCKING_RIG_CODES = {"PROFILE_ID", "ROLE_UNKNOWN", "ROLE_DUPLICATE", "ROLE_MISSING", "ROLE_NEEDS_PARENT",
-                             "ROLE_HIERARCHY", "ROLE_BONE_MISSING"}
+                             "ROLE_HIERARCHY", "ROLE_BONE_MISSING", "REFERENCE_POSE", "REFERENCE_FACING"}
 
 
 class ExportError(Exception):
@@ -758,6 +758,7 @@ class ModelExporter:
             pid = sk.profile_id.strip()
             roles = {}
             corr = {}
+            from .rig import normalized_correction
             for bone in arm.data.bones:
                 r = bone.adm.role.strip()
                 if not r:
@@ -765,7 +766,11 @@ class ModelExporter:
                 if r in roles:
                     raise ExportError(f"armature '{arm.name}': role '{r}' assigned to more than one bone")
                 roles[r] = self.bone_node[(arm.name, bone.name)]
-                if bone.adm.use_reference_correction:
+                if pid == "humanoid.vrm1":
+                    q = (Quaternion(bone.adm.reference_correction) if bone.adm.use_reference_correction
+                         else normalized_correction(arm, bone))
+                    corr[r] = cv.quat_to_adm(q)
+                elif bone.adm.use_reference_correction:
                     q = Quaternion(bone.adm.reference_correction)
                     corr[r] = cv.quat_to_adm(q)
             if pid == "humanoid.vrm1":
