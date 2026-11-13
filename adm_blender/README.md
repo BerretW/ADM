@@ -116,9 +116,17 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   Shader/layer definitions and their animation data remain editable and exportable; arbitrary custom
   shader rendering and certified layered rendering are not claimed. PBR tracks animate the fallback
   independently of custom shader parameters.
-- KTX2 primary textures select their mandatory embedded PNG/JPEG `fallbackSource`; the unsupported
-  KTX2 payload is not decoded. Re-export embeds the portable image. KTX2 codec certification is pending
-  in the specification itself.
+- Image export (the **Images** option in File > Export > ADM):
+  - **PNG** (default) writes only PNG. JPEG, DDS, KTX2 and other sources are converted, so any
+    engine can read the file.
+  - **Keep PNG/JPEG** passes PNG and JPEG source bytes through unchanged and converts the rest to PNG.
+  - **KTX2 + PNG fallback** and **DDS + PNG fallback** write a GPU image (§8.6: RGBA8, BC1 or BC3,
+    sRGB for colour and UNORM for data textures, optional mipmaps) together with the mandatory
+    same-size PNG `fallbackSource`. *Compression* `AUTO` picks BC1 for opaque and BC3 for
+    transparent images. The encoder is built in (NumPy), so no external tools are needed.
+- On import, KTX2/DDS primaries resolve to their PNG/JPEG `fallbackSource` (`KTX2_FALLBACK` /
+  `DDS_FALLBACK`). *Open Image* on a texture slot also accepts `.ktx2` and `.dds` files; the add-on
+  decodes them itself when Blender cannot.
 
 This is Draft 0.4 authoring support, **not full ADM conformance certification**. The draft's numerical
 renderer, retargeting, IK and advanced interoperability acceptance corpus is not yet complete.
@@ -144,9 +152,10 @@ blender -b --factory-startup --python tests/test_fixtures.py
 blender -b --factory-startup --python tests/test_workflow.py
 blender -b --factory-startup --python tests/test_skeleton_blender.py
 blender -b --factory-startup --python tests/test_material_slots.py
+blender -b --factory-startup --python tests/test_texture_formats.py
 ```
 
-From the workspace root: `python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4` runs without Blender.
+From the workspace root: `python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_gputex` runs without Blender (`test_gputex` needs NumPy).
 
 **Standalone validator (without Blender):** `python -m adm_blender.core.validate file.adm`
 

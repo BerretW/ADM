@@ -37,7 +37,7 @@ Uses Python 3.9+ standard library. **Does not test renderer equivalence, ZSTD, s
 
 1. Complete normative animal profiles (currently PROVISIONAL proposals, see `profiles/animal.quadruped.v1.md`), the open points in `SPEC_GAPS.md`, plus independent semantic certification fixtures for the newly specified vehicle/weapon profiles.
 2. Full shader-registry publication and shader-reference rendering tests.
-3. A frozen supported KTX2/Basis Universal subset with actual fixtures.
+3. Independent KTX2/DDS fixtures for the §8.6 subset, checked by a second implementation (Basis Universal remains outside 1.0).
 4. Fully independent reader/writer and per-feature semantic conformance fixtures.
 5. Production streaming/caching stress tests, decompressor resource-limit tests.
 

@@ -7,6 +7,7 @@ import bpy
 import numpy as np
 
 from ..core import constants as K
+from ..core import gputex
 from ..core.png import encode_png
 from ..core.validate import ANIMATION_ID_RE, param_value_error, shader_registry
 
@@ -157,15 +158,71 @@ def _resize_nearest(a, h, w):
     return a[ys][:, xs]
 
 
+class TextureExportError(Exception):
+    pass
+
+
+GPU_IMAGE_FORMATS = {"KTX2": gputex.MIME_KTX2, "DDS": gputex.MIME_DDS}
+
+
+def source_bytes(image):
+    """Original file bytes of an image (packed or on disk), or None."""
+    if image.packed_file is not None:
+        return bytes(image.packed_file.data)
+    if image.source == "FILE" and image.filepath:
+        path = bpy.path.abspath(image.filepath, library=image.library)
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                return fh.read()
+    return None
+
+
+def _portable_mime(data):
+    if not data:
+        return None
+    if _is_png(data):
+        return "image/png"
+    if _is_jpeg(data) and data.rstrip(b"\x00").endswith(b"\xff\xd9"):
+        return "image/jpeg"
+    return None
+
+
+def load_image_file(path):
+    """Load an image file; KTX2/DDS files Blender cannot read are decoded by the add-on and packed."""
+    with open(path, "rb") as fh:
+        head = fh.read(16)
+    mime = gputex.mime_of(head)
+    if mime != gputex.MIME_KTX2:
+        img = bpy.data.images.load(path, check_existing=True)
+        if mime is None or img.size[0] > 0:
+            return img
+        bpy.data.images.remove(img)
+    with open(path, "rb") as fh:
+        data = fh.read()
+    rgba, info = gputex.decode(data, mime)
+    h, w = rgba.shape[:2]
+    img = bpy.data.images.new(os.path.basename(path), w, h, alpha=True)
+    img.colorspace_settings.name = "sRGB" if info["srgb"] else "Non-Color"
+    img.pixels.foreach_set((rgba[::-1].astype(np.float32) / 255.0).ravel())
+    img.pack()
+    return img
+
+
 # ================================================================================================
 # export
 # ================================================================================================
 class MaterialExporter:
-    def __init__(self, builder, warn, image_format="AUTO", jpeg_quality=90):
+    """``image_format``: PNG (default, everything re-encoded to PNG except PNG sources),
+    AUTO (keep PNG/JPEG source bytes), KTX2 or DDS (GPU primary + mandatory PNG fallback)."""
+
+    def __init__(self, builder, warn, image_format="PNG", jpeg_quality=90, gpu_compression="AUTO",
+                 gpu_mipmaps=True):
         self.b = builder
         self.warn = warn
         self.image_format = image_format
         self.jpeg_quality = jpeg_quality
+        self.gpu_compression = gpu_compression
+        self.gpu_mipmaps = gpu_mipmaps
         self.materials = []
         self.images = []
         self.samplers = []
@@ -182,40 +239,76 @@ class MaterialExporter:
         self._animation_ids = set()
 
     # images ---------------------------------------------------------------------------------
-    def _encode_image_bytes(self, image, color_role):
+    def _pixels(self, image, color_role, data=None):
+        """Float RGBA (h, w, 4) top-to-bottom, colour textures sRGB-encoded.
+
+        Falls back to the built-in KTX2/DDS decoder when Blender cannot read the source file.
+        """
         if image.source not in ("FILE", "GENERATED"):
             self.warn(f"image '{image.name}': source {image.source} not supported, exporting first frame/tile")
-        data = None
-        if self.image_format in ("AUTO", "JPEG") and image.packed_file is not None:
-            data = bytes(image.packed_file.data)
-        elif self.image_format == "AUTO" and image.source == "FILE" and image.filepath:
-            path = bpy.path.abspath(image.filepath, library=image.library)
-            if os.path.isfile(path):
-                with open(path, "rb") as fh:
-                    data = fh.read()
-        if data is not None and (_is_png(data) or (_is_jpeg(data) and data.rstrip(b"\x00").endswith(b"\xff\xd9"))):
-            if self.image_format == "JPEG" and _is_png(data):
-                data = None
-            else:
-                return data, "image/png" if _is_png(data) else "image/jpeg"
-        px = image_pixels(image)
+        try:
+            px = image_pixels(image)
+        except ValueError:
+            px = None
+        if px is None:
+            data = data if data is not None else source_bytes(image)
+            mime = gputex.mime_of(data or b"")
+            if mime is None:
+                raise TextureExportError(f"image '{image.name}' has no readable pixel data")
+            try:
+                rgba, _ = gputex.decode(data, mime)
+            except gputex.GpuTextureError as exc:
+                raise TextureExportError(f"image '{image.name}': cannot convert {mime} source ({exc}); "
+                                         f"convert it to PNG first") from exc
+            return rgba.astype(np.float32) / 255.0
         if image.is_float and color_role and image.colorspace_settings.name not in ("sRGB",):
             px = px.copy()
             px[..., :3] = _linear_to_srgb(px[..., :3])
-        return self._encode_pixels(px)
+        return px
+
+    def _encode_image_bytes(self, image, color_role):
+        data = source_bytes(image) if image.source in ("FILE", "GENERATED") and not image.is_dirty else None
+        keep = ("image/png", "image/jpeg") if self.image_format == "AUTO" else ("image/png",)
+        mime = _portable_mime(data)
+        if mime in keep:
+            return data, mime
+        return self._encode_pixels(self._pixels(image, color_role, data))
+
+    @staticmethod
+    def _to_u8(px):
+        return (np.clip(px, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 
     def _encode_pixels(self, px):
         h, w = px.shape[:2]
-        rgba = (np.clip(px, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
-        return encode_png(w, h, rgba.tobytes(), 4), "image/png"
+        return encode_png(w, h, self._to_u8(px).tobytes(), 4), "image/png"
 
-    def _add_image(self, key, name, blob, mime):
-        if key in self._img_cache:
-            return self._img_cache[key]
+    def _add_blob(self, name, blob, mime):
         view = self.b.add_view(blob, align=4, chunk_type="IMAG")
         self.images.append({"bufferView": view, "mimeType": mime, "name": name})
-        self._img_cache[key] = len(self.images) - 1
-        return self._img_cache[key]
+        return len(self.images) - 1
+
+    def _add_image(self, key, name, image=None, color_role=False, pixels=None):
+        """Embed one image; returns ``(source, fallbackSource or None)`` image indices."""
+        if key in self._img_cache:
+            return self._img_cache[key]
+        gpu_mime = GPU_IMAGE_FORMATS.get(self.image_format)
+        if gpu_mime:
+            px = pixels if pixels is not None else self._pixels(image, color_role)
+            rgba = self._to_u8(px)
+            blob, _ = gputex.encode(rgba, gpu_mime, self.gpu_compression, color_role, self.gpu_mipmaps)
+            primary = self._add_blob(name, blob, gpu_mime)
+            h, w = rgba.shape[:2]
+            entry = (primary, self._add_blob(name, encode_png(w, h, rgba.tobytes(), 4), "image/png"))
+        else:
+            blob, mime = self._encode_image_bytes(image, color_role) if pixels is None else self._encode_pixels(pixels)
+            entry = (self._add_blob(name, blob, mime), None)
+        self._img_cache[key] = entry
+        return entry
+
+    def _image_key(self, image, color_role):
+        key = ("img", image.name, image.library.filepath if image.library else "")
+        # GPU formats encode the sRGB/UNORM variant, so one image can need two encodings.
+        return key + (color_role,) if self.image_format in GPU_IMAGE_FORMATS else key
 
     def _sampler(self, tex_node):
         mag = "NEAREST" if tex_node.interpolation == "Closest" else "LINEAR"
@@ -236,10 +329,12 @@ class MaterialExporter:
             self._sampler_cache[key] = len(self.samplers) - 1
         return self._sampler_cache[key]
 
-    def _texture(self, image_index, sampler):
-        key = (image_index, sampler)
+    def _texture(self, entry, sampler):
+        key = (entry, sampler)
         if key not in self._tex_cache:
-            t = {"source": image_index}
+            t = {"source": entry[0]}
+            if entry[1] is not None:
+                t["fallbackSource"] = entry[1]
             if sampler is not None:
                 t["sampler"] = sampler
             self.textures.append(t)
@@ -247,29 +342,24 @@ class MaterialExporter:
         return self._tex_cache[key]
 
     def texture_from_image(self, image, color_role):
-        key = ("img", image.name, image.library.filepath if image.library else "")
-        if key not in self._img_cache:
-            blob, mime = self._encode_image_bytes(image, color_role)
-            self._add_image(key, image.name, blob, mime)
-        return self._texture(self._img_cache[key], None)
+        entry = self._add_image(self._image_key(image, color_role), image.name, image, color_role)
+        return self._texture(entry, None)
 
     def texture_from_node(self, tex_node, color_role):
         image = tex_node.image
         if image is None:
             return None
-        key = ("img", image.name, image.library.filepath if image.library else "")
-        if key not in self._img_cache:
-            blob, mime = self._encode_image_bytes(image, color_role)
-            self._add_image(key, image.name, blob, mime)
-        return self._texture(self._img_cache[key], self._sampler(tex_node))
+        entry = self._add_image(self._image_key(image, color_role), image.name, image, color_role)
+        return self._texture(entry, self._sampler(tex_node))
 
     def texture_composite_mr(self, rough, metal, name):
-        """Pack roughness->G and metallic->B into one generated PNG."""
+        """Pack roughness->G and metallic->B into one generated image."""
         key = ("mr", id(rough["node"]) if rough else 0, rough["channel"] if rough else None,
                id(metal["node"]) if metal else 0, metal["channel"] if metal else None)
-        if key not in self._img_cache:
+        entry = self._img_cache.get(key)
+        if entry is None:
             srcs = [t for t in (rough, metal) if t]
-            arrays = [image_pixels(t["node"].image) for t in srcs]
+            arrays = [self._pixels(t["node"].image, False) for t in srcs]
             h = max(a.shape[0] for a in arrays)
             w = max(a.shape[1] for a in arrays)
             out = np.ones((h, w, 4), dtype=np.float32)
@@ -278,10 +368,9 @@ class MaterialExporter:
                 out[..., 1] = _resize_nearest(arrays[0], h, w)[..., chan[rough["channel"]]]
             if metal:
                 out[..., 2] = _resize_nearest(arrays[-1], h, w)[..., chan[metal["channel"]]]
-            blob, mime = self._encode_pixels(out)
-            self._add_image(key, name + "_metallicRoughness", blob, mime)
+            entry = self._add_image(key, name + "_metallicRoughness", pixels=out)
         node = (rough or metal)["node"]
-        return self._texture(self._img_cache[key], self._sampler(node))
+        return self._texture(entry, self._sampler(node))
 
     # materials ------------------------------------------------------------------------------
     def index(self, mat, uv_names):

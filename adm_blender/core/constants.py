@@ -129,7 +129,9 @@ EXPRESSION_PRESETS = ("neutral", "happy", "sad", "angry", "relaxed", "surprised"
 ALPHA_MODES = ("OPAQUE", "MASK", "BLEND")
 FILTERS = ("NEAREST", "LINEAR")
 WRAPS = ("REPEAT", "CLAMP_TO_EDGE", "MIRRORED_REPEAT")
-IMAGE_MIMES = ("image/png", "image/jpeg", "image/ktx2")
+IMAGE_MIMES = ("image/png", "image/jpeg", "image/ktx2", "image/vnd-ms.dds")
+PORTABLE_IMAGE_MIMES = ("image/png", "image/jpeg")
+GPU_IMAGE_MIMES = ("image/ktx2", "image/vnd-ms.dds")
 PBR_FALLBACK_FIELDS = ("baseColorFactor", "metallicFactor", "roughnessFactor", "emissiveFactor", "alphaMode")
 
 COLLIDER_SHAPES = ("BOX", "SPHERE", "CAPSULE", "MESH")

@@ -14,6 +14,7 @@ import struct
 import sys
 
 from . import constants as K
+from . import gputex
 from .buffers import read_accessor_flat, read_accessor_np, read_view
 from .container import (AdmFormatError, DEFAULT_LIMITS, ResourceLimitError, read_container)
 from .mathutil import (IDENTITY, det3, mat_mul, mat_translation, node_local_matrix, vcross, vlen, vsub)
@@ -436,6 +437,7 @@ class AdmValidator(_Base):
     def check_textures(self):
         images = self.array("images")
         views = self.array("bufferViews")
+        gpu_info, portable_dims = {}, {}
         for i, im in enumerate(images):
             p = f"images[{i}]"
             if not self.keys(im, p, ("bufferView", "mimeType"), ("name",)):
@@ -453,9 +455,12 @@ class AdmValidator(_Base):
             if self.bin.entries[v["chunkId"]].chunk_type != "IMAG":
                 self.r.error("IMAGE_CHUNK_TYPE", p, "image views must reference IMAG chunks")
                 continue
-            if im["mimeType"] == "image/ktx2":
-                self.r.warning("KTX2_FALLBACK", p,
-                               "KTX2 decoding is unsupported; portable image will be used")
+            if im["mimeType"] in K.GPU_IMAGE_MIMES:
+                blob = read_view(self.doc, self.bin, im["bufferView"])
+                try:
+                    gpu_info[i] = gputex.parse(blob, im["mimeType"], strict=True)
+                except gputex.GpuTextureError as exc:
+                    self.r.error("IMAGE_DECODE", p, f"not a valid ADM-subset {im['mimeType']} image: {exc}")
                 continue
             blob = read_view(self.doc, self.bin, im["bufferView"])
             if im["mimeType"] == "image/png":
@@ -463,9 +468,13 @@ class AdmValidator(_Base):
                     self.r.error("IMAGE_DECODE", p, "bufferView does not contain exactly one PNG image")
                 elif b"acTL" in blob[:4096]:
                     self.r.error("IMAGE_ANIMATED", p, "animated PNG (APNG) is not allowed")
+                else:
+                    portable_dims[i] = gputex.portable_dims(blob, "image/png")
             elif im["mimeType"] == "image/jpeg":
                 if not (blob.startswith(b"\xff\xd8\xff") and blob.rstrip(b"\x00").endswith(b"\xff\xd9")):
                     self.r.error("IMAGE_DECODE", p, "bufferView does not contain exactly one JPEG image")
+                else:
+                    portable_dims[i] = gputex.portable_dims(blob, "image/jpeg")
         samplers = self.array("samplers")
         for i, s in enumerate(samplers):
             p = f"samplers[{i}]"
@@ -484,18 +493,46 @@ class AdmValidator(_Base):
                 continue
             source_ok = self.index(t["source"], len(images), p + ".source", "images")
             source = images[t["source"]] if source_ok else {}
-            is_ktx = isinstance(source, dict) and source.get("mimeType") == "image/ktx2"
-            if is_ktx:
+            mime = source.get("mimeType") if isinstance(source, dict) else None
+            if mime in K.GPU_IMAGE_MIMES:
                 if "fallbackSource" not in t:
-                    self.r.error("IMAGE_FALLBACK_REQUIRED", p, "KTX2 requires a PNG/JPEG fallbackSource")
+                    self.r.error("IMAGE_FALLBACK_REQUIRED", p, f"{mime} requires a PNG/JPEG fallbackSource")
                 elif self.index(t["fallbackSource"], len(images), p + ".fallbackSource", "images"):
                     fallback = images[t["fallbackSource"]]
-                    if not isinstance(fallback, dict) or fallback.get("mimeType") not in ("image/png", "image/jpeg"):
+                    if not isinstance(fallback, dict) or fallback.get("mimeType") not in K.PORTABLE_IMAGE_MIMES:
                         self.r.error("IMAGE_FALLBACK_TYPE", p, "fallbackSource must reference PNG/JPEG")
+                    else:
+                        info = gpu_info.get(t["source"])
+                        dims = portable_dims.get(t["fallbackSource"])
+                        if info and dims and tuple(dims) != (info["width"], info["height"]):
+                            self.r.error("IMAGE_FALLBACK_SIZE", p,
+                                         f"fallback is {dims[0]}x{dims[1]}, primary is "
+                                         f"{info['width']}x{info['height']}")
             elif "fallbackSource" in t:
-                self.r.error("IMAGE_FALLBACK_FORBIDDEN", p, "only KTX2 sources may declare fallbackSource")
+                self.r.error("IMAGE_FALLBACK_FORBIDDEN", p, "only KTX2/DDS sources may declare fallbackSource")
             if "sampler" in t:
                 self.index(t["sampler"], len(samplers), p + ".sampler", "samplers")
+        self._check_gpu_colorspace(textures, gpu_info)
+
+    def _check_gpu_colorspace(self, textures, gpu_info):
+        """GPU texture sRGB/UNORM variant must match how the material decodes the texture (§8.6)."""
+        if not gpu_info:
+            return
+        roles = (("baseColorTexture", True), ("emissiveTexture", True), ("metallicRoughnessTexture", False),
+                 ("normalTexture", False), ("occlusionTexture", False))
+        for mi, mat in enumerate(self.array("materials")):
+            if not isinstance(mat, dict):
+                continue
+            for key, srgb in roles:
+                ref = mat.get(key)
+                ti = ref.get("index") if isinstance(ref, dict) else None
+                if not isinstance(ti, int) or not 0 <= ti < len(textures) or not isinstance(textures[ti], dict):
+                    continue
+                info = gpu_info.get(textures[ti].get("source"))
+                if info and info["srgb"] != srgb:
+                    want = "sRGB" if srgb else "UNORM (linear)"
+                    self.r.error("IMAGE_COLORSPACE", f"materials[{mi}].{key}",
+                                 f"texture {ti} must use the {want} variant of its GPU format")
 
     # shaders -------------------------------------------------------------------------------------
     def check_shader_param_def(self, prm, p, ntex):

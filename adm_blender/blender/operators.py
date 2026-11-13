@@ -964,7 +964,8 @@ class ADM_OT_material_texture_open(_SlotOp, bpy.types.Operator):
     bl_idname = "adm.material_texture_open"
     bl_label = "Open Texture"
     filepath: StringProperty(subtype="FILE_PATH")
-    filter_image: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
+    filter_glob: StringProperty(default="*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.tif;*.tiff;*.exr;*.hdr;*.webp;*.dds;*.ktx2",
+                                options={"HIDDEN", "SKIP_SAVE"})
     filter_folder: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, event):
@@ -972,9 +973,9 @@ class ADM_OT_material_texture_open(_SlotOp, bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        from .materials import set_slot_image
+        from .materials import load_image_file, set_slot_image
         try:
-            img = bpy.data.images.load(self.filepath, check_existing=True)
+            img = load_image_file(self.filepath)
             set_slot_image(_active_material(context), self.slot, img)
         except (RuntimeError, ValueError) as e:
             self.report({"ERROR"}, str(e))

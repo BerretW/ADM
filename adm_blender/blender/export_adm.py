@@ -20,9 +20,9 @@ from ..core.container import AdmFormatError, write_container
 from ..core.rigid import rig_id_from_document
 from ..core.validate import validate_adm
 from . import convert as cv
-from .materials import MaterialExporter, ShaderExportError
+from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.2.0 (ADM Draft 0.4)"
+GENERATOR = "ADM Tools for Blender 1.3.0 (ADM Draft 0.4)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -46,7 +46,9 @@ class ExportOptions:
         self.export_colors = True
         self.export_morph_normals = True
         self.export_materials = True
-        self.image_format = "AUTO"  # AUTO | PNG
+        self.image_format = "PNG"  # PNG | AUTO (keep PNG/JPEG) | KTX2 | DDS
+        self.gpu_compression = "AUTO"  # AUTO | BC1 | BC3 | RGBA8 (KTX2/DDS payload)
+        self.gpu_mipmaps = True
         self.validate = True
         for k, v in kw.items():
             if not hasattr(self, k):
@@ -145,7 +147,8 @@ class ModelExporter:
         self.node_skin = {}
         self.skins = []
         self.skin_cache = {}
-        self.mat = MaterialExporter(self.b, self.warn, self.opts.image_format)
+        self.mat = MaterialExporter(self.b, self.warn, self.opts.image_format,
+                                    gpu_compression=self.opts.gpu_compression, gpu_mipmaps=self.opts.gpu_mipmaps)
         self.mat.shader_defs = {(d.shader_id.strip(), d.version.strip()): d
                                 for d in context.scene.adm_anim.shaders}
         self.allowed = self._allowed_objects()
@@ -883,7 +886,7 @@ class ModelExporter:
     def export(self):
         try:
             return self._export()
-        except (ShaderExportError, AdmFormatError) as exc:
+        except (ShaderExportError, TextureExportError, AdmFormatError) as exc:
             raise ExportError(str(exc)) from exc
 
     def _export(self):

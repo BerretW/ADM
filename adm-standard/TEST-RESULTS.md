@@ -29,6 +29,22 @@ Executed by the reference Blender toolkit, not by an independent implementation:
 
 **Not covered:** independent interoperability, calibrated T-pose fixtures, animal anatomy review, and UI interaction.
 
+## Draft 0.4 P3 GPU texture container tests
+
+Executed by the reference Blender toolkit, not by an independent implementation:
+
+- `python -m unittest adm_blender.tests.test_gputex`: 11 tests (NumPy).
+  - KTX2 and DDS round trip for RGBA8/BC1/BC3 × sRGB/UNORM with mip sizes; exact BC1/BC3 block bit packing; sRGB-correct mip filtering.
+  - Header fields (vkFormat, level index order and alignment, DFD, DX10 header).
+  - Rejection of supercompression, cubemaps, arrays, BC7, trailing and truncated data; legacy DDS accepted only as authoring input.
+  - Validator codes `IMAGE_FALLBACK_REQUIRED`, `IMAGE_FALLBACK_SIZE`, `IMAGE_COLORSPACE`.
+- `blender -b --factory-startup --python adm_blender/tests/test_texture_formats.py`: all checks passing.
+  - Blender's own DDS reader (OpenImageIO) decodes the toolkit's DDS output identically to the toolkit (RGBA8 exact, BC1/BC3 within 1 LSB). This is the only cross-implementation check.
+  - The PNG default converts JPEG, DDS and KTX2 sources to PNG with identical pixels; *Keep PNG/JPEG* keeps the JPEG bytes.
+  - KTX2/DDS export: the correct sRGB/UNORM variant per role, mips, primary vs PNG fallback (RGBA8 exact, BC mean error ≤ 12/255), validator clean, import resolves the fallback.
+
+**Not covered:** validation by the official KTX-Software `ktx validate` tool and GPU upload tests.
+
 ## Draft 0.4 P1 mechanical profile tests
 
 Added separate profile structural validator, example vehicle, firearm and accessory files, and example mechanical component animation libraries. `tools/test_profiles.py` checks role constraints, frame axes and basic math, and `tools/container.py` checks container validity/hashes. **This does not constitute full certification**: independent Blender round-trip, full skeletal/mechanical retargeting, kinematic endpoint golden files and renderer/LOD semantics remain to be tested.

@@ -19,6 +19,7 @@ Areas found while implementing the skeleton profile registry (revision P2) that 
 | `SPEC_GAP-STAND` | §11 | No reference pose is defined for non-humanoids. | Proposed `STAND`: forward −Z, limbs down, advisory 45°. |
 | `SPEC_GAP-RETARGET-MAP` | §11, §16 | No format for approved cross-profile retarget maps. | `retargetMaps` is empty for every profile, so every cross-profile binding is INCOMPATIBLE. |
 | `SPEC_GAP-CUSTOM-PROFILE` | §11, §28 | "Published with validation rules and example rigs": no machine-readable format is given. | Custom ids (`org.domain.name.vN`) are allowed. They have no semantic rules, so only EXACT binding is portable, and the tool warns. |
+| `SPEC_GAP-KTX2-SUBSET` | §8 | "KTX2 support means decoding the explicitly published subset", but no subset was published; DDS was excluded outright. | **Resolved in P3:** §8.6 registers the KTX2 and DDS (DX10) subset: RGBA8 / BC1 / BC3, sRGB vs UNORM per role, embedded mips, mandatory same-size PNG/JPEG fallback. Basis Universal, BC4–BC7, ASTC/ETC2 and supercompression remain future work. |
 
 ## Retained Draft 0.4 limitations
 

@@ -33,3 +33,11 @@
 - §11 schema consistency fix: lists the optional `targetHeight`, `referenceCorrection` and `rigId` members that §11.1/§16 already used. Clarified the VRM +Z vs ADM −Z facing and the mirrored-rig rule.
 - Added `SPEC_GAPS.md`, the register of unresolved points (pose tolerance, correction convention, multi-segment IK, joint limits, retarget maps, …).
 - No binary container change.
+
+## Draft 0.4 revision P3 — GPU texture containers
+
+- Added §8.6, the GPU texture container registry: optional capabilities `ADM-TEX-KTX2-1` and the new `ADM-TEX-DDS-1` (`image/vnd-ms.dds`, DX10 header only).
+- Registered formats RGBA8, BC1 and BC3 in sRGB and UNORM variants, with optional precomputed mip levels. Supercompression, Basis Universal, BC4–BC7, arrays and cubemaps are excluded.
+- A KTX2/DDS source always requires a PNG/JPEG `fallbackSource` of identical pixel size. Colour textures must use sRGB and data textures UNORM.
+- New validation codes `IMAGE_FALLBACK_SIZE` and `IMAGE_COLORSPACE`; conformance tests `MAT-005` (now certifiable) and `TEX-001..003`. Closes `SPEC_GAP-KTX2-SUBSET`.
+- No binary container change.

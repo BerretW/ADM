@@ -44,7 +44,8 @@ physical materials and bone-linked hitboxes.
 ### Important limits
 
 - RAW chunk storage is supported; optional ZSTD decoding is not.
-- KTX2 textures use their required embedded PNG/JPEG fallback.
+- Textures export as PNG by default (any source format is converted). KTX2 or DDS (RGBA8/BC1/BC3)
+  can be chosen at export and always carry an embedded PNG fallback; Basis Universal and BC7 are not supported.
 - Non-core shaders use an explicitly reported PBR preview fallback. Their metadata and parameter
   tracks are preserved; exact custom/layered shader rendering is not claimed.
 - Vehicle/weapon profile names remain provisional. Physics, damage and other gameplay behavior
@@ -57,13 +58,14 @@ before making interoperability or conformance claims.
 
 ## Development and tests
 
-The core and reference tests require **Python 3.11+**, with no third-party packages.
+The core and reference tests require **Python 3.11+**, with no third-party packages. The KTX2/DDS
+codec test (`test_gputex`) additionally needs NumPy (`pip install numpy`).
 Blender supplies its own Python, `bpy` and NumPy for add-on tests.
 
 Run from the repository root:
 
 ```powershell
-python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4 -v
+python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_gputex -v
 python .\adm-standard\tools\run_tests.py
 ```
 
@@ -74,6 +76,7 @@ Run Blender round trips separately:
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_workflow.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_skeleton_blender.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_material_slots.py
+& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_texture_formats.py
 ```
 
 The [CI workflow](.github/workflows/ci.yml) runs core/reference tests and verifies fixture regeneration

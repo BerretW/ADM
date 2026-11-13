@@ -107,8 +107,8 @@ class Draft4Tests(unittest.TestCase):
             return validate_adm(write_container(K.ADM_MAGIC, changed, chunks))
 
         report = validate(doc)
-        self.assertTrue(report.ok, report.format())
-        self.assertIn("KTX2_FALLBACK", {e.code for e in report.warnings})
+        # A header-only stub is not a decodable ADM-subset KTX2 (valid files: test_gputex).
+        self.assertIn("IMAGE_DECODE", {e.code for e in report.errors})
         for texture, code in (({"source": 0}, "IMAGE_FALLBACK_REQUIRED"),
                               ({"source": 0, "fallbackSource": 0}, "IMAGE_FALLBACK_TYPE"),
                               ({"source": 1, "fallbackSource": 0}, "IMAGE_FALLBACK_FORBIDDEN")):

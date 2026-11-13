@@ -83,9 +83,21 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
     export_colors: BoolProperty(name="Vertex Colors", default=True)
     export_morph_normals: BoolProperty(name="Shape Key Normals", default=True)
     export_materials: BoolProperty(name="Materials", default=True)
-    image_format: EnumProperty(name="Images", default="AUTO", items=[
-        ("AUTO", "Automatic", "Keep PNG/JPEG source bytes, otherwise encode PNG"),
-        ("PNG", "PNG", "Always re-encode as PNG")])
+    image_format: EnumProperty(name="Images", default="PNG", items=[
+        ("PNG", "PNG", "Embed every texture as PNG; JPEG, DDS, KTX2, TGA, EXR… sources are converted. "
+                       "Readable by every ADM reader"),
+        ("AUTO", "Keep PNG/JPEG", "Keep PNG/JPEG source bytes unchanged, convert everything else to PNG"),
+        ("KTX2", "KTX2 + PNG fallback", "GPU-ready KTX2 (optional capability ADM-TEX-KTX2-1) plus the "
+                                        "mandatory PNG fallback for readers without KTX2"),
+        ("DDS", "DDS + PNG fallback", "GPU-ready DDS/DX10 (optional capability ADM-TEX-DDS-1) plus the "
+                                      "mandatory PNG fallback for readers without DDS")])
+    gpu_compression: EnumProperty(name="GPU Format", default="AUTO", items=[
+        ("AUTO", "Auto (BC1/BC3)", "BC1 for opaque textures, BC3 when the texture has alpha"),
+        ("BC1", "BC1 / DXT1", "4 bpp, no alpha"),
+        ("BC3", "BC3 / DXT5", "8 bpp with alpha"),
+        ("RGBA8", "RGBA8 (uncompressed)", "Lossless, 32 bpp")])
+    gpu_mipmaps: BoolProperty(name="Mipmaps", default=True,
+                              description="Store a full mip chain in the KTX2/DDS image")
 
     def invoke(self, context, event):
         root = find_model_root(context.active_object) if context.active_object else None
@@ -106,13 +118,18 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
         col = lay.column(heading="Material")
         col.prop(self, "export_materials")
         col.prop(self, "image_format")
+        if self.image_format in ("KTX2", "DDS"):
+            sub = col.column()
+            sub.prop(self, "gpu_compression")
+            sub.prop(self, "gpu_mipmaps")
 
     def _options(self, selected):
         return ExportOptions(selected_only=selected, apply_modifiers=self.apply_modifiers,
                              export_normals=self.export_normals, export_tangents=self.export_tangents,
                              export_uv1=self.export_uv1, export_colors=self.export_colors,
                              export_morph_normals=self.export_morph_normals,
-                             export_materials=self.export_materials, image_format=self.image_format)
+                             export_materials=self.export_materials, image_format=self.image_format,
+                             gpu_compression=self.gpu_compression, gpu_mipmaps=self.gpu_mipmaps)
 
     def _one(self, context, path, root, selected):
         try:

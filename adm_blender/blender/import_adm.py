@@ -119,7 +119,7 @@ class ModelImporter:
     def load_images(self):
         self.images = []
         for i, im in enumerate(self.doc.get("images", [])):
-            if im["mimeType"] == "image/ktx2":
+            if im["mimeType"] in K.GPU_IMAGE_MIMES:
                 self.images.append(None)
                 continue
             blob = read_view(self.doc, self.bin, im["bufferView"])
@@ -144,9 +144,12 @@ class ModelImporter:
     def resolve_texture(self, ref):
         tex = self.doc["textures"][ref["index"]]
         source = tex["source"]
-        if self.doc["images"][source]["mimeType"] == "image/ktx2":
+        mime = self.doc["images"][source]["mimeType"]
+        if mime in K.GPU_IMAGE_MIMES:
             source = tex["fallbackSource"]
-            self.warn(f"KTX2_FALLBACK: texture {ref['index']} uses embedded PNG/JPEG fallback")
+            code = "KTX2_FALLBACK" if mime == "image/ktx2" else "DDS_FALLBACK"
+            self.warn(f"{code}: texture {ref['index']} uses the embedded PNG/JPEG fallback "
+                      f"(the {mime} primary is kept only for GPU runtimes)")
         img = self.images[source]
         smp = self.doc["samplers"][tex["sampler"]] if "sampler" in tex else None
         return img, smp

@@ -14,6 +14,7 @@ sys.path.insert(0, REPO)
 FIX = os.path.join(REPO, "adm-standard", "fixtures", "valid")
 
 import bpy  # noqa: E402
+import numpy as np  # noqa: E402
 
 import adm_blender  # noqa: E402
 
@@ -119,8 +120,10 @@ def main(tmp):
         check(type(exc).__name__ == "ImportError_", "clean refusal without rig")
 
     print("== KTX2 primary / portable PNG fallback")
+    from adm_blender.core import gputex
     builder = BinBuilder()
-    primary = builder.add_view(b"\xabKTX 20\xbb\r\n\x1a\n" + bytes(68), chunk_type="IMAG")
+    red = np.array([[[255, 0, 0, 255]]], dtype=np.uint8)
+    primary = builder.add_view(gputex.encode(red, gputex.MIME_KTX2, "BC1", srgb=True)[0], chunk_type="IMAG")
     alternate = builder.add_view(encode_png(1, 1, b"\xff\x00\x00\xff"), chunk_type="IMAG")
     doc = {"asset": {}, "nodes": [{}], "scenes": [{"nodes": [0]}], "scene": 0, "meshes": [],
            "bufferViews": builder.buffer_views, "accessors": [],
@@ -133,7 +136,7 @@ def main(tmp):
         fh.write(write_container(K.ADM_MAGIC, doc, builder.bytes()))
     importer = ModelImporter(ctx, ktx_path, ImportOptions())
     importer.run()
-    check(importer.images[0] is None, "unsupported KTX2 primary not decoded")
+    check(importer.images[0] is None, "KTX2 primary left to GPU runtimes, not imported")
     check(importer.images[1] is not None, "portable PNG decoded")
     image, _ = importer.resolve_texture({"index": 0})
     check(image == importer.images[1], "material resolves portable fallback image")
