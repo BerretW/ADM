@@ -1,5 +1,5 @@
 {
-  "registryVersion": "0.4-P2",
+  "registryVersion": "0.4-P4",
   "specification": "ADM 1.0 Draft 0.4",
   "coordinateSystem": {
     "up": [
@@ -380,7 +380,7 @@
           }
         ],
         "toleranceDeg": 25.0,
-        "toleranceStatus": "ADVISORY"
+        "toleranceStatus": "NORMATIVE"
       },
       "localAxes": "UNCONSTRAINED",
       "ikTemplates": [
@@ -690,7 +690,7 @@
           }
         ],
         "toleranceDeg": 45.0,
-        "toleranceStatus": "ADVISORY"
+        "toleranceStatus": "PROVISIONAL_DIAGNOSTIC"
       },
       "localAxes": "UNCONSTRAINED",
       "ikTemplates": [
@@ -979,7 +979,7 @@
           }
         ],
         "toleranceDeg": 45.0,
-        "toleranceStatus": "ADVISORY"
+        "toleranceStatus": "PROVISIONAL_DIAGNOSTIC"
       },
       "localAxes": "UNCONSTRAINED",
       "ikTemplates": [
@@ -1269,7 +1269,7 @@
           }
         ],
         "toleranceDeg": 45.0,
-        "toleranceStatus": "ADVISORY"
+        "toleranceStatus": "PROVISIONAL_DIAGNOSTIC"
       },
       "localAxes": "UNCONSTRAINED",
       "ikTemplates": [
@@ -1579,7 +1579,7 @@
           }
         ],
         "toleranceDeg": 45.0,
-        "toleranceStatus": "ADVISORY"
+        "toleranceStatus": "PROVISIONAL_DIAGNOSTIC"
       },
       "localAxes": "UNCONSTRAINED",
       "ikTemplates": [

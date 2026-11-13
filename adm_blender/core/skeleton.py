@@ -188,7 +188,7 @@ def analyze_rig(profile_id, bones, assignments, check_pose=True):
         for chk, ang in bad:
             add(ERROR, "REFERENCE_POSE", f"{chk['from']}->{chk['to']} deviates {ang:.1f} deg from the "
                                          f"'{rp['name']}' reference direction {chk['direction']} "
-                                         f"(advisory tolerance {tol:g} deg)",
+                                         f"(maximum deviation {tol:g} deg)",
                 role=chk["from"], bone=role_bone.get(chk["from"], ""))
     return issues
 

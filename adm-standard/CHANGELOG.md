@@ -39,5 +39,15 @@
 - Added §8.6, the GPU texture container registry: optional capabilities `ADM-TEX-KTX2-1` and the new `ADM-TEX-DDS-1` (`image/vnd-ms.dds`, DX10 header only).
 - Registered formats RGBA8, BC1 and BC3 in sRGB and UNORM variants, with optional precomputed mip levels. Supercompression, Basis Universal, BC4–BC7, arrays and cubemaps are excluded.
 - A KTX2/DDS source always requires a PNG/JPEG `fallbackSource` of identical pixel size. Colour textures must use sRGB and data textures UNORM.
-- New validation codes `IMAGE_FALLBACK_SIZE` and `IMAGE_COLORSPACE`; conformance tests `MAT-005` (now certifiable) and `TEX-001..003`. Closes `SPEC_GAP-KTX2-SUBSET`.
+- New validation codes `IMAGE_FALLBACK_SIZE` and `IMAGE_COLORSPACE`; specified conformance tests `MAT-005` and `TEX-001..003`. Independent conformance testing remains outstanding. Closes the format-definition gap `SPEC_GAP-KTX2-SUBSET`.
 - No binary container change.
+
+## Draft 0.4 revision P4 — semantic skeleton, animation and IK gap resolution
+
+- Made the `.adm_anim` library key set normative and aligned it with the already implemented `revision`, `namespace`, `motionScale`, `sourceHeight` and `rootMotionSource` fields.
+- Defined the 25° humanoid reference-pose tolerance, coordinate-basis conversion rule, and `ADM-REF-NORM-1` rest-rotation correction algorithm. Humanoid semantic files now require and validate corrections for every mapped role.
+- Clarified that VRM humanoid root motion uses `hips`, never a synthesized `root` role; v1 EXTRACT is limited to semantic humanoid hips tracks.
+- Defined the skeleton registry/template file schema, custom profile publication requirements, and the explicit v1 prohibition on cross-profile retarget maps.
+- Specified exact two-bone reach clamping and the equal-length zero-distance singularity rule; documented that joint limits and multi-segment IK are outside ADM-IK-1.
+- Animal profiles, their STAND pose, and cross-species retarget remain provisional pending explicit anatomical approval and independent fixtures.
+- Updated the reference solver and validator to match the clarified humanoid reference-pose, correction and IK rules.

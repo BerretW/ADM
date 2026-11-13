@@ -27,7 +27,12 @@ MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
 EXPORT_BLOCKING_RIG_CODES = {"PROFILE_ID", "ROLE_UNKNOWN", "ROLE_DUPLICATE", "ROLE_MISSING", "ROLE_NEEDS_PARENT",
-                             "ROLE_HIERARCHY", "ROLE_BONE_MISSING", "REFERENCE_POSE", "REFERENCE_FACING"}
+                             "ROLE_HIERARCHY", "ROLE_BONE_MISSING"}
+
+
+def rig_issue_blocks_semantic(pid, code):
+    return code in EXPORT_BLOCKING_RIG_CODES or (
+        pid == "humanoid.vrm1" and code in {"REFERENCE_POSE", "REFERENCE_FACING", "REFERENCE_CORRECTION"})
 
 
 class ExportError(Exception):
@@ -767,8 +772,17 @@ class ModelExporter:
                     raise ExportError(f"armature '{arm.name}': role '{r}' assigned to more than one bone")
                 roles[r] = self.bone_node[(arm.name, bone.name)]
                 if pid == "humanoid.vrm1":
-                    q = (Quaternion(bone.adm.reference_correction) if bone.adm.use_reference_correction
-                         else normalized_correction(arm, bone))
+                    q = normalized_correction(arm, bone)
+                    if bone.adm.use_reference_correction:
+                        stored = Quaternion(bone.adm.reference_correction)
+                        stored.normalize()
+                        actual = tuple(stored)
+                        expected = tuple(q)
+                        error = min(max(abs(a - b) for a, b in zip(actual, expected)),
+                                    max(abs(a + b) for a, b in zip(actual, expected)))
+                        if error > 1e-4:
+                            raise ExportError(f"armature '{arm.name}' bone '{bone.name}': reference correction "
+                                              "does not match the normative inverse rest rotation")
                     corr[r] = cv.quat_to_adm(q)
                 elif bone.adm.use_reference_correction:
                     q = Quaternion(bone.adm.reference_correction)
@@ -786,7 +800,7 @@ class ModelExporter:
                 for issue in SK.analyze_rig(pid, joint_table(arm), [(b.name, b.adm.role.strip())
                                                                      for b in arm.data.bones if b.adm.role.strip()]):
                     where = f"armature '{arm.name}'" + (f" bone '{issue.bone}'" if issue.bone else "")
-                    if issue.code in EXPORT_BLOCKING_RIG_CODES:
+                    if rig_issue_blocks_semantic(pid, issue.code):
                         raise ExportError(f"{where}: {issue.message}")
                     if issue.severity != SK.INFO:
                         self.warn(f"{where}: {issue.code}: {issue.message}")

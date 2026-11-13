@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 import traceback
+from copy import deepcopy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -23,6 +24,9 @@ import bpy  # noqa: E402
 from mathutils import Euler, Quaternion, Vector  # noqa: E402
 
 import adm_blender  # noqa: E402
+from adm_blender.core import constants as K  # noqa: E402
+from adm_blender.core.container import write_container  # noqa: E402
+from adm_blender.core.validate import validate_adm  # noqa: E402
 from adm_blender.tests.test_skeleton_profiles import humanoid_rig, quadruped_rig  # noqa: E402
 
 FAILS = []
@@ -385,6 +389,13 @@ def main(tmp):
     node_name = {i: n.get("name") for i, n in enumerate(doc["nodes"])}
     check({node_name[i]: r for r, i in prof["roles"].items()} == rolesA, "roles exported by node")
     check(set(prof.get("referenceCorrection", {})) == set(rolesA.values()), "normalized corrections exported")
+    missing_correction = deepcopy(doc)
+    missing_role = next(iter(missing_correction["skeletonProfiles"][0]["referenceCorrection"]))
+    del missing_correction["skeletonProfiles"][0]["referenceCorrection"][missing_role]
+    correction_report = validate_adm(
+        write_container(K.ADM_MAGIC, missing_correction, rep.bin))
+    check("PROFILE_CORRECTION_REQUIRED" in {e.code for e in correction_report.errors},
+          f"missing correction for {missing_role} is rejected")
     chains = {c["id"]: c for c in doc.get("ikChains", [])}
     check(set(chains) == set(tmpl), f"IK chains exported {sorted(chains)}")
     for cid, c in chains.items():

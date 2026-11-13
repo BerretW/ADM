@@ -21,13 +21,13 @@ import re
 
 from . import constants as K
 
-REGISTRY_VERSION = "0.4-P2"
+REGISTRY_VERSION = "0.4-P4"
 
 NORMATIVE = "NORMATIVE"
 EXACT_ONLY = "EXACT_ONLY"
 PROVISIONAL = "PROVISIONAL"
 
-# Advisory angular tolerance for reference pose direction checks (SPEC_GAP-REFPOSE-TOL).
+# Normative maximum angular deviation for registered reference-pose checks.
 DEFAULT_POSE_TOLERANCE_DEG = 25.0
 
 LEFT, RIGHT, UP, DOWN, FORWARD, BACK = (-1, 0, 0), (1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, -1), (0, 0, 1)
@@ -82,7 +82,7 @@ def _humanoid():
             "name": "T", "up": list(UP), "forward": list(FORWARD), "right": list(RIGHT),
             "sides": [{"left": "leftUpperLeg", "right": "rightUpperLeg"},
                       {"left": "leftUpperArm", "right": "rightUpperArm"}],
-            "checks": checks, "toleranceDeg": DEFAULT_POSE_TOLERANCE_DEG, "toleranceStatus": "ADVISORY",
+            "checks": checks, "toleranceDeg": DEFAULT_POSE_TOLERANCE_DEG, "toleranceStatus": "NORMATIVE",
         },
         "localAxes": "UNCONSTRAINED",
         "ikTemplates": ik,
@@ -147,7 +147,7 @@ def _quadruped(pid, title, front, hind, scapula_required, toes_required, gait, e
             "name": "STAND", "up": list(UP), "forward": list(FORWARD), "right": list(RIGHT),
             "sides": [{"left": "leftFront" + front[0], "right": "rightFront" + front[0]},
                       {"left": "leftHind" + hind[0], "right": "rightHind" + hind[0]}],
-            "checks": checks, "toleranceDeg": 45.0, "toleranceStatus": "ADVISORY",
+            "checks": checks, "toleranceDeg": 45.0, "toleranceStatus": "PROVISIONAL_DIAGNOSTIC",
         },
         "localAxes": "UNCONSTRAINED",
         "ikTemplates": ik,

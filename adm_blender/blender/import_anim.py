@@ -1,6 +1,7 @@
 """ADM animation library (.adm_anim) -> Blender actions + Scene.adm_anim metadata."""
 
 import json
+import math
 import os
 
 import bpy
@@ -67,8 +68,8 @@ def check_library_compat(context, arm, doc, allow_provisional=True):
     Returns (level, reasons, rig_warnings). Structural rig errors and humanoid reference-pose
     deviations make SEMANTIC binding INCOMPATIBLE; provisional animal diagnostics remain warnings.
     """
-    from .export_adm import EXPORT_BLOCKING_RIG_CODES
-    from .rig import assignments, joint_table
+    from .export_adm import rig_issue_blocks_semantic
+    from .rig import assignments, joint_table, normalized_correction
     lib = doc["library"]
     rig_warnings = []
     if arm is None:
@@ -81,12 +82,33 @@ def check_library_compat(context, arm, doc, allow_provisional=True):
         exact = bool(rig_id_matches(context, arm, lib["rigId"]))
     issues = []
     if lib.get("binding") == "SEMANTIC":
-        for i in SK.analyze_rig(pid, joint_table(arm), assignments(arm)):
-            if i.code in EXPORT_BLOCKING_RIG_CODES:
+        bone_assignments = assignments(arm)
+        for i in SK.analyze_rig(pid, joint_table(arm), bone_assignments):
+            if rig_issue_blocks_semantic(pid, i.code):
                 issues.append(i)
             elif i.severity != SK.INFO and i.code not in ("PROFILE_PROVISIONAL",):
                 rig_warnings.append(f"rig '{arm.name}' {i.code}"
                                     f"{' (' + (i.bone or i.role) + ')' if (i.bone or i.role) else ''}: {i.message}")
+        if pid == "humanoid.vrm1":
+            for bone_name, role in bone_assignments:
+                bone = arm.data.bones.get(bone_name)
+                if bone is None:
+                    continue
+                if not bone.adm.use_reference_correction:
+                    issues.append(SK.RigIssue(SK.ERROR, "REFERENCE_CORRECTION",
+                                              "humanoid semantic retarget requires a normalized correction",
+                                              role=role, bone=bone_name))
+                    continue
+                stored = Quaternion(bone.adm.reference_correction)
+                expected = normalized_correction(arm, bone)
+                actual_values, expected_values = tuple(stored), tuple(expected)
+                correction_error = min(
+                    max(abs(a - b) for a, b in zip(actual_values, expected_values)),
+                    max(abs(a + b) for a, b in zip(actual_values, expected_values)))
+                if correction_error > 1e-4:
+                    issues.append(SK.RigIssue(SK.ERROR, "REFERENCE_CORRECTION",
+                                              f"normalized correction differs by {correction_error:.6g}",
+                                              role=role, bone=bone_name))
     rig_roles = {r for _b, r in assignments(arm)}
     level, reasons = SK.library_compatibility(lib, pid, rig_roles, exact, issues, library_channel_roles(doc))
     if level == SK.INCOMPATIBLE and exact is False:
@@ -126,6 +148,11 @@ class AnimImporter:
             raise ImportError_("select the target armature (rig) before importing an animation library")
         self.arm = arm
         self.binding = lib["binding"]
+        if (arm is not None and lib.get("motionScale") == "SOURCE_HEIGHT"
+                and (not arm.data.adm.use_target_height or not math.isfinite(arm.data.adm.target_height)
+                     or arm.data.adm.target_height <= 0)):
+            raise ImportError_("library motionScale SOURCE_HEIGHT requires a finite positive target height "
+                               "on the rig; no unscaled fallback is permitted")
         if not self.model_any:
             self._check_compat(lib)
         self._prepare_targets(lib)
@@ -243,11 +270,7 @@ class AnimImporter:
                         (fb.object.data.shape_keys, fb.target, fb.scale))
         if lib.get("motionScale") == "SOURCE_HEIGHT":
             sk = arm.data.adm
-            if sk.use_target_height:
-                self.motion_scale = sk.target_height / lib["sourceHeight"]
-            else:
-                self.warn("library uses motionScale SOURCE_HEIGHT but the rig has no Target Height; "
-                          "hips offsets are applied unscaled")
+            self.motion_scale = sk.target_height / lib["sourceHeight"]
 
     def _root_bone(self, clip):
         cands = [c["target"]["nodeName"] for c in clip["channels"]
