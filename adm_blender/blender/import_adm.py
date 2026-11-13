@@ -16,7 +16,7 @@ from ..core.validate import validate_adm
 from . import convert as cv
 from .colliders import new_collider_object
 from .export_adm import rest_fingerprint
-from .materials import UV_NAMES, apply_shader, build_material, import_shader_definitions
+from .materials import UV_NAMES, apply_shader, build_material, has_profile_preview, import_shader_definitions
 from .props import SKELETON_PROFILES
 
 
@@ -106,7 +106,7 @@ class ModelImporter:
         for m in d.get("materials", []):
             mat = build_material(m, self.resolve_texture)
             apply_shader(mat, m, self.context.scene, resolve_image)
-            if mat.adm.shader != "CORE":
+            if not has_profile_preview(mat.adm.shader):
                 self.warn(f"SHADER_FALLBACK: material '{mat.name}' uses portable PBR shading; "
                           f"{mat.adm.shader_key()[0]}@{mat.adm.shader_key()[1]} is preserved for export")
             self.materials.append(mat)

@@ -75,3 +75,33 @@ def weather_color(base_color, tint, mask, amount, darken=0.35):
     weight = clamp(float(mask) * float(amount))
     return tuple(float(a) * (1.0 - weight) + float(a) * float(darken) * weight
                  for a in base_color)
+
+
+def brick(brick_rgb, mortar_rgb, mortar_mask, brick_roughness, mortar_roughness, dirt_mask=None):
+    """adm.building.brick@1.0.0: returns (linear rgb, roughness)."""
+    m = clamp(mortar_mask)
+    color = [float(b) * (1.0 - m) + float(o) * m for b, o in zip(brick_rgb, mortar_rgb)]
+    if dirt_mask is not None:
+        k = 1.0 + (0.35 - 1.0) * clamp(dirt_mask)
+        color = [c * k for c in color]
+    return tuple(color), float(brick_roughness) * (1.0 - m) + float(mortar_roughness) * m
+
+
+def mortar_mask_pixels(width, height, rows, columns, mortar, offset=0.5):
+    """Running-bond mortar mask (1 = mortar) as float32 array (height, width), bottom row first.
+
+    ``mortar`` is the joint width as a fraction of one brick row height; odd rows shift by ``offset`` bricks.
+    """
+    import numpy as np
+    v = (np.arange(height, dtype=np.float64) + 0.5) / height * rows
+    u = (np.arange(width, dtype=np.float64) + 0.5) / width * columns
+    row = np.floor(v)
+    fv = v - row
+    half = mortar * 0.5
+    horiz = (fv < half) | (fv > 1.0 - half)
+    uu = u[None, :] + (row[:, None] % 2) * offset
+    fu = uu - np.floor(uu)
+    # Same joint width in UV space as the horizontal joints: (mortar / rows) UV = mortar * columns / rows bricks.
+    half_u = half * columns / rows
+    vert = (fu < half_u) | (fu > 1.0 - half_u)
+    return (horiz[:, None] | vert).astype(np.float32)

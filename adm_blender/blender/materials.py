@@ -413,10 +413,10 @@ class MaterialExporter:
         return out
 
     # shaders --------------------------------------------------------------------------------
-    def _texref(self, image, tex_coord):
+    def _texref(self, image, tex_coord, color_role=False):
         if image is None:
             return None
-        ref = {"index": self.texture_from_image(image, False)}
+        ref = {"index": self.texture_from_image(image, color_role)}
         if tex_coord:
             ref["texCoord"] = 1
         return ref
@@ -496,15 +496,17 @@ class MaterialExporter:
                 if prm is None:
                     self.warn(f"material '{mat.name}': parameter '{v.name}' is not part of {key[0]}@{key[1]}, skipped")
                     continue
-                val = param_value_from_prop(prm["type"], v, lambda img, uv: self._texref(img, uv))
+                val = param_value_from_prop(prm["type"], v, lambda img, uv, n=v.name: self._texref(
+                    img, uv, n in K.SHADER_COLOR_TEXTURES))
                 err = param_value_error(prm, val, None)
                 if err:
                     raise ShaderExportError(f"material '{mat.name}': parameter '{v.name}': {err}")
                 values[v.name] = val
             if values:
                 out["shaderParameters"] = values
-            self.warn(f"material '{mat.name}': {key[0]}@{key[1]} is preserved with portable PBR fallback; "
-                      "this profile has no Blender node preview yet")
+            if not has_profile_preview(a.shader):
+                self.warn(f"material '{mat.name}': {key[0]}@{key[1]} is preserved with portable PBR fallback; "
+                          "this profile has no Blender node preview yet")
             return
         sdef = self.shader_defs.get(key)
         if sdef is None:
@@ -753,6 +755,32 @@ def _set_vec(prop_owner, attr, value, n):
     setattr(prop_owner, attr, cur)
 
 
+_param_update_lock = [0]
+
+
+class quiet_param_updates:
+    """Suppress the auto-override/preview-rebuild callbacks of ADMShaderParamValue while code writes them."""
+
+    def __enter__(self):
+        _param_update_lock[0] += 1
+
+    def __exit__(self, *exc):
+        _param_update_lock[0] -= 1
+        return False
+
+
+def param_updates_quiet():
+    return _param_update_lock[0] > 0
+
+
+def _quietly(fn):
+    def wrapper(*args, **kwargs):
+        with quiet_param_updates():
+            return fn(*args, **kwargs)
+    wrapper.__name__, wrapper.__doc__ = fn.__name__, fn.__doc__
+    return wrapper
+
+
 def import_shader_definitions(scene, doc, resolve_image):
     """Add the document's embedded shader definitions to ``scene.adm_anim.shaders`` (skip existing)."""
     shaders = scene.adm_anim.shaders
@@ -788,6 +816,7 @@ def import_shader_definitions(scene, doc, resolve_image):
                 pd.default_tex_coord = p["default"].get("texCoord", 0)
 
 
+@_quietly
 def sync_material_params(mat, sdef):
     """Make ``mat.adm.params`` mirror the definition (keeps existing values, drops stale entries)."""
     a = mat.adm
@@ -808,6 +837,7 @@ def sync_material_params(mat, sdef):
         v.tex_coord = p.default_tex_coord
 
 
+@_quietly
 def sync_official_shader_params(mat, key=None):
     """Make material parameter values match a registered profile's typed schema."""
     key = key or mat.adm.shader_key()
@@ -849,7 +879,14 @@ def _apply_shader_value(v, typ, val, resolve_image):
 
 
 def apply_shader(mat, m, scene, resolve_image):
-    """Read ADM shader fields of material dict ``m`` into ``mat.adm``."""
+    """Read ADM shader fields of material dict ``m`` into ``mat.adm`` and rebuild the viewport preview."""
+    with quiet_param_updates():
+        _apply_shader(mat, m, scene, resolve_image)
+    if mat.adm.shader != "CORE":
+        refresh_shader_preview(mat)
+
+
+def _apply_shader(mat, m, scene, resolve_image):
     a = mat.adm
     a.animation_id = m.get("animationId", "")
     sh = m.get("shader")
@@ -1560,3 +1597,13 @@ def refresh_shader_preview(mat):
         convert_to_adm_material(mat)
     elif mat.adm.shader == "LAYERED":
         _build_layered_preview(mat)
+    else:
+        from . import shader_preview
+        if mat.adm.shader in shader_preview.BUILDERS:
+            convert_to_adm_material(mat)
+            shader_preview.build(mat)
+
+
+def has_profile_preview(shader_kind):
+    from . import shader_preview
+    return shader_kind in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL") or shader_kind in shader_preview.BUILDERS

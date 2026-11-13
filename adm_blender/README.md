@@ -73,9 +73,8 @@ Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `r
 The machine-readable registry contains the 20 requested profile IDs and typed parameter schemas.
 Blender preserves their IDs, parameter values and portable PBR fallback through import/export.
 Cutout, emissive and decal have profile-specific validation; glass, water and foliage also enforce
-their alpha/two-sided requirements. The existing layered preview is supported. Profiles without a
-dedicated node builder currently display and export a warned PBR fallback; their specialist rendering
-is not claimed as implemented or certified.
+their alpha/two-sided requirements. Every official profile has a viewport node preview (see
+*Shader profile previews* below). Specialist rendering is not claimed as certified.
 
 The material panel (Properties › Material › ADM, and the sidebar Shaders tab) has a **Texture Parameters**
 box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlusion and Emissive.
@@ -97,6 +96,21 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
 - For custom shaders, the box is the portable PBR fallback. Shader parameters of type `TEXTURE` are
   listed separately under **Shader Texture Parameters**. Picking a custom shader syncs its parameters
   automatically; **Sync Parameters** is highlighted when they are out of date.
+
+### Shader profile previews
+
+- Selecting an official profile (Brick, Concrete, Roof, Bark, Rock, Terrain 4, Glass, Water, Vehicle
+  Paint, Skin, Fur, Fabric, Feather, Scales, Foliage…) builds `ADM Preview` nodes. They implement the
+  profile contract on top of the material's own PBR chain and are shown on the object in Material
+  Preview/Rendered mode. They are never exported.
+- A parameter is used only when its **Override** checkbox is enabled; otherwise the contract
+  default applies. Editing a value enables Override automatically. Overridden numbers are connected
+  through drivers, so they update live and can be keyframed. **Refresh Preview** rebuilds the nodes.
+- Masks are grayscale Non-Color images; the red channel is read. Example for Brick: in `mortar_mask`,
+  white = mortar joint and black = brick face. It is sampled at UV × `uv_scale`, like the base texture.
+  `dirt_mask` darkens the color to 35 % where it is white. **Generate Mortar Mask** creates a packed
+  running-bond mask (rows, columns, joint width, offset).
+- Skin, Fur and Fabric are Principled BSDF approximations (subsurface, anisotropy), and the panel says so.
 
 ### Material animation
 
@@ -126,8 +140,8 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   `ADM_ERR_UNSUPPORTED_CODEC`. Unused optional chunks need not be decoded.
 - Every non-core material exports explicit `baseColorFactor`, `metallicFactor`, `roughnessFactor`,
   `emissiveFactor` and `alphaMode`. Missing fields are rejected as `ADM_ERR_MISSING_PBR_FALLBACK`.
-- The viewport shows a **layered preview** for `adm.pbr.layered@1.0.0` and **core PBR fallback** for
-  custom shaders (reports `SHADER_FALLBACK`).
+- The viewport shows a **layered preview** for `adm.pbr.layered@1.0.0`, a **profile preview** for every
+  other official profile, and **core PBR fallback** for custom shaders (reports `SHADER_FALLBACK`).
   Shader/layer definitions and their animation data remain editable and exportable; arbitrary custom
   shader rendering and certified layered rendering are not claimed. PBR tracks animate the fallback
   independently of custom shader parameters.

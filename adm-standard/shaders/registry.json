@@ -718,6 +718,26 @@
           "description": "Optional linear dirt coverage mask."
         },
         {
+          "name": "mortar_color",
+          "type": "VEC3",
+          "default": [
+            0.55,
+            0.53,
+            0.5
+          ],
+          "description": "Linear mortar albedo.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
           "name": "mortar_roughness",
           "type": "F32",
           "default": 0.9,

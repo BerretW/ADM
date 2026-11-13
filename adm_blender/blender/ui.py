@@ -923,6 +923,24 @@ def draw_texture_slots(lay, context, mat):
         box.label(text="UV1 needs a second UV map on the mesh", icon="INFO")
 
 
+# Short how-to shown under the shader selector (what the masks do and which UV they use).
+PROFILE_HINTS = {
+    "BRICK": ("Base Color texture = bricks. mortar_mask: white = mortar joint, black = brick",
+              "(red channel, sampled at UV × uv_scale like Base Color). Mortar uses mortar_color",
+              "and mortar_roughness. dirt_mask (plain UV): white darkens to 35 %."),
+    "CONCRETE": ("detail_texture/detail_normal tile at UV × detail_scale and multiply the base.",
+                 "dirt_mask red × dirt_amount darkens towards 35 %."),
+    "ROOF": ("detail_mask red × weather_amount blends Base Color towards weather_tint.",),
+    "BARK": ("uv_scale tiles every bark texture. moss_mask red × moss_amount darkens to 45 %.",),
+    "ROCK": ("detail_texture/detail_normal: object-space triplanar (no UVs needed),",
+             "frequency = triplanar_scale × detail_scale. moss_mask (UV) darkens to 40 %."),
+    "TERRAIN_4": ("blend_mask RGBA = weights of layers 0-3 (normalized; empty mask = layer 0).",
+                  "Each layer: texture × base_color, tiled by uv_scale[i]."),
+    "GLASS": ("Color = mix(glass_tint, reflection_tint, Fresnel); alpha from transparency.",),
+    "WATER": ("Color = mix(water_tint, white, Fresnel); uv_velocity scrolls core textures.",),
+}
+
+
 def _draw_param_row(box, v, prm, typ):
     r = box.row(align=True)
     r.prop(v, "use", text="")
@@ -980,7 +998,18 @@ def draw_material(lay, context, mat):
     elif p.shader == "CUSTOM":
         col.label(text="SHADER_FALLBACK: portable PBR preview", icon="INFO")
     elif p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
-        col.label(text="SHADER_FALLBACK: profile data retained; preview uses portable PBR", icon="INFO")
+        from .materials import has_profile_preview
+        from .shader_preview import APPROXIMATE
+        if not has_profile_preview(p.shader):
+            col.label(text="SHADER_FALLBACK: profile data retained; preview uses portable PBR", icon="INFO")
+        else:
+            col.label(text="Viewport: ADM profile preview (ADM Preview nodes, not exported)", icon="INFO")
+            if p.shader in APPROXIMATE:
+                col.label(text="Light-dependent lobe is approximated with Principled BSDF", icon="ERROR")
+            col.label(text="Export: portable PBR fallback + shader parameters", icon="EXPORT")
+        for line in PROFILE_HINTS.get(p.shader, ()):
+            col.label(text=line)
+        col.operator("adm.material_refresh_preview", icon="FILE_REFRESH")
     if p.shader == "CUSTOM":
         col.prop_search(p, "custom_shader", context.scene.adm_anim, "shaders", icon="SCRIPT")
     row = col.row(align=True)
@@ -1035,9 +1064,12 @@ def draw_material(lay, context, mat):
                     c.template_ID(v, "image", new="image.new", open="image.open")
                     if prm.get("description"):
                         c.label(text=prm["description"])
+                    if v.name == "mortar_mask":
+                        c.operator("adm.material_generate_mortar_mask", icon="MOD_BUILD")
             if val:
                 vb = box.box()
                 vb.label(text="Shader Value Parameters", icon="PROPERTIES")
+                vb.label(text="Editing a value enables its Override checkbox", icon="INFO")
                 for v, prm in val:
                     _draw_param_row(vb, v, prm, prm.get("type"))
 

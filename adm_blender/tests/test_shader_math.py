@@ -36,6 +36,23 @@ class ShaderMathTests(unittest.TestCase):
         self.assertEqual(M.triplanar_weights((1, 0, 0)), (1.0, 0.0, 0.0))
         self.assertEqual(M.triplanar_weights((0, 0, 0)), (0.0, 1.0, 0.0))
 
+    def test_brick_mortar_mix_and_dirt(self):
+        color, rough = M.brick((0.8, 0.1, 0.1), (0.2, 0.4, 0.6), 1.0, 0.75, 0.9)
+        self.assertEqual(color, (0.2, 0.4, 0.6))
+        self.assertAlmostEqual(rough, 0.9)
+        color, rough = M.brick((0.8, 0.1, 0.1), (0.2, 0.4, 0.6), 0.25, 0.75, 0.95, dirt_mask=1.0)
+        self.assertAlmostEqual(rough, 0.8)
+        self.assertAlmostEqual(color[0], (0.8 * 0.75 + 0.2 * 0.25) * 0.35)
+
+    def test_mortar_mask_running_bond(self):
+        px = M.mortar_mask_pixels(64, 64, rows=4, columns=2, mortar=0.25)
+        self.assertEqual(px.shape, (64, 64))
+        self.assertEqual(px[0, 16], 1.0)    # bottom horizontal joint
+        self.assertEqual(px[8, 16], 0.0)    # brick centre, row 0
+        self.assertEqual(px[8, 0], 1.0)     # vertical joint at u=0 in row 0
+        self.assertEqual(px[24, 0], 0.0)    # row 1 is offset by half a brick
+        self.assertEqual(px[24, 16], 1.0)   # ...so its joint sits at u=0.25
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -269,15 +269,53 @@ class ADMShaderDef(PropertyGroup):
     active_param: IntProperty()
 
 
+def _param_owner_refresh(self):
+    mat = self.id_data
+    if isinstance(mat, bpy.types.Material) and mat.adm.shader not in ("CORE", "LAYERED", "CUSTOM"):
+        from .materials import refresh_shader_preview
+        refresh_shader_preview(mat)
+
+
+def _param_value_update(self, context):
+    # Editing a value means "use it": enabling Override rebuilds the preview with a live driver.
+    from .materials import param_updates_quiet
+    if not param_updates_quiet() and not self.use:
+        self.use = True
+
+
+def _param_use_update(self, context):
+    from .materials import param_updates_quiet
+    if not param_updates_quiet():
+        _param_owner_refresh(self)
+
+
+def _param_image_update(self, context):
+    from .materials import param_updates_quiet
+    if param_updates_quiet():
+        return
+    official = isinstance(self.id_data, bpy.types.Material) and self.id_data.adm.shader != "CUSTOM"
+    if self.image is not None and official and self.name not in K.SHADER_COLOR_TEXTURES:
+        try:
+            self.image.colorspace_settings.name = "Non-Color"
+        except TypeError:
+            pass
+    if self.image is not None and not self.use:
+        self.use = True
+    else:
+        _param_owner_refresh(self)
+
+
 class ADMShaderParamValue(PropertyGroup):
     """Per-material value of a typed shader parameter.  Animate ``value_f`` / ``value_vec``."""
     name: StringProperty(name="Name")
-    use: BoolProperty(name="Override", description="Write this value (otherwise the schema default applies)")
-    value_f: FloatProperty(name="Value")
-    value_vec: FloatVectorProperty(name="Value", size=4)
-    value_bool: BoolProperty(name="Value")
-    image: PointerProperty(name="Texture", type=bpy.types.Image)
-    tex_coord: IntProperty(name="UV", min=0, max=1)
+    use: BoolProperty(name="Override", update=_param_use_update,
+                      description="Write this value (otherwise the schema default applies). "
+                                  "Enabled automatically when you edit the value")
+    value_f: FloatProperty(name="Value", update=_param_value_update)
+    value_vec: FloatVectorProperty(name="Value", size=4, update=_param_value_update)
+    value_bool: BoolProperty(name="Value", update=_param_value_update)
+    image: PointerProperty(name="Texture", type=bpy.types.Image, update=_param_image_update)
+    tex_coord: IntProperty(name="UV", min=0, max=1, update=_param_use_update)
 
 
 def _preview_update(self, context):

@@ -66,8 +66,12 @@ def main(tmp):
             actual_params = {p.name for p in imported.adm.params}
             check(actual_params == expected_params, f"{kind}: typed parameter schema restored")
         if kind not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
-            check(any("portable PBR fallback" in warning for warning in exporter.warnings),
-                  f"{kind}: unsupported preview is reported")
+            check(not any("portable PBR fallback" in warning for warning in exporter.warnings),
+                  f"{kind}: has a profile preview, no fallback warning")
+            if imported is not None:
+                out = next((n for n in imported.node_tree.nodes
+                            if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
+                check(out is not None and M.is_preview_node(out), f"{kind}: imported material shows profile preview")
 
     adm_blender.unregister()
 

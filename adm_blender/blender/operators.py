@@ -1089,6 +1089,62 @@ class ADM_OT_material_sync_params(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ADM_OT_material_refresh_preview(bpy.types.Operator):
+    """Rebuild the ADM shader viewport preview (ADM Preview nodes) from the current parameters and the
+portable PBR node chain"""
+    bl_idname = "adm.material_refresh_preview"
+    bl_label = "Refresh Shader Preview"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _active_material(context) is not None
+
+    def execute(self, context):
+        from .materials import refresh_shader_preview
+        refresh_shader_preview(_active_material(context))
+        return {"FINISHED"}
+
+
+class ADM_OT_material_generate_mortar_mask(bpy.types.Operator):
+    """Generate a running-bond brick mortar mask (white = mortar, black = brick) and assign it to the
+material's mortar_mask parameter. Align rows/columns with the bricks of the Base Color texture"""
+    bl_idname = "adm.material_generate_mortar_mask"
+    bl_label = "Generate Mortar Mask"
+    bl_options = {"REGISTER", "UNDO"}
+
+    rows: IntProperty(name="Brick Rows", default=8, min=1, max=256)
+    columns: IntProperty(name="Bricks Per Row", default=4, min=1, max=256)
+    mortar: FloatProperty(name="Mortar Width", default=0.08, min=0.0, max=0.5, subtype="FACTOR",
+                          description="Joint width as a fraction of the brick height")
+    offset: FloatProperty(name="Row Offset", default=0.5, min=0.0, max=1.0, subtype="FACTOR")
+    resolution: IntProperty(name="Resolution", default=512, min=16, max=4096)
+
+    @classmethod
+    def poll(cls, context):
+        mat = _active_material(context)
+        return mat is not None and mat.adm.params.get("mortar_mask") is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        import numpy as np
+        from ..core.shader_math import mortar_mask_pixels
+        mat = _active_material(context)
+        res = self.resolution
+        px = mortar_mask_pixels(res, res, self.rows, self.columns, self.mortar, self.offset)
+        img = bpy.data.images.new(f"{mat.name}_mortar_mask", res, res, alpha=False)
+        img.colorspace_settings.name = "Non-Color"
+        rgba = np.repeat(px[..., None], 4, axis=2)
+        rgba[..., 3] = 1.0
+        img.pixels.foreach_set(rgba.astype(np.float32).ravel())
+        img.update()
+        img.pack()
+        mat.adm.params["mortar_mask"].image = img
+        return {"FINISHED"}
+
+
 class ADM_OT_material_layers_from_pbr(bpy.types.Operator):
     """Copy the current Principled BSDF factors into the base layer record"""
     bl_idname = "adm.material_layers_from_pbr"
@@ -1262,7 +1318,8 @@ CLASSES = (
     ADM_OT_add_arkit_shape_keys, ADM_OT_auto_bind_face,
     ADM_OT_list_add, ADM_OT_list_remove, ADM_OT_list_move,
     ADM_OT_clips_from_actions, ADM_OT_play_clip, ADM_OT_events_from_markers, ADM_OT_expression_preview,
-    ADM_OT_material_auto_animation_id, ADM_OT_material_sync_params, ADM_OT_material_layers_from_pbr,
+    ADM_OT_material_auto_animation_id, ADM_OT_material_sync_params, ADM_OT_material_refresh_preview,
+    ADM_OT_material_generate_mortar_mask, ADM_OT_material_layers_from_pbr,
     ADM_OT_material_texture_open, ADM_OT_material_texture_clear, ADM_OT_material_texture_adopt,
     ADM_OT_material_texture_uv,
     ADM_OT_material_texture_alpha,

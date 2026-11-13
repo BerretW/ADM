@@ -79,3 +79,12 @@
 - Extended Blender profile selection, schema synchronization and generic typed parameter import/export; added round-trip checks for all registered IDs.
 - Profiles without dedicated Blender node builders preserve data and explicitly report/use PBR fallback. Full renderer conformance is not claimed; see `SPEC_GAPS.md`.
 - No binary container change.
+
+## Draft 0.4 revision P9 — Blender viewport previews for the Core 20 profiles
+
+- Added Blender node-preview builders for brick, concrete, roof, bark, rock (triplanar), terrain 4-layer, glass, water, vehicle paint, skin, fur, fabric, feather, scales and foliage. Previews are separate `ADM Preview` nodes and are never exported; the portable PBR fallback is unchanged.
+- Overridden numeric parameters drive the preview through live drivers (animatable); editing a value enables its override automatically.
+- `adm.building.brick@1.0.0`: added the `mortar_color` parameter that the contract already referenced (`mortar_rgb`), and specified which textures `uv_scale` applies to.
+- Skin, fur and fabric previews are approximations with Principled BSDF and are labeled as such in the UI.
+- Added a reference mortar-mask generator and Cycles-bake tests that check preview colors and roughness against the contract math.
+- No binary container change.

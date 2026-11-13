@@ -30,7 +30,7 @@ python3 tools/container.py fixtures/valid/triangle.adm
 - Small viewers can implement basic PBR and skip optional shader technology.
 - Every advanced material contains explicitly serialized portable PBR fallback fields.
 - The machine-readable shader registry contains all 20 requested profile IDs and their typed parameter schemas.
-  Blender renders the implemented preview profiles and reports PBR fallback for profiles without a node builder; see `SPEC_GAPS.md`.
+  Blender renders a viewport preview for every official profile (skin, fur and fabric are approximations); custom shaders report PBR fallback. See `SPEC_GAPS.md`.
 - `AMA0` animation libraries store searchable clip descriptions and may animate bones, morph targets, expressions and numeric shader/PBR fields.
 - Humanoid bone roles follow VRM 1.0; ADM-REF-NORM-1 and the ADM-IK-1 two-bone solver are now specified, but independent conformance work remains.
 - Vehicle/weapon roles are now defined in **normative annexes** `profiles/vehicle.car.v1.md` and `profiles/weapon.firearm.v1.md`. The profiles are specified but **not yet independently certified**. No gameplay behavior is encoded.

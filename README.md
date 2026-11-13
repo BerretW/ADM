@@ -46,8 +46,9 @@ physical materials and bone-linked hitboxes.
 - RAW chunk storage is supported; optional ZSTD decoding is not.
 - Textures export as PNG by default (any source format is converted). KTX2 or DDS (RGBA8/BC1/BC3)
   can be chosen at export and always carry an embedded PNG fallback; Basis Universal and BC7 are not supported.
-- Non-core shaders use an explicitly reported PBR preview fallback. Their metadata and parameter
-  tracks are preserved; exact custom/layered shader rendering is not claimed.
+- All 20 official shader profiles have a Blender viewport preview. Their parameters drive the node tree,
+  and the export keeps the portable PBR fallback. Skin, fur and fabric previews are approximations.
+  Custom shaders use a reported PBR fallback, and certified renderer conformance is not claimed.
 - Vehicle/weapon profile names remain provisional. Physics, damage and other gameplay behavior
   are outside this asset format.
 - Skeleton profiles: `humanoid.vrm1` is fully supported. Quadruped profiles (`animal.*.v1`) are

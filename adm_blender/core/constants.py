@@ -244,6 +244,8 @@ OFFICIAL_SHADERS = {
     SHADER_BRICK: [
         _texture_param("mortar_mask", "Linear mask: 1 selects mortar, 0 selects brick."),
         _texture_param("dirt_mask", "Optional linear dirt coverage mask."),
+        _shader_param("mortar_color", "VEC3", [0.55, 0.53, 0.5], "Linear mortar albedo.",
+                      [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
         _shader_param("mortar_roughness", "F32", 0.9, "Mortar roughness.", 0.0, 1.0),
         _shader_param("brick_roughness", "F32", 0.75, "Brick roughness.", 0.0, 1.0),
         _shader_param("uv_scale", "VEC2", [1.0, 1.0], "Brick texture tiling multiplier.",
@@ -286,6 +288,9 @@ OFFICIAL_SHADERS = {
         _shader_param("anisotropy", "F32", 0.4, "Tangent-oriented specular lobe strength.", 0.0, 1.0),
     ],
 }
+# TEXTURE parameters that carry sRGB-encoded albedo; every other TEXTURE parameter is linear data.
+SHADER_COLOR_TEXTURES = frozenset({"detail_texture", "layer0_texture", "layer1_texture", "layer2_texture",
+                                   "layer3_texture"})
 # pbrParameter animation targets: name -> (accessor type, minimum, maximum)
 PBR_PARAMETERS = {
     "baseColorFactor": ("VEC4", 0.0, 1.0),
