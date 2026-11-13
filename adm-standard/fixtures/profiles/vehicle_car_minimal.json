@@ -1,0 +1,295 @@
+{
+  "asset": {
+    "generator": "ADM Profile P1 fixtures"
+  },
+  "nodes": [
+    {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "children": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        -0.8,
+        -0.5,
+        1.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        0.8,
+        -0.5,
+        1.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        -0.75,
+        0.35,
+        -0.3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        0.75,
+        0.35,
+        -0.3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        -0.8,
+        -0.5,
+        -1.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "children": [
+        1
+      ]
+    },
+    {
+      "translation": [
+        0.8,
+        -0.5,
+        -1.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "children": [
+        2
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0,
+  "meshes": [],
+  "accessors": [],
+  "bufferViews": [],
+  "modelProfiles": [
+    {
+      "id": "vehicle.car.v1",
+      "schemaVersion": 1,
+      "metadata": {
+        "axles": [
+          {
+            "index": 0,
+            "wheels": {
+              "left": {
+                "role": "wheel.axle0.left",
+                "radius": 0.35,
+                "width": 0.2
+              },
+              "right": {
+                "role": "wheel.axle0.right",
+                "radius": 0.35,
+                "width": 0.2
+              }
+            },
+            "steeringAngleRad": 0.6,
+            "driven": false
+          },
+          {
+            "index": 1,
+            "wheels": {
+              "left": {
+                "role": "wheel.axle1.left",
+                "radius": 0.36,
+                "width": 0.22
+              },
+              "right": {
+                "role": "wheel.axle1.right",
+                "radius": 0.36,
+                "width": 0.22
+              }
+            },
+            "driven": true
+          }
+        ],
+        "hinges": [
+          {
+            "role": "door.front.left",
+            "openAngleRad": 1.2
+          },
+          {
+            "role": "door.front.right",
+            "openAngleRad": -1.2
+          }
+        ]
+      }
+    }
+  ],
+  "componentRoles": [
+    {
+      "role": "chassis",
+      "node": 0,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "wheel.axle0.left",
+      "node": 1,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "wheel.axle0.right",
+      "node": 2,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "wheel.axle1.left",
+      "node": 3,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "wheel.axle1.right",
+      "node": 4,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "door.front.left",
+      "node": 5,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "door.front.right",
+      "node": 6,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "steering.axle0.left",
+      "node": 7,
+      "profile": "vehicle.car.v1"
+    },
+    {
+      "role": "steering.axle0.right",
+      "node": 8,
+      "profile": "vehicle.car.v1"
+    }
+  ],
+  "attachments": []
+}

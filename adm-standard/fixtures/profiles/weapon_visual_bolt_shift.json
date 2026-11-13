@@ -1,0 +1,68 @@
+{
+  "asset": {
+    "generator": "ADM Draft 0.4 P1 profile examples"
+  },
+  "library": {
+    "id": "weapon@inspection@visual",
+    "title": "weapon_visual_bolt_shift",
+    "description": "Visual bolt component translates by negative two centimeters on parent Z axis.",
+    "language": "en",
+    "targetProfile": "weapon.firearm.v1",
+    "binding": "SEMANTIC"
+  },
+  "clips": [
+    {
+      "id": "bolt_shift",
+      "title": "weapon_visual_bolt_shift",
+      "description": "Visual bolt component translates by negative two centimeters on parent Z axis.",
+      "language": "en",
+      "duration": 1.0,
+      "loop": "ONCE",
+      "rootMotion": "IGNORE",
+      "channels": [
+        {
+          "target": {
+            "kind": "component",
+            "role": "weapon.bolt"
+          },
+          "path": "translation",
+          "sampler": 0
+        }
+      ],
+      "samplers": [
+        {
+          "input": 0,
+          "output": 1,
+          "interpolation": "LINEAR"
+        }
+      ],
+      "events": []
+    }
+  ],
+  "bufferViews": [
+    {
+      "byteOffset": 0,
+      "byteLength": 8,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 8,
+      "byteLength": 24,
+      "chunkId": 1
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": "F32",
+      "type": "SCALAR",
+      "count": 2
+    },
+    {
+      "bufferView": 1,
+      "componentType": "F32",
+      "type": "VEC3",
+      "count": 2
+    }
+  ]
+}

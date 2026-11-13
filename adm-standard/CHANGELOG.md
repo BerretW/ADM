@@ -17,3 +17,10 @@
 - Typed shader registry, two-layer material model, PBR fallback and material/shader animation.
 
 **Limitations:** no complete semantic/render/IK conformance suite; this is a working draft.
+
+## Draft 0.4 revision P1 — vehicle/weapon profile definitions
+
+- Added mandatory `modelProfiles` schema and normative annexes for `vehicle.car.v1`, `weapon.firearm.v1` and modular `weapon.attachment.v1`.
+- Added `component` animation target with rest-relative translation/rotation semantics for mechanical, non-skin nodes.
+- Defined wheel/steering and hinge axes, ordered axle metadata, attachment mount classes/interfaces, and deterministic accessory frame composition.
+- Added profile validation fixtures and executable structural and mathematical smoke tests; profile conformance is not yet independently certified.

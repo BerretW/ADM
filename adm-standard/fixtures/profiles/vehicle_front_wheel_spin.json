@@ -1,0 +1,68 @@
+{
+  "asset": {
+    "generator": "ADM Draft 0.4 P1 profile examples"
+  },
+  "library": {
+    "id": "vehicle@car@wheels",
+    "title": "vehicle_front_wheel_spin",
+    "description": "A front left wheel rotates by positive 90 degrees about its local X axis.",
+    "language": "en",
+    "targetProfile": "vehicle.car.v1",
+    "binding": "SEMANTIC"
+  },
+  "clips": [
+    {
+      "id": "spin90",
+      "title": "vehicle_front_wheel_spin",
+      "description": "A front left wheel rotates by positive 90 degrees about its local X axis.",
+      "language": "en",
+      "duration": 1.0,
+      "loop": "ONCE",
+      "rootMotion": "IGNORE",
+      "channels": [
+        {
+          "target": {
+            "kind": "component",
+            "role": "wheel.axle0.left"
+          },
+          "path": "rotation",
+          "sampler": 0
+        }
+      ],
+      "samplers": [
+        {
+          "input": 0,
+          "output": 1,
+          "interpolation": "LINEAR"
+        }
+      ],
+      "events": []
+    }
+  ],
+  "bufferViews": [
+    {
+      "byteOffset": 0,
+      "byteLength": 8,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 8,
+      "byteLength": 32,
+      "chunkId": 1
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": "F32",
+      "type": "SCALAR",
+      "count": 2
+    },
+    {
+      "bufferView": 1,
+      "componentType": "F32",
+      "type": "VEC4",
+      "count": 2
+    }
+  ]
+}

@@ -1,78 +1,32 @@
 #!/usr/bin/env python3
-"""Rebuild Draft 0.4 fixtures from checked-in manifests and explicit payloads."""
-
-import argparse
-import copy
-import json
 from pathlib import Path
-import shutil
-import struct
-
-from container import create, verify
-
-
-FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
-
-
-def build_fixtures(output_dir):
-    valid = output_dir / "valid"
-    invalid = output_dir / "invalid"
-    valid.mkdir(parents=True, exist_ok=True)
-    invalid.mkdir(parents=True, exist_ok=True)
-
-    positions = struct.pack("<9f", -1, 0, 0, 1, 0, 0, 0, 1, 0)
-    indices = struct.pack("<3H", 0, 1, 2)
-    tracks = struct.pack("<6f", 0, 2, 0, 1, 0.45, 0.8)
-    samples = (
-        ("triangle", "adm", b"ADM0", [(1, b"GEOM", positions + indices, True)]),
-        ("triangle_split", "adm", b"ADM0",
-         [(1, b"GEOM", positions, True), (2, b"GEOM", indices, True)]),
-        ("shader_layered", "adm", b"ADM0", [(1, b"GEOM", positions + indices, True)]),
-        ("catalog-only", "adm_anim", b"AMA0", []),
-        ("shader_parameter_tracks", "adm_anim", b"AMA0", [(1, b"ANIM", tracks, True)]),
-    )
-    manifests = {}
-    for name, extension, magic, chunks in samples:
-        source = FIXTURES / "valid" / f"{name}.json"
-        manifest = json.loads(source.read_text(encoding="utf-8"))
-        manifests[name] = manifest
-        path = valid / f"{name}.{extension}"
-        create(path, magic, manifest, chunks)
-        if source.resolve() != (valid / source.name).resolve():
-            shutil.copyfile(source, valid / source.name)
-        print(verify(path))
-
-    base = (valid / "triangle.adm").read_bytes()
-    bad = bytearray(base)
-    bad[8] = 0
-    (invalid / "bad_header_size.adm").write_bytes(bad)
-    bad = bytearray(base)
-    bad[-17] ^= 0x01
-    (invalid / "bad_hash.adm").write_bytes(bad)
-    bad = bytearray(base)
-    struct.pack_into("<Q", bad, 16, len(bad) + 1)
-    (invalid / "bad_file_size.adm").write_bytes(bad)
-    bad = bytearray(base)
-    directory = struct.unpack_from("<Q", bad, 40)[0]
-    struct.pack_into("<Q", bad, directory + 24, 4)
-    (invalid / "bad_chunk_offset.adm").write_bytes(bad)
-
-    cyclic = {
-        "asset": {}, "scene": 0, "scenes": [{"nodes": []}], "nodes": [], "meshes": [],
-        "accessors": [], "bufferViews": [],
-        "chunkDependencies": [{"chunkId": 1, "requires": [2]}, {"chunkId": 2, "requires": [1]}],
-    }
-    create(invalid / "bad_dependency_cycle.adm", b"ADM0", cyclic,
-           [(1, b"DATA", b"A", True), (2, b"DATA", b"B", True)])
-
-    missing_pbr = copy.deepcopy(manifests["shader_layered"])
-    del missing_pbr["materials"][0]["roughnessFactor"]
-    create(invalid / "bad_missing_pbr.adm", b"ADM0", missing_pbr,
-           [(1, b"GEOM", positions + indices, True)])
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=FIXTURES,
-                        help="Destination fixture directory (default: checked-in fixtures)")
-    build_fixtures(parser.parse_args().output_dir)
+import zipfile,struct,json,sys,copy
+sys.path.insert(0,str(Path(__file__).parent));from container import create,verify,HEADER,ENTRY
+src=Path('/mnt/data/ADM-1.0-shadery-a-animace.zip')
+root=Path(__file__).parent.parent/'fixtures';valid=root/'valid';invalid=root/'invalid'
+valid.mkdir(parents=True,exist_ok=True);invalid.mkdir(parents=True,exist_ok=True)
+fixtures=[('triangle','adm',b'ADM0',b'GEOM'),('shader_layered','adm',b'ADM0',b'GEOM'),('catalog-only','adm_anim',b'AMA0',b'ANIM'),('shader_parameter_tracks','adm_anim',b'AMA0',b'ANIM')]
+with zipfile.ZipFile(src) as z:
+ for name,ext,magic,typ in fixtures:
+  raw=z.read('adm-standard/fixtures/'+name+'.'+ext)
+  m=json.loads(z.read('adm-standard/fixtures/'+name+'.json'))
+  # old header 32: magic 4, major u16 minor u16, jsonLen u64, binLen u64, flags u32, res u32
+  _,ver,mi,jsz,bsz,flags,res=struct.unpack_from('<4sHHQQII',raw,0)
+  assert len(raw)==32+jsz+bsz,(name,len(raw),jsz,bsz)
+  payload=raw[32+jsz:]
+  if payload:
+   for view in m.get('bufferViews',[]):view['chunkId']=1
+   chunks=[(1,typ,payload,True)]
+  else:chunks=[]
+  create(valid/(name+'.'+ext),magic,m,chunks)
+  (valid/(name+'.json')).write_text(json.dumps(m,ensure_ascii=False,indent=2)+'\n',encoding='utf8')
+  print(verify(valid/(name+'.'+ext)))
+# negative files made from base without altering expected fixture
+base=bytearray((valid/'triangle.adm').read_bytes())
+b=base.copy(); b[8]=0; (invalid/'bad_header_size.adm').write_bytes(b)
+b=base.copy(); b[-17]^=0x01;(invalid/'bad_hash.adm').write_bytes(b)
+b=base.copy(); b[16:24]=struct.pack('<Q', len(b)+1);(invalid/'bad_file_size.adm').write_bytes(b)
+b=base.copy(); d=struct.unpack_from('<Q',b,40)[0]; b[d+24:d+32]=struct.pack('<Q',4);(invalid/'bad_chunk_offset.adm').write_bytes(b)
+# malicious dependency cycle via two zero-length? use two raw chunks and metadata
+cyc={'asset':{},'scene':0,'scenes':[{'nodes':[]}],'nodes':[],'meshes':[],'accessors':[],'bufferViews':[], 'chunkDependencies':[{'chunkId':1,'requires':[2]},{'chunkId':2,'requires':[1]}]}
+create(invalid/'bad_dependency_cycle.adm',b'ADM0',cyc,[(1,b'DATA',b'A',True),(2,b'DATA',b'B',True)])

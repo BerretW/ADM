@@ -10,7 +10,7 @@ This kit contains a rewritten integrated specification for the proposed **native
 - `fixtures/valid/`: 5 small binary reference examples and their readable JSON manifests.
 - `fixtures/invalid/`: 6 intentionally corrupted/invalid files.
 - `tools/container.py`: standalone Python standard-library-only writer, container checker and minimal seek/range reader.
-- `tools/build_fixtures.py`: regenerates all valid/invalid binaries from the checked-in JSON manifests and explicit sample payloads; no external archive or private development paths are needed.
+- `tools/build_fixtures.py`: regenerates valid test data from earlier Draft 0.3 fixtures **only when the older ZIP is available at the development path**; the packaged fixtures are already generated and no older files are needed to run tests.
 - `tools/run_tests.py`: reproducible tests for the supplied files.
 - `TEST-RESULTS.md`: executed tests and known gaps.
 - `CHANGELOG.md`: changes since Draft 0.3.
@@ -22,9 +22,6 @@ python3 tools/run_tests.py
 python3 tools/container.py fixtures/valid/triangle.adm
 ```
 
-To regenerate the reference corpus, run `python3 tools/build_fixtures.py`.
-Use `--output-dir PATH` to generate a separate copy instead of rewriting the checked-in binaries.
-
 Uses Python 3.9+ standard library. **Does not test renderer equivalence, ZSTD, semantic animation evaluation, retargeting, complete IK, ARKit52, KTX2 codec variants, or full Blender round-trip**. Those cases remain mandatory before 1.0 can be ratified.
 
 ## Major design decisions
@@ -34,11 +31,11 @@ Uses Python 3.9+ standard library. **Does not test renderer equivalence, ZSTD, s
 - Every advanced material contains explicitly serialized portable PBR fallback fields.
 - `AMA0` animation libraries store searchable clip descriptions and may animate bones, morph targets, expressions and numeric shader/PBR fields.
 - Humanoid bone roles follow VRM 1.0 concepts; exact solver/test vectors require further conformance work.
-- Optional semantic vehicle/weapon profile names are reserved, not yet certified. No gameplay behavior is encoded.
+- Vehicle/weapon roles are now defined in **normative annexes** `profiles/vehicle.car.v1.md` and `profiles/weapon.firearm.v1.md`. The profiles are specified but **not yet independently certified**. No gameplay behavior is encoded.
 
 ## Open issues preventing certification
 
-1. Complete normative profile tables for car/weapon/animal assets.
+1. Complete normative animal profiles, plus independent semantic certification fixtures for the newly specified vehicle/weapon profiles.
 2. Full shader-registry publication and shader-reference rendering tests.
 3. A frozen supported KTX2/Basis Universal subset with actual fixtures.
 4. Fully independent reader/writer and per-feature semantic conformance fixtures.
@@ -46,7 +43,12 @@ Uses Python 3.9+ standard library. **Does not test renderer equivalence, ZSTD, s
 
 The specification governs the data format; engine scheduling, gameplay behavior, renderer backend and network replication stay outside its scope.
 
-## License
+## Vehicle and firearm profile annexes (P1)
 
-The specification, documentation in this directory and reference fixtures are dedicated under
-[CC0-1.0](LICENSE). The Python reference tools are separately licensed under [MIT](tools/LICENSE).
+- `profiles/vehicle.car.v1.md` — normative role, axle, wheel, steering and hinge contracts.
+- `profiles/weapon.firearm.v1.md` — receiver, muzzle, modular accessory mounts and visual component animation.
+- `fixtures/profiles/*.adm` — structural/metadata example assets; intentionally may contain no renderable mesh.
+- `fixtures/profiles/*.adm_anim` — mechanical component animation examples with real F32 samples.
+- `tools/test_profiles.py` — structural validation and numerical smoke checks (not a full reference renderer/evaluator).
+
+Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_tests.py`.

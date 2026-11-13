@@ -1,0 +1,167 @@
+{
+  "asset": {
+    "generator": "ADM Profile P1 fixtures"
+  },
+  "nodes": [
+    {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "children": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "translation": [
+        0,
+        0,
+        -0.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        0,
+        -0.12,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        0,
+        0,
+        -0.2
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "translation": [
+        0,
+        0.1,
+        -0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0,
+  "meshes": [],
+  "accessors": [],
+  "bufferViews": [],
+  "modelProfiles": [
+    {
+      "id": "weapon.firearm.v1",
+      "schemaVersion": 1,
+      "metadata": {
+        "feedType": "DETACHABLE_MAGAZINE",
+        "mounts": [
+          {
+            "socket": "mount.magazine",
+            "class": "magazine.v1",
+            "interface": "adm.magazine_box.v1"
+          }
+        ],
+        "articulations": [
+          {
+            "role": "weapon.bolt",
+            "allowed": "TRANSLATION",
+            "translationAxis": "Z",
+            "translationMin": -0.06,
+            "translationMax": 0.02
+          }
+        ]
+      }
+    }
+  ],
+  "componentRoles": [
+    {
+      "role": "weapon.receiver",
+      "node": 0,
+      "profile": "weapon.firearm.v1"
+    },
+    {
+      "role": "weapon.muzzle",
+      "node": 1,
+      "profile": "weapon.firearm.v1"
+    },
+    {
+      "role": "weapon.magazine",
+      "node": 2,
+      "profile": "weapon.firearm.v1"
+    },
+    {
+      "role": "weapon.bolt",
+      "node": 3,
+      "profile": "weapon.firearm.v1"
+    }
+  ],
+  "attachments": [
+    {
+      "name": "mount.magazine",
+      "node": 4
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "asset": {
+    "generator": "ADM Profile P1 fixtures"
+  },
+  "nodes": [
+    {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "children": [
+        1
+      ]
+    },
+    {
+      "translation": [
+        0,
+        0,
+        -0.25
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0,
+  "meshes": [],
+  "accessors": [],
+  "bufferViews": [],
+  "modelProfiles": [
+    {
+      "id": "weapon.attachment.v1",
+      "schemaVersion": 1,
+      "metadata": {
+        "class": "magazine.v1",
+        "interface": "adm.magazine_box.v1"
+      }
+    }
+  ],
+  "attachments": [
+    {
+      "name": "mount.root",
+      "node": 1
+    }
+  ]
+}

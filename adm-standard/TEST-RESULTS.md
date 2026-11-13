@@ -11,3 +11,7 @@
 - Split geometry example has two payload chunks; targeted retrieval reads only the requested 6-byte chunk, not the other payload chunk.
 
 **Not covered:** real rendering, visual comparison, full shader semantics, runtime IK solving, morph/skin numerical output, asset-loading concurrency, ZSTD, KTX2, alpha rendering, advanced semantic validation, malformed JSON depth/security fuzzing and interoperability between independent toolchains. The bundled validator is an illustrative **subset validator**, not a certification harness.
+
+## Draft 0.4 P1 mechanical profile tests
+
+Added separate profile structural validator, example vehicle, firearm and accessory files, and example mechanical component animation libraries. `tools/test_profiles.py` checks role constraints, frame axes and basic math, and `tools/container.py` checks container validity/hashes. **This does not constitute full certification**: independent Blender round-trip, full skeletal/mechanical retargeting, kinematic endpoint golden files and renderer/LOD semantics remain to be tested.
