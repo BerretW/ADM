@@ -114,17 +114,81 @@ def main(tmp):
     check({k for k in m if k.endswith("Texture")} == {"occlusionTexture", "emissiveTexture"},
           f"after removal {sorted(k for k in m if k.endswith('Texture'))}")
 
-    print("== custom node setups are not overwritten")
+    print("== custom node setups are replaced, not destroyed")
     other = bpy.data.materials.new("Custom")
     M.convert_to_adm_material(other)
-    noise = other.node_tree.nodes.new("ShaderNodeTexNoise")
-    other.node_tree.links.new(noise.outputs["Color"], M.principled_of(other).inputs["Emission Color"])
+    nt = other.node_tree
+    bsdf = M.principled_of(other)
+    noise = nt.nodes.new("ShaderNodeTexNoise")
+    nt.links.new(noise.outputs["Color"], bsdf.inputs["Emission Color"])
     check(M.slot_state(other, "EMISSIVE")[0] == "CUSTOM", "noise-driven emission is CUSTOM")
-    try:
-        M.set_slot_image(other, "EMISSIVE", base)
-        check(False, "custom setup protected")
-    except ValueError:
-        check(M.principled_of(other).inputs["Emission Color"].links[0].from_node == noise, "custom setup protected")
+    M.set_slot_image(other, "EMISSIVE", base)
+    check(M.slot_texture_node(other, "EMISSIVE").image == base, "picking replaces the custom setup")
+    check(noise.name in nt.nodes and not noise.outputs["Color"].is_linked, "custom nodes kept, only detached")
+
+    print("== texture adoption from imported-style graphs")
+    albedo, dirt = image("wall_ab", (0.5, 0.4, 0.3, 1.0)), image("walldirt", (0.2, 0.2, 0.2, 1.0))
+    pal, mrao = image("house_pal", (1, 0, 0, 1)), image("wall_ma", (0.0, 0.5, 1.0, 1.0))
+    mrao.colorspace_settings.name = "Non-Color"
+
+    def tex(img, label, y):
+        n = nt.nodes.new("ShaderNodeTexImage")
+        n.image, n.label, n.location = img, label, (-1200, y)
+        return n
+    t_dirt, t_alb = tex(dirt, "", 0), tex(albedo, "Albedo", 300)
+    t_pal, t_mr = tex(pal, "Palette", 600), tex(mrao, "MRAO", -300)
+    t_alb.interpolation, t_alb.extension = "Closest", "MIRROR"
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    pmix = nt.nodes.new("ShaderNodeMix")
+    pmix.data_type = "RGBA"
+    nt.links.new(t_dirt.outputs["Color"], M._sock(mix, "A_Color"))
+    nt.links.new(t_pal.outputs["Color"], M._sock(pmix, "A_Color"))
+    nt.links.new(t_alb.outputs["Color"], M._sock(pmix, "B_Color"))
+    nt.links.new(M._out(pmix, "Result_Color"), M._sock(mix, "B_Color"))
+    nt.links.new(M._out(mix, "Result_Color"), bsdf.inputs["Base Color"])
+    math = nt.nodes.new("ShaderNodeMath")
+    nt.links.new(t_mr.outputs["Color"], math.inputs[0])
+    nt.links.new(t_alb.outputs["Alpha"], math.inputs[1])
+    nt.links.new(math.outputs[0], bsdf.inputs["Roughness"])
+    cands = M.custom_source_candidates(other, "BASE_COLOR")
+    check([n.image for n in cands] == [albedo, dirt], f"albedo ranked first, palette excluded: "
+                                                       f"{[n.image.name for n in cands]}")
+    check(M.custom_source_node(other, "METALLIC_ROUGHNESS") == t_mr, "MRAO chosen for metallic-roughness")
+    bpy.context.view_layer.objects.active = cube
+    cube.active_material_index = 0
+    cube.data.materials[0] = other
+    check(bpy.ops.adm.material_texture_adopt(slot="BASE_COLOR") == {"FINISHED"}, "adopt operator")
+    node = M.slot_texture_node(other, "BASE_COLOR")
+    check(node is not None and node.image == albedo and node != t_alb, "adopted albedo as simple chain")
+    check((node.interpolation, node.extension) == ("Closest", "MIRROR"), "sampler copied from source")
+    check(not M._out(mix, "Result_Color").is_linked and mix.name in nt.nodes, "original graph detached and kept")
+
+    print("== switching shader rebuilds the viewport preview")
+    other.adm.shader = "LAYERED"
+    active = [n for n in nt.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output]
+    check(len(active) == 1 and M.is_preview_node(active[0]), "layered preview output active")
+    check(M.principled_of(other) == bsdf, "exporter still reads the material's own BSDF")
+    other.adm.layer_base.base_color = (0.0, 0.0, 1.0, 1.0)
+    other.adm.layer_overlay.base_color = (1.0, 0.0, 0.0, 1.0)
+    other.adm.layer_overlay.roughness = 0.2
+    other.adm.layer_factor = 0.25
+    bpy.context.view_layer.update()
+    pb = nt.nodes[M.PREVIEW_PREFIX + " BSDF"]
+    fac = nt.nodes[M.PREVIEW_PREFIX + " Layer Factor"]
+    check(abs(fac.inputs[0].default_value - 0.25) < 1e-6, "layer_factor drives the preview")
+    rmix = M._from(pb.inputs["Roughness"]).node
+    check(abs(M._sock(rmix, "B_Float").default_value - 0.2) < 1e-6, "overlay roughness in preview")
+    cmix = M._from(pb.inputs["Base Color"]).node
+    check(tuple(M._sock(cmix, "A_Color").default_value) == (0.0, 0.0, 1.0, 1.0), "base color in preview")
+    other.adm.layer_mask = pal
+    check(M.PREVIEW_PREFIX + " Mask" in nt.nodes, "mask texture in preview")
+    other.adm.shader = "CORE"
+    check(not any(M.is_preview_node(n) for n in nt.nodes), "preview removed on CORE")
+    check(not nt.animation_data or not len(nt.animation_data.drivers), "preview drivers removed")
+    check(M.material_output(other).is_active_output, "own output active again")
+    other.adm.shader = "CUSTOM"
+    check(not any(M.is_preview_node(n) for n in nt.nodes), "custom shows PBR fallback")
     adm_blender.unregister()
 
 

@@ -79,7 +79,14 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   slot extras (Alpha From Texture, normal Scale, occlusion strength, emission strength).
   **X** removes the texture and keeps the factor values.
 - The slots edit the same node chain the exporter traces, so nothing new is stored in the file.
-  Hand-built node setups are shown as *custom node setup* and are never overwritten.
+  Imported or hand-built node setups are shown as *custom node setup*. The slot lists the best
+  textures found in that setup (**Use Albedo: …**, ranked by node label/image name and colour space;
+  palettes are skipped) and a picker. Either one replaces the setup with the simple exportable chain;
+  the original nodes are only disconnected, never deleted.
+- Switching **Shader** updates the viewport like Sollumz: *PBR Metallic-Roughness* shows the
+  material's own Principled BSDF chain (created if missing), *PBR Layered* builds an `ADM Preview`
+  node group (base/overlay mix driven by `layer_factor` and the mask's red channel) as the active
+  output, and *Custom Shader* shows the portable PBR fallback. Preview nodes are never exported.
 - For custom shaders, the box is the portable PBR fallback. Shader parameters of type `TEXTURE` are
   listed separately under **Shader Texture Parameters**. Picking a custom shader syncs its parameters
   automatically; **Sync Parameters** is highlighted when they are out of date.
@@ -112,7 +119,8 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   `ADM_ERR_UNSUPPORTED_CODEC`. Unused optional chunks need not be decoded.
 - Every non-core material exports explicit `baseColorFactor`, `metallicFactor`, `roughnessFactor`,
   `emissiveFactor` and `alphaMode`. Missing fields are rejected as `ADM_ERR_MISSING_PBR_FALLBACK`.
-- The viewport uses **core PBR fallback** for non-core shaders and reports `SHADER_FALLBACK`.
+- The viewport shows a **layered preview** for `adm.pbr.layered@1.0.0` and **core PBR fallback** for
+  custom shaders (reports `SHADER_FALLBACK`).
   Shader/layer definitions and their animation data remain editable and exportable; arbitrary custom
   shader rendering and certified layered rendering are not claimed. PBR tracks animate the fallback
   independently of custom shader parameters.
