@@ -466,7 +466,46 @@ class MaterialExporter:
                     f"material '{mat.name}': adm.surface.cutout@1.0.0 requires Alpha Mode MASK")
             out["shader"] = {"id": K.SHADER_CUTOUT[0], "version": K.SHADER_CUTOUT[1]}
             return
+        if a.shader == "EMISSIVE":
+            emission = out.get("emissiveFactor", [0.0, 0.0, 0.0])
+            if not any(float(x) > 0.0 for x in emission):
+                raise ShaderExportError(
+                    f"material '{mat.name}': adm.surface.emissive@1.0.0 requires nonzero emissive output")
+            out["shader"] = {"id": K.SHADER_EMISSIVE[0], "version": K.SHADER_EMISSIVE[1]}
+            return
+        if a.shader == "DECAL":
+            if a.alpha_mode != "BLEND":
+                raise ShaderExportError(
+                    f"material '{mat.name}': adm.surface.decal@1.0.0 requires Alpha Mode BLEND")
+            out["shader"] = {"id": K.SHADER_DECAL[0], "version": K.SHADER_DECAL[1]}
+            return
         key = a.shader_key()
+        if key in (K.SHADER_GLASS, K.SHADER_WATER) and a.alpha_mode != "BLEND":
+            raise ShaderExportError(f"material '{mat.name}': {key[0]}@{key[1]} requires Alpha Mode BLEND")
+        if key == K.SHADER_FOLIAGE and (a.alpha_mode != "MASK" or mat.use_backface_culling):
+            raise ShaderExportError(
+                f"material '{mat.name}': adm.surface.foliage@1.0.0 requires Mask alpha and double-sided rendering")
+        if key in K.OFFICIAL_SHADERS:
+            out["shader"] = {"id": key[0], "version": key[1]}
+            defs = {p["name"]: p for p in K.OFFICIAL_SHADERS[key]}
+            values = {}
+            for v in a.params:
+                if not v.use:
+                    continue
+                prm = defs.get(v.name)
+                if prm is None:
+                    self.warn(f"material '{mat.name}': parameter '{v.name}' is not part of {key[0]}@{key[1]}, skipped")
+                    continue
+                val = param_value_from_prop(prm["type"], v, lambda img, uv: self._texref(img, uv))
+                err = param_value_error(prm, val, None)
+                if err:
+                    raise ShaderExportError(f"material '{mat.name}': parameter '{v.name}': {err}")
+                values[v.name] = val
+            if values:
+                out["shaderParameters"] = values
+            self.warn(f"material '{mat.name}': {key[0]}@{key[1]} is preserved with portable PBR fallback; "
+                      "this profile has no Blender node preview yet")
+            return
         sdef = self.shader_defs.get(key)
         if sdef is None:
             raise ShaderExportError(f"material '{mat.name}': custom shader '{a.custom_shader}' has no definition "
@@ -769,6 +808,46 @@ def sync_material_params(mat, sdef):
         v.tex_coord = p.default_tex_coord
 
 
+def sync_official_shader_params(mat, key=None):
+    """Make material parameter values match a registered profile's typed schema."""
+    key = key or mat.adm.shader_key()
+    schema = K.OFFICIAL_SHADERS.get(key)
+    if schema is None:
+        return
+    a = mat.adm
+    names = [p["name"] for p in schema]
+    for i in range(len(a.params) - 1, -1, -1):
+        if a.params[i].name not in names:
+            a.params.remove(i)
+    for prm in schema:
+        if a.params.get(prm["name"]) is not None:
+            continue
+        v = a.params.add()
+        v.name = prm["name"]
+        v.use = False
+        typ = prm["type"]
+        if typ in K.SHADER_NUMERIC_DIMS:
+            _set_vec(v, "value_vec", prm["default"], K.SHADER_NUMERIC_DIMS[typ])
+            if typ == "F32":
+                v.value_f = float(prm["default"])
+        elif typ == "BOOL":
+            v.value_bool = bool(prm["default"])
+
+
+def _apply_shader_value(v, typ, val, resolve_image):
+    if typ == "F32":
+        v.value_f = val
+    elif typ in K.SHADER_NUMERIC_DIMS:
+        _set_vec(v, "value_vec", val, K.SHADER_NUMERIC_DIMS[typ])
+    elif typ == "BOOL":
+        v.value_bool = bool(val)
+    elif isinstance(val, dict):
+        v.image = resolve_image(val)
+        v.tex_coord = val.get("texCoord", 0)
+    else:
+        v.image = None
+
+
 def apply_shader(mat, m, scene, resolve_image):
     """Read ADM shader fields of material dict ``m`` into ``mat.adm``."""
     a = mat.adm
@@ -790,6 +869,20 @@ def apply_shader(mat, m, scene, resolve_image):
                 a.layer_mask_uv = ext["maskTexture"].get("texCoord", 0)
     elif key == K.SHADER_CUTOUT:
         a.shader = "CUTOUT"
+    elif key == K.SHADER_EMISSIVE:
+        a.shader = "EMISSIVE"
+    elif key == K.SHADER_DECAL:
+        a.shader = "DECAL"
+    elif key in K.OFFICIAL_SHADER_KINDS:
+        a.shader = K.OFFICIAL_SHADER_KINDS[key]
+        sync_official_shader_params(mat, key)
+        defs = {p["name"]: p for p in K.OFFICIAL_SHADERS[key]}
+        for name, val in sp.items():
+            v = a.params.get(name)
+            prm = defs.get(name)
+            if v is not None and prm is not None:
+                v.use = True
+                _apply_shader_value(v, prm["type"], val, resolve_image)
     else:
         a.shader = "CUSTOM"
         a.custom_shader = f"{key[0]}@{key[1]}"
@@ -803,17 +896,7 @@ def apply_shader(mat, m, scene, resolve_image):
                 if v is None or typ is None:
                     continue
                 v.use = True
-                if typ == "F32":
-                    v.value_f = val
-                elif typ in K.SHADER_NUMERIC_DIMS:
-                    _set_vec(v, "value_vec", val, K.SHADER_NUMERIC_DIMS[typ])
-                elif typ == "BOOL":
-                    v.value_bool = bool(val)
-                elif isinstance(val, dict):
-                    v.image = resolve_image(val)
-                    v.tex_coord = val.get("texCoord", 0)
-                else:
-                    v.image = None
+                _apply_shader_value(v, typ, val, resolve_image)
 
 
 def layers_from_pbr(mat):

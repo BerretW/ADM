@@ -29,8 +29,8 @@ python3 tools/container.py fixtures/valid/triangle.adm
 - A file starts with an indexable, noncompressed JSON manifest and a directory of independently accessible chunks.
 - Small viewers can implement basic PBR and skip optional shader technology.
 - Every advanced material contains explicitly serialized portable PBR fallback fields.
-- The machine-readable shader registry currently contains core PBR, layered PBR and masked cutout.
-  The proposed Core 20 set is incomplete; see `SPEC_GAPS.md`.
+- The machine-readable shader registry contains all 20 requested profile IDs and their typed parameter schemas.
+  Blender renders the implemented preview profiles and reports PBR fallback for profiles without a node builder; see `SPEC_GAPS.md`.
 - `AMA0` animation libraries store searchable clip descriptions and may animate bones, morph targets, expressions and numeric shader/PBR fields.
 - Humanoid bone roles follow VRM 1.0; ADM-REF-NORM-1 and the ADM-IK-1 two-bone solver are now specified, but independent conformance work remains.
 - Vehicle/weapon roles are now defined in **normative annexes** `profiles/vehicle.car.v1.md` and `profiles/weapon.firearm.v1.md`. The profiles are specified but **not yet independently certified**. No gameplay behavior is encoded.
@@ -63,3 +63,11 @@ Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_t
 - `SPEC_GAPS.md`: resolved ambiguity dispositions plus the deliberately retained approval and certification blockers.
 
 These tests are executed by the reference Blender toolkit (`adm_blender/tests/test_skeleton_profiles.py`, `test_skeleton_blender.py`). An independent second implementation does not exist yet.
+
+## Shader registry (P8)
+
+- `shaders/registry.json` contains the 20 requested versioned shader IDs and typed parameter schemas.
+- `shaders/*.v1.md` contains a contract annex for each non-core profile; §8 retains the existing core and layered semantics.
+- `tools/build_shader_registry.py --check` detects drift between Blender's normative parameter tables and the generated registry.
+- `tools/test_shader_registry.py` validates IDs, parameter defaults and annex presence. `adm_blender/tests/test_shader_math.py` checks independent scalar/vector reference values.
+- Blender round-trip tests preserve all 20 identities and schemas, but most specialist viewport node builders remain unimplemented and fall back explicitly to PBR. This is not full Core 20 renderer conformance; see `SPEC_GAPS.md`.

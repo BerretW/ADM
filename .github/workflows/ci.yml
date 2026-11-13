@@ -27,10 +27,14 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install NumPy for the GPU texture codec test
         run: python -m pip install numpy
-      - name: Test container and semantics
-        run: python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_gputex -v
+      - name: Test container, semantics and shader math
+        run: python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_gputex adm_blender.tests.test_shader_math -v
       - name: Test independent reference validator
         run: python adm-standard/tools/run_tests.py
+      - name: Validate shader registry
+        run: |
+          python adm-standard/tools/build_shader_registry.py --check
+          python adm-standard/tools/test_shader_registry.py
       - name: Regenerate fixtures without external inputs
         run: python adm-standard/tools/build_fixtures.py
       - name: Check fixture reproducibility

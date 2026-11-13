@@ -189,6 +189,24 @@ def main(tmp):
     check(M.material_output(other).is_active_output, "own output active again")
     other.adm.shader = "CUSTOM"
     check(not any(M.is_preview_node(n) for n in nt.nodes), "custom shows PBR fallback")
+    from adm_blender.core import constants as K
+    probe_key = ("org.example.registry_probe", "1.0.0")
+    K.OFFICIAL_SHADERS[probe_key] = [
+        {"name": "gain", "type": "F32", "default": 1.5, "minimum": 0.0, "maximum": 3.0,
+         "description": "Probe scalar."},
+        {"name": "tint", "type": "VEC3", "default": [0.2, 0.4, 0.6],
+         "description": "Probe vector."},
+        {"name": "image", "type": "TEXTURE", "default": None, "description": "Probe texture."},
+    ]
+    M.sync_official_shader_params(other, probe_key)
+    check(abs(other.adm.params["gain"].value_f - 1.5) < 1e-6 and
+          all(abs(float(a) - b) < 1e-6 for a, b in zip(other.adm.params["tint"].value_vec[:3],
+                                                        (0.2, 0.4, 0.6))) and
+          other.adm.params["image"].image is None, "official typed parameter defaults synchronize")
+    del K.OFFICIAL_SHADERS[probe_key]
+    M.sync_official_shader_params(other, K.SHADER_EMISSIVE)
+    check(len(other.adm.params) == 0, "official parameter synchronization removes stale entries")
+
     print("== cutout shader profile")
     other.adm.shader = "CUTOUT"
     check(other.adm.alpha_mode == "MASK", "selecting cutout requires Mask alpha mode")
@@ -211,6 +229,85 @@ def main(tmp):
         check(False, "invalid cutout alpha mode rejected on export")
     except ExportError as exc:
         check("requires Alpha Mode MASK" in str(exc), f"invalid cutout alpha mode rejected: {exc}")
+
+    print("== emissive shader profile")
+    other.adm.alpha_mode = "AUTO"
+    other.adm.shader = "EMISSIVE"
+    bsdf = M.principled_of(other)
+    for link in list(bsdf.inputs["Emission Color"].links):
+        nt.links.remove(link)
+    bsdf.inputs["Emission Color"].default_value = (0.2, 0.3, 0.4, 1.0)
+    bsdf.inputs["Emission Strength"].default_value = 2.0
+    emissive_data, emissive_report = ModelExporter(bpy.context, root, ExportOptions()).export()
+    check(emissive_report.ok, "emissive model validates on export")
+    emissive_mat = emissive_report.doc["materials"][0]
+    check(emissive_mat.get("shader") == {"id": "adm.surface.emissive", "version": "1.0.0"},
+          "emissive shader identity exported exactly")
+    check(all(abs(a - b) < 1e-6 for a, b in zip(emissive_mat.get("emissiveFactor", []), (0.4, 0.6, 0.8))),
+          f"emissive factor includes strength: {emissive_mat.get('emissiveFactor')}")
+    emissive_path = os.path.join(tmp, "emissive.adm")
+    with open(emissive_path, "wb") as fh:
+        fh.write(emissive_data)
+    ModelImporter(bpy.context, emissive_path, ImportOptions()).run()
+    imported_emissive = next(x for x in bpy.data.materials if x.adm.shader == "EMISSIVE")
+    check(imported_emissive.adm.shader_key() == ("adm.surface.emissive", "1.0.0"),
+          "emissive identity survives import")
+    bsdf.inputs["Emission Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    bsdf.inputs["Emission Strength"].default_value = 0.0
+    try:
+        ModelExporter(bpy.context, root, ExportOptions()).export()
+        check(False, "empty emissive profile rejected on export")
+    except ExportError as exc:
+        check("requires nonzero emissive output" in str(exc), f"empty emission rejected: {exc}")
+
+    print("== decal shader profile")
+    other.adm.shader = "DECAL"
+    check(other.adm.alpha_mode == "BLEND", "selecting decal requires Blend alpha mode")
+    decal_data, decal_report = ModelExporter(bpy.context, root, ExportOptions()).export()
+    check(decal_report.ok, "decal model validates on export")
+    decal_mat = decal_report.doc["materials"][0]
+    check(decal_mat.get("shader") == {"id": "adm.surface.decal", "version": "1.0.0"} and
+          decal_mat.get("alphaMode") == "BLEND", "decal identity and blend mode exported")
+    decal_path = os.path.join(tmp, "decal.adm")
+    with open(decal_path, "wb") as fh:
+        fh.write(decal_data)
+    ModelImporter(bpy.context, decal_path, ImportOptions()).run()
+    imported_decal = next(x for x in bpy.data.materials if x.adm.shader == "DECAL")
+    check(imported_decal.adm.alpha_mode == "BLEND", "decal alpha mode survives import")
+    other.adm.alpha_mode = "OPAQUE"
+    try:
+        ModelExporter(bpy.context, root, ExportOptions()).export()
+        check(False, "invalid decal alpha mode rejected on export")
+    except ExportError as exc:
+        check("requires Alpha Mode BLEND" in str(exc), f"invalid decal alpha mode rejected: {exc}")
+
+    print("== generic official shader parameter round-trip")
+    other.adm.shader = "GLASS"
+    check(other.adm.alpha_mode == "BLEND", "glass selection requires Blend alpha mode")
+    check(all(other.adm.params.get(name) is not None for name in
+              ("glass_tint", "reflection_tint", "transparency", "ior")),
+          "glass schema defaults synchronize")
+    other.adm.params["transparency"].use = True
+    other.adm.params["transparency"].value_f = 0.6
+    glass_data, glass_report = ModelExporter(bpy.context, root, ExportOptions()).export()
+    check(glass_report.ok, "glass model validates on export")
+    glass_mat = glass_report.doc["materials"][0]
+    check(glass_mat.get("shader") == {"id": "adm.surface.glass", "version": "1.0.0"} and
+          abs(glass_mat.get("shaderParameters", {}).get("transparency", 0.0) - 0.6) < 1e-6,
+          "glass identity and typed parameter exported")
+    glass_path = os.path.join(tmp, "glass.adm")
+    with open(glass_path, "wb") as fh:
+        fh.write(glass_data)
+    ModelImporter(bpy.context, glass_path, ImportOptions()).run()
+    imported_glass = next(x for x in bpy.data.materials if x.adm.shader == "GLASS")
+    check(abs(imported_glass.adm.params["transparency"].value_f - 0.6) < 1e-6 and
+          imported_glass.adm.params["transparency"].use, "glass parameter survives import")
+    other.adm.alpha_mode = "OPAQUE"
+    try:
+        ModelExporter(bpy.context, root, ExportOptions()).export()
+        check(False, "invalid glass alpha mode rejected on export")
+    except ExportError as exc:
+        check("requires Alpha Mode BLEND" in str(exc), f"invalid glass alpha mode rejected: {exc}")
     adm_blender.unregister()
 
 

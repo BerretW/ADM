@@ -28,6 +28,975 @@
       "version": "1.0.0",
       "parameters": [],
       "contract": "adm.surface.cutout.v1.md"
+    },
+    {
+      "id": "adm.surface.emissive",
+      "version": "1.0.0",
+      "parameters": [],
+      "contract": "adm.surface.emissive.v1.md"
+    },
+    {
+      "id": "adm.surface.decal",
+      "version": "1.0.0",
+      "parameters": [],
+      "contract": "adm.surface.decal.v1.md"
+    },
+    {
+      "id": "adm.surface.glass",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "glass_tint",
+          "type": "VEC3",
+          "default": [
+            0.8,
+            0.9,
+            1.0
+          ],
+          "description": "Linear tint applied to transmitted light.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "reflection_tint",
+          "type": "VEC3",
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear tint applied to Fresnel reflection.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "transparency",
+          "type": "F32",
+          "default": 0.9,
+          "description": "Fraction of non-reflected light passed through.",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        },
+        {
+          "name": "ior",
+          "type": "F32",
+          "default": 1.5,
+          "description": "Index of refraction used only by the thin-surface Fresnel term.",
+          "minimum": 1.0,
+          "maximum": 2.5
+        }
+      ],
+      "contract": "adm.surface.glass.v1.md"
+    },
+    {
+      "id": "adm.surface.foliage",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "backface_tint",
+          "type": "VEC3",
+          "default": [
+            0.75,
+            0.9,
+            0.65
+          ],
+          "description": "Linear tint for the back-face contribution.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "transmission",
+          "type": "F32",
+          "default": 0.2,
+          "description": "Bounded back-light transmission weight.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      ],
+      "contract": "adm.surface.foliage.v1.md"
+    },
+    {
+      "id": "adm.terrain.four_layer",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "layer0_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 0."
+        },
+        {
+          "name": "layer1_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 1."
+        },
+        {
+          "name": "layer2_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 2."
+        },
+        {
+          "name": "layer3_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 3."
+        },
+        {
+          "name": "layer0_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer1_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer2_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer3_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer0_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer1_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer2_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer3_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer0_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 0."
+        },
+        {
+          "name": "layer1_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 1."
+        },
+        {
+          "name": "layer2_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 2."
+        },
+        {
+          "name": "layer3_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 3."
+        },
+        {
+          "name": "blend_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear RGBA weights for terrain layers 0 through 3."
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Per-layer UV tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001,
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0,
+            1000.0,
+            1000.0
+          ]
+        }
+      ],
+      "contract": "adm.terrain.four_layer.v1.md"
+    },
+    {
+      "id": "adm.vehicle.paint",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "clearcoat",
+          "type": "F32",
+          "default": 0.5,
+          "description": "Clearcoat lobe weight.",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        },
+        {
+          "name": "clearcoat_roughness",
+          "type": "F32",
+          "default": 0.1,
+          "description": "Clearcoat lobe roughness.",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        },
+        {
+          "name": "edge_tint",
+          "type": "VEC3",
+          "default": [
+            1.0,
+            0.8,
+            0.5
+          ],
+          "description": "Linear grazing-angle tint.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "edge_tint_strength",
+          "type": "F32",
+          "default": 0.15,
+          "description": "Grazing-angle tint weight.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      ],
+      "contract": "adm.vehicle.paint.v1.md"
+    },
+    {
+      "id": "adm.character.skin",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "subsurface_strength",
+          "type": "F32",
+          "default": 0.1,
+          "description": "Portable diffuse wrap approximation weight.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "subsurface_color",
+          "type": "VEC3",
+          "default": [
+            1.0,
+            0.5,
+            0.35
+          ],
+          "description": "Linear wrap-light tint.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "detail_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional detail normal map."
+        }
+      ],
+      "contract": "adm.character.skin.v1.md"
+    },
+    {
+      "id": "adm.animal.fur",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "fur_detail",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear fur-strand modulation texture."
+        },
+        {
+          "name": "fiber_tint",
+          "type": "VEC3",
+          "default": [
+            0.8,
+            0.7,
+            0.6
+          ],
+          "description": "Linear tint for the fiber lobe.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "fiber_roughness",
+          "type": "F32",
+          "default": 0.35,
+          "description": "Roughness of the fiber lobe.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "anisotropy",
+          "type": "F32",
+          "default": 0.35,
+          "description": "Tangent-oriented specular lobe strength.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      ],
+      "contract": "adm.animal.fur.v1.md"
+    },
+    {
+      "id": "adm.animal.feather",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "detail_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional feather-card detail normal map."
+        },
+        {
+          "name": "sheen_strength",
+          "type": "F32",
+          "default": 0.3,
+          "description": "Grazing-angle feather sheen weight.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "sheen_tint",
+          "type": "VEC3",
+          "default": [
+            0.8,
+            0.85,
+            1.0
+          ],
+          "description": "Linear feather sheen tint.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      ],
+      "contract": "adm.animal.feather.v1.md"
+    },
+    {
+      "id": "adm.animal.scales",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "detail_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Scale pattern detail texture."
+        },
+        {
+          "name": "scale_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Tangent-space scale normal texture."
+        },
+        {
+          "name": "specular_strength",
+          "type": "F32",
+          "default": 0.5,
+          "description": "Bounded scale specular response.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "scale_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for the scale surface.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      ],
+      "contract": "adm.animal.scales.v1.md"
+    },
+    {
+      "id": "adm.building.concrete",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "detail_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo detail texture."
+        },
+        {
+          "name": "detail_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Detail normal texture."
+        },
+        {
+          "name": "dirt_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear dirt coverage mask."
+        },
+        {
+          "name": "detail_scale",
+          "type": "F32",
+          "default": 4.0,
+          "description": "Detail UV tiling multiplier.",
+          "minimum": 0.01,
+          "maximum": 100.0
+        },
+        {
+          "name": "dirt_amount",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Dirt coverage multiplier.",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        }
+      ],
+      "contract": "adm.building.concrete.v1.md"
+    },
+    {
+      "id": "adm.building.brick",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "mortar_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear mask: 1 selects mortar, 0 selects brick."
+        },
+        {
+          "name": "dirt_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear dirt coverage mask."
+        },
+        {
+          "name": "mortar_roughness",
+          "type": "F32",
+          "default": 0.9,
+          "description": "Mortar roughness.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "brick_roughness",
+          "type": "F32",
+          "default": 0.75,
+          "description": "Brick roughness.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC2",
+          "default": [
+            1.0,
+            1.0
+          ],
+          "description": "Brick texture tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0
+          ]
+        }
+      ],
+      "contract": "adm.building.brick.v1.md"
+    },
+    {
+      "id": "adm.building.roof",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "detail_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear weathering/overlap mask."
+        },
+        {
+          "name": "weather_tint",
+          "type": "VEC3",
+          "default": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "description": "Linear weathering tint.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "weather_amount",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Weathering mask multiplier.",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        }
+      ],
+      "contract": "adm.building.roof.v1.md"
+    },
+    {
+      "id": "adm.nature.bark",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "detail_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional bark detail normal texture."
+        },
+        {
+          "name": "moss_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear moss/dirt coverage mask."
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC2",
+          "default": [
+            1.0,
+            1.0
+          ],
+          "description": "Bark texture tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0
+          ]
+        },
+        {
+          "name": "moss_amount",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Moss mask multiplier.",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        }
+      ],
+      "contract": "adm.nature.bark.v1.md"
+    },
+    {
+      "id": "adm.nature.rock",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "detail_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Rock albedo detail texture."
+        },
+        {
+          "name": "detail_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Rock detail normal texture."
+        },
+        {
+          "name": "moss_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear moss/dirt mask."
+        },
+        {
+          "name": "detail_scale",
+          "type": "F32",
+          "default": 4.0,
+          "description": "Detail texture tiling multiplier.",
+          "minimum": 0.01,
+          "maximum": 100.0
+        },
+        {
+          "name": "triplanar_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Object-space triplanar frequency.",
+          "minimum": 0.001,
+          "maximum": 1000.0
+        }
+      ],
+      "contract": "adm.nature.rock.v1.md"
+    },
+    {
+      "id": "adm.nature.water",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "water_tint",
+          "type": "VEC3",
+          "default": [
+            0.05,
+            0.25,
+            0.35
+          ],
+          "description": "Linear water color.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "transparency",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Base thin-surface transparency.",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        },
+        {
+          "name": "ior",
+          "type": "F32",
+          "default": 1.333,
+          "description": "Index of refraction for Schlick Fresnel.",
+          "minimum": 1.0,
+          "maximum": 2.5
+        },
+        {
+          "name": "uv_velocity",
+          "type": "VEC2",
+          "default": [
+            0.0,
+            0.0
+          ],
+          "description": "UV offset velocity in cycles per second.",
+          "minimum": [
+            -10.0,
+            -10.0
+          ],
+          "maximum": [
+            10.0,
+            10.0
+          ],
+          "animatable": true
+        }
+      ],
+      "contract": "adm.nature.water.v1.md"
+    },
+    {
+      "id": "adm.surface.fabric",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "fiber_detail",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear fabric fiber detail texture."
+        },
+        {
+          "name": "detail_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Tangent-space fabric detail normal texture."
+        },
+        {
+          "name": "fiber_tint",
+          "type": "VEC3",
+          "default": [
+            0.9,
+            0.85,
+            0.8
+          ],
+          "description": "Linear grazing-angle fiber tint.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "fiber_strength",
+          "type": "F32",
+          "default": 0.25,
+          "description": "Grazing-angle fiber lobe weight.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "anisotropy",
+          "type": "F32",
+          "default": 0.4,
+          "description": "Tangent-oriented specular lobe strength.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      ],
+      "contract": "adm.surface.fabric.v1.md"
     }
   ]
 }

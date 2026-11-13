@@ -946,7 +946,7 @@ def draw_material(lay, context, mat):
     col.use_property_split = True
     col.use_property_decorate = False
     alpha_mode_row = col.row()
-    alpha_mode_row.enabled = p.shader != "CUTOUT"
+    alpha_mode_row.enabled = p.shader not in ("CUTOUT", "DECAL", "GLASS", "FOLIAGE", "WATER")
     alpha_mode_row.prop(p, "alpha_mode")
     if p.alpha_mode in {"MASK", "AUTO"}:
         col.prop(p, "alpha_cutoff")
@@ -960,12 +960,27 @@ def draw_material(lay, context, mat):
     if p.shader == "CUTOUT":
         col.prop(p, "shader")
         col.label(text="Alpha Mode: Mask (required by this profile)", icon="INFO")
+    elif p.shader == "DECAL":
+        col.prop(p, "shader")
+        col.label(text="Alpha Mode: Blend (required by this profile)", icon="INFO")
+    elif p.shader in ("GLASS", "WATER"):
+        col.prop(p, "shader")
+        col.label(text="Alpha Mode: Blend (required by this profile)", icon="INFO")
+    elif p.shader == "FOLIAGE":
+        col.prop(p, "shader")
+        col.label(text="Mask alpha and two-sided rendering are required", icon="INFO")
     else:
         col.prop(p, "shader")
     if p.shader == "LAYERED":
         col.label(text="Viewport: layered preview (ADM Preview nodes, not exported)", icon="INFO")
+    elif p.shader == "EMISSIVE":
+        col.label(text="Uses the portable PBR Emissive Factor and Texture", icon="INFO")
+    elif p.shader == "DECAL":
+        col.label(text="Mesh overlay; uses ADM straight-alpha compositing", icon="INFO")
     elif p.shader == "CUSTOM":
         col.label(text="SHADER_FALLBACK: portable PBR preview", icon="INFO")
+    elif p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
+        col.label(text="SHADER_FALLBACK: profile data retained; preview uses portable PBR", icon="INFO")
     if p.shader == "CUSTOM":
         col.prop_search(p, "custom_shader", context.scene.adm_anim, "shaders", icon="SCRIPT")
     row = col.row(align=True)
@@ -994,16 +1009,18 @@ def draw_material(lay, context, mat):
                 if rec.use_normal_factor:
                     b.prop(rec, "normal_factor")
         box.operator("adm.material_layers_from_pbr", icon="IMPORT")
-    elif p.shader == "CUSTOM":
+    elif p.shader == "CUSTOM" or p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
         params = registry.get(p.shader_key())
         if params is None:
-            col.label(text="Pick a shader definition (ADM > Shaders)", icon="ERROR")
+            if p.shader == "CUSTOM":
+                col.label(text="Pick a shader definition (ADM > Shaders)", icon="ERROR")
         else:
-            in_sync = sorted(v.name for v in p.params) == sorted(params)
-            r = box.row()
-            r.alert = not in_sync
-            r.operator("adm.material_sync_params", icon="FILE_REFRESH",
-                       text="Sync Parameters" if in_sync else "Sync Parameters (out of date)")
+            if p.shader == "CUSTOM":
+                in_sync = sorted(v.name for v in p.params) == sorted(params)
+                r = box.row()
+                r.alert = not in_sync
+                r.operator("adm.material_sync_params", icon="FILE_REFRESH",
+                           text="Sync Parameters" if in_sync else "Sync Parameters (out of date)")
             tex = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") == "TEXTURE"]
             val = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") != "TEXTURE"]
             if tex:

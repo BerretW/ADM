@@ -656,6 +656,21 @@ class AdmValidator(_Base):
         if key == K.SHADER_CUTOUT and m.get("alphaMode", "OPAQUE") != "MASK":
             self.r.error("SHADER_CUTOUT_ALPHA_MODE", p + ".alphaMode",
                          "adm.surface.cutout@1.0.0 requires alphaMode MASK")
+        if key == K.SHADER_EMISSIVE:
+            emission = m.get("emissiveFactor", [0.0, 0.0, 0.0])
+            if not isinstance(emission, list) or not any(isinstance(x, (int, float)) and x > 0 for x in emission):
+                self.r.error("SHADER_EMISSIVE_EMPTY", p + ".emissiveFactor",
+                             "adm.surface.emissive@1.0.0 requires a nonzero emissiveFactor")
+        if key == K.SHADER_DECAL and m.get("alphaMode", "OPAQUE") != "BLEND":
+            self.r.error("SHADER_DECAL_ALPHA_MODE", p + ".alphaMode",
+                         "adm.surface.decal@1.0.0 requires alphaMode BLEND")
+        if key in (K.SHADER_GLASS, K.SHADER_WATER) and m.get("alphaMode", "OPAQUE") != "BLEND":
+            self.r.error("SHADER_TRANSPARENT_ALPHA_MODE", p + ".alphaMode",
+                         f"{key[0]}@{key[1]} requires alphaMode BLEND")
+        if key == K.SHADER_FOLIAGE and (
+                m.get("alphaMode", "OPAQUE") != "MASK" or m.get("doubleSided", False) is not True):
+            self.r.error("SHADER_FOLIAGE_SURFACE_MODE", p,
+                         "adm.surface.foliage@1.0.0 requires alphaMode MASK and doubleSided true")
         params = self.shaders.get(key)
         if params is None:
             if key[0].startswith("adm."):

@@ -58,3 +58,24 @@
 - Added `adm.surface.cutout@1.0.0`, requiring masked alpha with the exact ADM §8 cutoff rule; Blender selection, validation and export/import preserve that contract.
 - Added a profile contract and a registry consistency test. The requested Core 20 set is not complete; only profiles with a concrete contract are listed as official.
 - No binary container change.
+
+## Draft 0.4 revision P6 — portable emissive profile
+
+- Added `adm.surface.emissive@1.0.0` to the official registry, using the existing linear PBR emissive factor/texture contract.
+- Blender export/import preserves the profile identity and rejects materials with no effective emissive factor.
+- Added the profile annex and material round-trip/negative tests. No proprietary glow, bloom or indirect-light behavior is implied.
+- No binary container change.
+
+## Draft 0.4 revision P7 — mesh decal profile
+
+- Added `adm.surface.decal@1.0.0` with mandatory straight-alpha `BLEND` and no screen-space or deferred-renderer behavior.
+- Blender selection, validation and export/import preserve the decal profile and alpha mode.
+- Added profile documentation and valid/invalid round-trip coverage. No binary container change.
+
+## Draft 0.4 revision P8 — Core 20 shader registry and contracts
+
+- Added all 20 requested shader IDs, exact `1.0.0` versions and typed parameter schemas to the generated registry.
+- Added per-profile contract annexes and deterministic reference evaluators/tests for cutout, alpha blend, glass Fresnel, foliage orientation tint, terrain weights, wrapped diffuse and triplanar weights.
+- Extended Blender profile selection, schema synchronization and generic typed parameter import/export; added round-trip checks for all registered IDs.
+- Profiles without dedicated Blender node builders preserve data and explicitly report/use PBR fallback. Full renderer conformance is not claimed; see `SPEC_GAPS.md`.
+- No binary container change.

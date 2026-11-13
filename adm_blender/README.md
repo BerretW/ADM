@@ -70,11 +70,12 @@ Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `r
 
 ### Material textures (Sollumz-style)
 
-The official shader registry currently includes `adm.pbr.metallic_roughness@1.0.0`,
-`adm.pbr.layered@1.0.0` and `adm.surface.cutout@1.0.0`. Cutout selection sets the alpha mode to
-Mask and export rejects a cutout material whose alpha mode was changed away from Mask. The proposed
-Core 20 catalog is being added incrementally; profiles without a complete normative contract and
-conformance tests are not advertised as official or interoperable.
+The machine-readable registry contains the 20 requested profile IDs and typed parameter schemas.
+Blender preserves their IDs, parameter values and portable PBR fallback through import/export.
+Cutout, emissive and decal have profile-specific validation; glass, water and foliage also enforce
+their alpha/two-sided requirements. The existing layered preview is supported. Profiles without a
+dedicated node builder currently display and export a warned PBR fallback; their specialist rendering
+is not claimed as implemented or certified.
 
 The material panel (Properties › Material › ADM, and the sidebar Shaders tab) has a **Texture Parameters**
 box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlusion and Emissive.

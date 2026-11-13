@@ -197,7 +197,41 @@ SHADER_KINDS = [
      "RENDERLAYERS", 1),
     ("CUTOUT", "Surface Cutout", "adm.surface.cutout@1.0.0: masked alpha; requires Alpha Mode MASK",
      "MOD_MASK", 2),
-    ("CUSTOM", "Custom Shader", "Custom shader with an embedded typed parameter schema", "NODE_MATERIAL", 3),
+    ("EMISSIVE", "Surface Emissive", "adm.surface.emissive@1.0.0: requires nonzero portable PBR emission",
+     "LIGHT", 3),
+    ("DECAL", "Surface Decal", "adm.surface.decal@1.0.0: requires straight-alpha BLEND",
+     "MATERIAL", 4),
+    ("GLASS", "Surface Glass", "adm.surface.glass@1.0.0: thin dielectric with Fresnel response",
+     "NODE_MATERIAL", 5),
+    ("FOLIAGE", "Surface Foliage", "adm.surface.foliage@1.0.0: masked two-sided foliage",
+     "NODE_MATERIAL", 6),
+    ("TERRAIN_4", "Terrain Four Layer", "adm.terrain.four_layer@1.0.0: four masked PBR layers",
+     "NODE_MATERIAL", 7),
+    ("VEHICLE_PAINT", "Vehicle Paint", "adm.vehicle.paint@1.0.0: base paint plus clearcoat",
+     "NODE_MATERIAL", 8),
+    ("SKIN", "Character Skin", "adm.character.skin@1.0.0: portable diffuse wrap approximation",
+     "NODE_MATERIAL", 9),
+    ("FUR", "Animal Fur", "adm.animal.fur@1.0.0: mesh-based directional fiber response",
+     "NODE_MATERIAL", 10),
+    ("FEATHER", "Animal Feather", "adm.animal.feather@1.0.0: feather-card sheen",
+     "NODE_MATERIAL", 11),
+    ("SCALES", "Animal Scales", "adm.animal.scales@1.0.0: textured scale surface",
+     "NODE_MATERIAL", 12),
+    ("CONCRETE", "Building Concrete", "adm.building.concrete@1.0.0: detail and dirt masks",
+     "NODE_MATERIAL", 13),
+    ("BRICK", "Building Brick", "adm.building.brick@1.0.0: brick and mortar masks",
+     "NODE_MATERIAL", 14),
+    ("ROOF", "Building Roof", "adm.building.roof@1.0.0: tiled roof with weathering mask",
+     "NODE_MATERIAL", 15),
+    ("BARK", "Nature Bark", "adm.nature.bark@1.0.0: tiled bark with moss mask",
+     "NODE_MATERIAL", 16),
+    ("ROCK", "Nature Rock", "adm.nature.rock@1.0.0: detail rock with optional triplanar mapping",
+     "NODE_MATERIAL", 17),
+    ("WATER", "Nature Water", "adm.nature.water@1.0.0: thin water surface with Fresnel",
+     "NODE_MATERIAL", 18),
+    ("FABRIC", "Surface Fabric", "adm.surface.fabric@1.0.0: directional fiber approximation",
+     "NODE_MATERIAL", 19),
+    ("CUSTOM", "Custom Shader", "Custom shader with an embedded typed parameter schema", "NODE_MATERIAL", 20),
 ]
 PARAM_TYPES = [(t, t, "") for t in K.SHADER_PARAM_TYPES]
 
@@ -254,10 +288,21 @@ def _preview_update(self, context):
 
 
 def _shader_update(self, context):
-    if self.shader == "CUTOUT":
-        self.alpha_mode = "MASK"
+    required_alpha = {
+        "CUTOUT": "MASK", "DECAL": "BLEND", "GLASS": "BLEND", "WATER": "BLEND",
+        "FOLIAGE": "MASK",
+    }.get(self.shader)
+    if required_alpha is not None:
+        self.alpha_mode = required_alpha
         from .materials import apply_alpha_mode_to_material
-        apply_alpha_mode_to_material(self.id_data, "MASK")
+        apply_alpha_mode_to_material(self.id_data, required_alpha)
+        from .materials import sync_official_shader_params
+        sync_official_shader_params(self.id_data)
+        if self.shader == "FOLIAGE":
+            self.id_data.use_backface_culling = False
+    elif self.shader not in ("CUSTOM", "LAYERED"):
+        from .materials import sync_official_shader_params
+        sync_official_shader_params(self.id_data)
     from .materials import refresh_shader_preview
     refresh_shader_preview(self.id_data)
 
@@ -333,12 +378,10 @@ class ADMMaterialProps(PropertyGroup):
     active_param: IntProperty()
 
     def shader_key(self, scene=None):
-        if self.shader == "LAYERED":
-            return K.SHADER_LAYERED
         if self.shader == "CUSTOM":
             sid, _, ver = self.custom_shader.partition("@")
             return (sid, ver)
-        return K.SHADER_CORE
+        return K.OFFICIAL_SHADER_KEYS.get(self.shader, K.SHADER_CORE)
 
 
 # --- animation ---------------------------------------------------------------------------------------
