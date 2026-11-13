@@ -27,14 +27,16 @@ BONES = [  # name, parent, head, tail
     ("mixamorig:Neck", "mixamorig:Spine1", (0, 0, 1.5), (0, 0, 1.6)),
     ("mixamorig:Head", "mixamorig:Neck", (0, 0, 1.6), (0, 0, 1.8)),
 ]
-for side, s in (("Left", 1), ("Right", -1)):
+# ADM reference pose: forward -Z, +X = character's right  ->  in Blender the character faces +Y with its
+# right side on +X (Blender's usual -Y facing characters must be rotated 180 deg, see REFERENCE_FACING).
+for side, s in (("Left", -1), ("Right", 1)):
     BONES += [
         (f"mixamorig:{side}Arm", "mixamorig:Spine1", (0.2 * s, 0, 1.45), (0.45 * s, 0, 1.45)),
         (f"mixamorig:{side}ForeArm", f"mixamorig:{side}Arm", (0.45 * s, 0, 1.45), (0.7 * s, 0, 1.45)),
         (f"mixamorig:{side}Hand", f"mixamorig:{side}ForeArm", (0.7 * s, 0, 1.45), (0.8 * s, 0, 1.45)),
         (f"mixamorig:{side}UpLeg", "mixamorig:Hips", (0.1 * s, 0, 0.95), (0.1 * s, 0, 0.5)),
         (f"mixamorig:{side}Leg", f"mixamorig:{side}UpLeg", (0.1 * s, 0, 0.5), (0.1 * s, 0, 0.1)),
-        (f"mixamorig:{side}Foot", f"mixamorig:{side}Leg", (0.1 * s, 0, 0.1), (0.1 * s, -0.15, 0.0)),
+        (f"mixamorig:{side}Foot", f"mixamorig:{side}Leg", (0.1 * s, 0, 0.1), (0.1 * s, 0.15, 0.0)),
     ]
 
 

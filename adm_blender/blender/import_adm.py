@@ -17,6 +17,7 @@ from . import convert as cv
 from .colliders import new_collider_object
 from .export_adm import rest_fingerprint
 from .materials import UV_NAMES, apply_shader, build_material, import_shader_definitions
+from .props import SKELETON_PROFILES
 
 
 class ImportError_(Exception):
@@ -733,7 +734,7 @@ class ModelImporter:
             arm_obj = self.bone_of[skin["joints"][0]][0]
             sk = arm_obj.data.adm
             sk.export_profile = True
-            if prof["id"] in ("humanoid.vrm1", "generic.v1"):
+            if prof["id"] in {item[0] for item in SKELETON_PROFILES} - {"CUSTOM"}:
                 sk.profile = prof["id"]
             else:
                 sk.profile = "CUSTOM"

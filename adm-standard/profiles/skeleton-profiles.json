@@ -1,0 +1,1656 @@
+{
+  "registryVersion": "0.4-P2",
+  "specification": "ADM 1.0 Draft 0.4",
+  "coordinateSystem": {
+    "up": [
+      0,
+      1,
+      0
+    ],
+    "forward": [
+      0,
+      0,
+      -1
+    ],
+    "right": [
+      1,
+      0,
+      0
+    ]
+  },
+  "profiles": [
+    {
+      "id": "humanoid.vrm1",
+      "version": 1,
+      "status": "NORMATIVE",
+      "family": "humanoid",
+      "title": "Humanoid (VRM 1.0 humanoid bones)",
+      "source": "https://github.com/vrm-c/vrm-specification/blob/master/specification/VRMC_vrm-1.0/humanoid.md",
+      "roles": {
+        "hips": {
+          "parent": null,
+          "required": true
+        },
+        "spine": {
+          "parent": "hips",
+          "required": true
+        },
+        "chest": {
+          "parent": "spine",
+          "required": false
+        },
+        "upperChest": {
+          "parent": "chest",
+          "required": false,
+          "needsParent": true
+        },
+        "neck": {
+          "parent": "upperChest",
+          "required": false
+        },
+        "head": {
+          "parent": "neck",
+          "required": true
+        },
+        "leftEye": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEye": {
+          "parent": "head",
+          "required": false
+        },
+        "jaw": {
+          "parent": "head",
+          "required": false
+        },
+        "leftUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "leftLowerLeg": {
+          "parent": "leftUpperLeg",
+          "required": true
+        },
+        "leftFoot": {
+          "parent": "leftLowerLeg",
+          "required": true
+        },
+        "leftToes": {
+          "parent": "leftFoot",
+          "required": false
+        },
+        "rightUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "rightLowerLeg": {
+          "parent": "rightUpperLeg",
+          "required": true
+        },
+        "rightFoot": {
+          "parent": "rightLowerLeg",
+          "required": true
+        },
+        "rightToes": {
+          "parent": "rightFoot",
+          "required": false
+        },
+        "leftShoulder": {
+          "parent": "upperChest",
+          "required": false
+        },
+        "leftUpperArm": {
+          "parent": "leftShoulder",
+          "required": true
+        },
+        "leftLowerArm": {
+          "parent": "leftUpperArm",
+          "required": true
+        },
+        "leftHand": {
+          "parent": "leftLowerArm",
+          "required": true
+        },
+        "rightShoulder": {
+          "parent": "upperChest",
+          "required": false
+        },
+        "rightUpperArm": {
+          "parent": "rightShoulder",
+          "required": true
+        },
+        "rightLowerArm": {
+          "parent": "rightUpperArm",
+          "required": true
+        },
+        "rightHand": {
+          "parent": "rightLowerArm",
+          "required": true
+        },
+        "leftThumbMetacarpal": {
+          "parent": "leftHand",
+          "required": false
+        },
+        "leftThumbProximal": {
+          "parent": "leftThumbMetacarpal",
+          "required": false,
+          "needsParent": true
+        },
+        "leftThumbDistal": {
+          "parent": "leftThumbProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "leftIndexProximal": {
+          "parent": "leftHand",
+          "required": false
+        },
+        "leftIndexIntermediate": {
+          "parent": "leftIndexProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "leftIndexDistal": {
+          "parent": "leftIndexIntermediate",
+          "required": false,
+          "needsParent": true
+        },
+        "leftMiddleProximal": {
+          "parent": "leftHand",
+          "required": false
+        },
+        "leftMiddleIntermediate": {
+          "parent": "leftMiddleProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "leftMiddleDistal": {
+          "parent": "leftMiddleIntermediate",
+          "required": false,
+          "needsParent": true
+        },
+        "leftRingProximal": {
+          "parent": "leftHand",
+          "required": false
+        },
+        "leftRingIntermediate": {
+          "parent": "leftRingProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "leftRingDistal": {
+          "parent": "leftRingIntermediate",
+          "required": false,
+          "needsParent": true
+        },
+        "leftLittleProximal": {
+          "parent": "leftHand",
+          "required": false
+        },
+        "leftLittleIntermediate": {
+          "parent": "leftLittleProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "leftLittleDistal": {
+          "parent": "leftLittleIntermediate",
+          "required": false,
+          "needsParent": true
+        },
+        "rightThumbMetacarpal": {
+          "parent": "rightHand",
+          "required": false
+        },
+        "rightThumbProximal": {
+          "parent": "rightThumbMetacarpal",
+          "required": false,
+          "needsParent": true
+        },
+        "rightThumbDistal": {
+          "parent": "rightThumbProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "rightIndexProximal": {
+          "parent": "rightHand",
+          "required": false
+        },
+        "rightIndexIntermediate": {
+          "parent": "rightIndexProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "rightIndexDistal": {
+          "parent": "rightIndexIntermediate",
+          "required": false,
+          "needsParent": true
+        },
+        "rightMiddleProximal": {
+          "parent": "rightHand",
+          "required": false
+        },
+        "rightMiddleIntermediate": {
+          "parent": "rightMiddleProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "rightMiddleDistal": {
+          "parent": "rightMiddleIntermediate",
+          "required": false,
+          "needsParent": true
+        },
+        "rightRingProximal": {
+          "parent": "rightHand",
+          "required": false
+        },
+        "rightRingIntermediate": {
+          "parent": "rightRingProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "rightRingDistal": {
+          "parent": "rightRingIntermediate",
+          "required": false,
+          "needsParent": true
+        },
+        "rightLittleProximal": {
+          "parent": "rightHand",
+          "required": false
+        },
+        "rightLittleIntermediate": {
+          "parent": "rightLittleProximal",
+          "required": false,
+          "needsParent": true
+        },
+        "rightLittleDistal": {
+          "parent": "rightLittleIntermediate",
+          "required": false,
+          "needsParent": true
+        }
+      },
+      "referencePose": {
+        "name": "T",
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "forward": [
+          0,
+          0,
+          -1
+        ],
+        "right": [
+          1,
+          0,
+          0
+        ],
+        "sides": [
+          {
+            "left": "leftUpperLeg",
+            "right": "rightUpperLeg"
+          },
+          {
+            "left": "leftUpperArm",
+            "right": "rightUpperArm"
+          }
+        ],
+        "checks": [
+          {
+            "from": "leftUpperArm",
+            "to": "leftLowerArm",
+            "direction": [
+              -1,
+              0,
+              0
+            ]
+          },
+          {
+            "from": "leftLowerArm",
+            "to": "leftHand",
+            "direction": [
+              -1,
+              0,
+              0
+            ]
+          },
+          {
+            "from": "leftUpperLeg",
+            "to": "leftLowerLeg",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "leftLowerLeg",
+            "to": "leftFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightUpperArm",
+            "to": "rightLowerArm",
+            "direction": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "from": "rightLowerArm",
+            "to": "rightHand",
+            "direction": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "from": "rightUpperLeg",
+            "to": "rightLowerLeg",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightLowerLeg",
+            "to": "rightFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "hips",
+            "to": "head",
+            "direction": [
+              0,
+              1,
+              0
+            ]
+          }
+        ],
+        "toleranceDeg": 25.0,
+        "toleranceStatus": "ADVISORY"
+      },
+      "localAxes": "UNCONSTRAINED",
+      "ikTemplates": [
+        {
+          "id": "leftArm",
+          "root": "leftUpperArm",
+          "mid": "leftLowerArm",
+          "end": "leftHand",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "leftLeg",
+          "root": "leftUpperLeg",
+          "mid": "leftLowerLeg",
+          "end": "leftFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "id": "rightArm",
+          "root": "rightUpperArm",
+          "mid": "rightLowerArm",
+          "end": "rightHand",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "rightLeg",
+          "root": "rightUpperLeg",
+          "mid": "rightLowerLeg",
+          "end": "rightFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "socketTemplates": [
+        {
+          "name": "hand.left",
+          "role": "leftHand"
+        },
+        {
+          "name": "hand.right",
+          "role": "rightHand"
+        },
+        {
+          "name": "head",
+          "role": "head"
+        },
+        {
+          "name": "spine.back",
+          "role": "chest",
+          "fallback": [
+            "spine"
+          ]
+        }
+      ],
+      "semanticCompatibleWith": [
+        "humanoid.vrm1"
+      ],
+      "retargetMaps": {},
+      "translationRoles": [
+        "hips"
+      ]
+    },
+    {
+      "id": "generic.v1",
+      "version": 1,
+      "status": "EXACT_ONLY",
+      "family": "generic",
+      "title": "Generic / custom rig (exact rig binding only)",
+      "roles": {},
+      "referencePose": null,
+      "localAxes": "UNCONSTRAINED",
+      "ikTemplates": [],
+      "socketTemplates": [],
+      "semanticCompatibleWith": [],
+      "retargetMaps": {},
+      "translationRoles": []
+    },
+    {
+      "id": "animal.generic_quadruped.v1",
+      "version": 1,
+      "status": "PROVISIONAL",
+      "family": "quadruped",
+      "title": "Generic quadruped mammal (proposal)",
+      "gait": "GENERIC",
+      "roles": {
+        "hips": {
+          "parent": null,
+          "required": true,
+          "description": "pelvis, root of the semantic hierarchy"
+        },
+        "spine": {
+          "parent": "hips",
+          "required": true
+        },
+        "chest": {
+          "parent": "spine",
+          "required": true
+        },
+        "neck": {
+          "parent": "chest",
+          "required": true
+        },
+        "head": {
+          "parent": "neck",
+          "required": true
+        },
+        "jaw": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEye": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEye": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEar": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEar": {
+          "parent": "head",
+          "required": false
+        },
+        "tailBase": {
+          "parent": "hips",
+          "required": false
+        },
+        "tailMid": {
+          "parent": "tailBase",
+          "required": false,
+          "needsParent": true
+        },
+        "tailTip": {
+          "parent": "tailMid",
+          "required": false,
+          "needsParent": true
+        },
+        "leftFrontShoulder": {
+          "parent": "chest",
+          "required": false,
+          "description": "scapula"
+        },
+        "leftFrontUpperLeg": {
+          "parent": "leftFrontShoulder",
+          "required": true
+        },
+        "leftFrontLowerLeg": {
+          "parent": "leftFrontUpperLeg",
+          "required": true
+        },
+        "leftFrontFoot": {
+          "parent": "leftFrontLowerLeg",
+          "required": true
+        },
+        "leftFrontToes": {
+          "parent": "leftFrontFoot",
+          "required": false,
+          "needsParent": true
+        },
+        "leftHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "leftHindLowerLeg": {
+          "parent": "leftHindUpperLeg",
+          "required": true
+        },
+        "leftHindFoot": {
+          "parent": "leftHindLowerLeg",
+          "required": true
+        },
+        "leftHindToes": {
+          "parent": "leftHindFoot",
+          "required": false,
+          "needsParent": true
+        },
+        "rightFrontShoulder": {
+          "parent": "chest",
+          "required": false,
+          "description": "scapula"
+        },
+        "rightFrontUpperLeg": {
+          "parent": "rightFrontShoulder",
+          "required": true
+        },
+        "rightFrontLowerLeg": {
+          "parent": "rightFrontUpperLeg",
+          "required": true
+        },
+        "rightFrontFoot": {
+          "parent": "rightFrontLowerLeg",
+          "required": true
+        },
+        "rightFrontToes": {
+          "parent": "rightFrontFoot",
+          "required": false,
+          "needsParent": true
+        },
+        "rightHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "rightHindLowerLeg": {
+          "parent": "rightHindUpperLeg",
+          "required": true
+        },
+        "rightHindFoot": {
+          "parent": "rightHindLowerLeg",
+          "required": true
+        },
+        "rightHindToes": {
+          "parent": "rightHindFoot",
+          "required": false,
+          "needsParent": true
+        }
+      },
+      "referencePose": {
+        "name": "STAND",
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "forward": [
+          0,
+          0,
+          -1
+        ],
+        "right": [
+          1,
+          0,
+          0
+        ],
+        "sides": [
+          {
+            "left": "leftFrontUpperLeg",
+            "right": "rightFrontUpperLeg"
+          },
+          {
+            "left": "leftHindUpperLeg",
+            "right": "rightHindUpperLeg"
+          }
+        ],
+        "checks": [
+          {
+            "from": "hips",
+            "to": "chest",
+            "direction": [
+              0,
+              0,
+              -1
+            ]
+          },
+          {
+            "from": "leftFrontUpperLeg",
+            "to": "leftFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "leftHindUpperLeg",
+            "to": "leftHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightFrontUpperLeg",
+            "to": "rightFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightHindUpperLeg",
+            "to": "rightHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          }
+        ],
+        "toleranceDeg": 45.0,
+        "toleranceStatus": "ADVISORY"
+      },
+      "localAxes": "UNCONSTRAINED",
+      "ikTemplates": [
+        {
+          "id": "leftFrontLeg",
+          "root": "leftFrontUpperLeg",
+          "mid": "leftFrontLowerLeg",
+          "end": "leftFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "leftHindLeg",
+          "root": "leftHindUpperLeg",
+          "mid": "leftHindLowerLeg",
+          "end": "leftHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "id": "rightFrontLeg",
+          "root": "rightFrontUpperLeg",
+          "mid": "rightFrontLowerLeg",
+          "end": "rightFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "rightHindLeg",
+          "root": "rightHindUpperLeg",
+          "mid": "rightHindLowerLeg",
+          "end": "rightHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "socketTemplates": [
+        {
+          "name": "head",
+          "role": "head"
+        },
+        {
+          "name": "back",
+          "role": "chest"
+        },
+        {
+          "name": "collar",
+          "role": "neck"
+        }
+      ],
+      "semanticCompatibleWith": [
+        "animal.generic_quadruped.v1"
+      ],
+      "retargetMaps": {},
+      "translationRoles": [
+        "hips"
+      ],
+      "notes": "PROVISIONAL: not a registered ADM 1.0 profile; SEMANTIC compatibility must not be claimed."
+    },
+    {
+      "id": "animal.canine.v1",
+      "version": 1,
+      "status": "PROVISIONAL",
+      "family": "quadruped",
+      "title": "Canine (proposal)",
+      "gait": "DIGITIGRADE",
+      "roles": {
+        "hips": {
+          "parent": null,
+          "required": true,
+          "description": "pelvis, root of the semantic hierarchy"
+        },
+        "spine": {
+          "parent": "hips",
+          "required": true
+        },
+        "chest": {
+          "parent": "spine",
+          "required": true
+        },
+        "neck": {
+          "parent": "chest",
+          "required": true
+        },
+        "head": {
+          "parent": "neck",
+          "required": true
+        },
+        "jaw": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEye": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEye": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEar": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEar": {
+          "parent": "head",
+          "required": false
+        },
+        "tailBase": {
+          "parent": "hips",
+          "required": false
+        },
+        "tailMid": {
+          "parent": "tailBase",
+          "required": false,
+          "needsParent": true
+        },
+        "tailTip": {
+          "parent": "tailMid",
+          "required": false,
+          "needsParent": true
+        },
+        "leftFrontShoulder": {
+          "parent": "chest",
+          "required": true,
+          "description": "scapula"
+        },
+        "leftFrontUpperLeg": {
+          "parent": "leftFrontShoulder",
+          "required": true
+        },
+        "leftFrontLowerLeg": {
+          "parent": "leftFrontUpperLeg",
+          "required": true
+        },
+        "leftFrontFoot": {
+          "parent": "leftFrontLowerLeg",
+          "required": true
+        },
+        "leftFrontToes": {
+          "parent": "leftFrontFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "leftHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "leftHindLowerLeg": {
+          "parent": "leftHindUpperLeg",
+          "required": true
+        },
+        "leftHindFoot": {
+          "parent": "leftHindLowerLeg",
+          "required": true
+        },
+        "leftHindToes": {
+          "parent": "leftHindFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "rightFrontShoulder": {
+          "parent": "chest",
+          "required": true,
+          "description": "scapula"
+        },
+        "rightFrontUpperLeg": {
+          "parent": "rightFrontShoulder",
+          "required": true
+        },
+        "rightFrontLowerLeg": {
+          "parent": "rightFrontUpperLeg",
+          "required": true
+        },
+        "rightFrontFoot": {
+          "parent": "rightFrontLowerLeg",
+          "required": true
+        },
+        "rightFrontToes": {
+          "parent": "rightFrontFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "rightHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "rightHindLowerLeg": {
+          "parent": "rightHindUpperLeg",
+          "required": true
+        },
+        "rightHindFoot": {
+          "parent": "rightHindLowerLeg",
+          "required": true
+        },
+        "rightHindToes": {
+          "parent": "rightHindFoot",
+          "required": true,
+          "needsParent": true
+        }
+      },
+      "referencePose": {
+        "name": "STAND",
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "forward": [
+          0,
+          0,
+          -1
+        ],
+        "right": [
+          1,
+          0,
+          0
+        ],
+        "sides": [
+          {
+            "left": "leftFrontUpperLeg",
+            "right": "rightFrontUpperLeg"
+          },
+          {
+            "left": "leftHindUpperLeg",
+            "right": "rightHindUpperLeg"
+          }
+        ],
+        "checks": [
+          {
+            "from": "hips",
+            "to": "chest",
+            "direction": [
+              0,
+              0,
+              -1
+            ]
+          },
+          {
+            "from": "leftFrontUpperLeg",
+            "to": "leftFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "leftHindUpperLeg",
+            "to": "leftHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightFrontUpperLeg",
+            "to": "rightFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightHindUpperLeg",
+            "to": "rightHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          }
+        ],
+        "toleranceDeg": 45.0,
+        "toleranceStatus": "ADVISORY"
+      },
+      "localAxes": "UNCONSTRAINED",
+      "ikTemplates": [
+        {
+          "id": "leftFrontLeg",
+          "root": "leftFrontUpperLeg",
+          "mid": "leftFrontLowerLeg",
+          "end": "leftFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "leftHindLeg",
+          "root": "leftHindUpperLeg",
+          "mid": "leftHindLowerLeg",
+          "end": "leftHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "id": "rightFrontLeg",
+          "root": "rightFrontUpperLeg",
+          "mid": "rightFrontLowerLeg",
+          "end": "rightFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "rightHindLeg",
+          "root": "rightHindUpperLeg",
+          "mid": "rightHindLowerLeg",
+          "end": "rightHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "socketTemplates": [
+        {
+          "name": "head",
+          "role": "head"
+        },
+        {
+          "name": "back",
+          "role": "chest"
+        },
+        {
+          "name": "collar",
+          "role": "neck"
+        }
+      ],
+      "semanticCompatibleWith": [
+        "animal.canine.v1"
+      ],
+      "retargetMaps": {},
+      "translationRoles": [
+        "hips"
+      ],
+      "notes": "PROVISIONAL: not a registered ADM 1.0 profile; SEMANTIC compatibility must not be claimed.",
+      "extends": "animal.generic_quadruped.v1"
+    },
+    {
+      "id": "animal.feline.v1",
+      "version": 1,
+      "status": "PROVISIONAL",
+      "family": "quadruped",
+      "title": "Feline (proposal)",
+      "gait": "DIGITIGRADE",
+      "roles": {
+        "hips": {
+          "parent": null,
+          "required": true,
+          "description": "pelvis, root of the semantic hierarchy"
+        },
+        "spine": {
+          "parent": "hips",
+          "required": true
+        },
+        "chest": {
+          "parent": "spine",
+          "required": true
+        },
+        "neck": {
+          "parent": "chest",
+          "required": true
+        },
+        "head": {
+          "parent": "neck",
+          "required": true
+        },
+        "jaw": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEye": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEye": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEar": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEar": {
+          "parent": "head",
+          "required": false
+        },
+        "tailBase": {
+          "parent": "hips",
+          "required": false
+        },
+        "tailMid": {
+          "parent": "tailBase",
+          "required": false,
+          "needsParent": true
+        },
+        "tailTip": {
+          "parent": "tailMid",
+          "required": false,
+          "needsParent": true
+        },
+        "leftFrontShoulder": {
+          "parent": "chest",
+          "required": true,
+          "description": "scapula"
+        },
+        "leftFrontUpperLeg": {
+          "parent": "leftFrontShoulder",
+          "required": true
+        },
+        "leftFrontLowerLeg": {
+          "parent": "leftFrontUpperLeg",
+          "required": true
+        },
+        "leftFrontFoot": {
+          "parent": "leftFrontLowerLeg",
+          "required": true
+        },
+        "leftFrontToes": {
+          "parent": "leftFrontFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "leftHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "leftHindLowerLeg": {
+          "parent": "leftHindUpperLeg",
+          "required": true
+        },
+        "leftHindFoot": {
+          "parent": "leftHindLowerLeg",
+          "required": true
+        },
+        "leftHindToes": {
+          "parent": "leftHindFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "rightFrontShoulder": {
+          "parent": "chest",
+          "required": true,
+          "description": "scapula"
+        },
+        "rightFrontUpperLeg": {
+          "parent": "rightFrontShoulder",
+          "required": true
+        },
+        "rightFrontLowerLeg": {
+          "parent": "rightFrontUpperLeg",
+          "required": true
+        },
+        "rightFrontFoot": {
+          "parent": "rightFrontLowerLeg",
+          "required": true
+        },
+        "rightFrontToes": {
+          "parent": "rightFrontFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "rightHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "rightHindLowerLeg": {
+          "parent": "rightHindUpperLeg",
+          "required": true
+        },
+        "rightHindFoot": {
+          "parent": "rightHindLowerLeg",
+          "required": true
+        },
+        "rightHindToes": {
+          "parent": "rightHindFoot",
+          "required": true,
+          "needsParent": true
+        }
+      },
+      "referencePose": {
+        "name": "STAND",
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "forward": [
+          0,
+          0,
+          -1
+        ],
+        "right": [
+          1,
+          0,
+          0
+        ],
+        "sides": [
+          {
+            "left": "leftFrontUpperLeg",
+            "right": "rightFrontUpperLeg"
+          },
+          {
+            "left": "leftHindUpperLeg",
+            "right": "rightHindUpperLeg"
+          }
+        ],
+        "checks": [
+          {
+            "from": "hips",
+            "to": "chest",
+            "direction": [
+              0,
+              0,
+              -1
+            ]
+          },
+          {
+            "from": "leftFrontUpperLeg",
+            "to": "leftFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "leftHindUpperLeg",
+            "to": "leftHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightFrontUpperLeg",
+            "to": "rightFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightHindUpperLeg",
+            "to": "rightHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          }
+        ],
+        "toleranceDeg": 45.0,
+        "toleranceStatus": "ADVISORY"
+      },
+      "localAxes": "UNCONSTRAINED",
+      "ikTemplates": [
+        {
+          "id": "leftFrontLeg",
+          "root": "leftFrontUpperLeg",
+          "mid": "leftFrontLowerLeg",
+          "end": "leftFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "leftHindLeg",
+          "root": "leftHindUpperLeg",
+          "mid": "leftHindLowerLeg",
+          "end": "leftHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "id": "rightFrontLeg",
+          "root": "rightFrontUpperLeg",
+          "mid": "rightFrontLowerLeg",
+          "end": "rightFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "rightHindLeg",
+          "root": "rightHindUpperLeg",
+          "mid": "rightHindLowerLeg",
+          "end": "rightHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "socketTemplates": [
+        {
+          "name": "head",
+          "role": "head"
+        },
+        {
+          "name": "back",
+          "role": "chest"
+        },
+        {
+          "name": "collar",
+          "role": "neck"
+        }
+      ],
+      "semanticCompatibleWith": [
+        "animal.feline.v1"
+      ],
+      "retargetMaps": {},
+      "translationRoles": [
+        "hips"
+      ],
+      "notes": "PROVISIONAL: not a registered ADM 1.0 profile; SEMANTIC compatibility must not be claimed.",
+      "extends": "animal.generic_quadruped.v1"
+    },
+    {
+      "id": "animal.equine.v1",
+      "version": 1,
+      "status": "PROVISIONAL",
+      "family": "quadruped",
+      "title": "Equine (proposal)",
+      "gait": "UNGULIGRADE",
+      "roles": {
+        "hips": {
+          "parent": null,
+          "required": true,
+          "description": "pelvis, root of the semantic hierarchy"
+        },
+        "spine": {
+          "parent": "hips",
+          "required": true
+        },
+        "chest": {
+          "parent": "spine",
+          "required": true
+        },
+        "neck": {
+          "parent": "chest",
+          "required": true
+        },
+        "head": {
+          "parent": "neck",
+          "required": true
+        },
+        "jaw": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEye": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEye": {
+          "parent": "head",
+          "required": false
+        },
+        "leftEar": {
+          "parent": "head",
+          "required": false
+        },
+        "rightEar": {
+          "parent": "head",
+          "required": false
+        },
+        "tailBase": {
+          "parent": "hips",
+          "required": false
+        },
+        "tailMid": {
+          "parent": "tailBase",
+          "required": false,
+          "needsParent": true
+        },
+        "tailTip": {
+          "parent": "tailMid",
+          "required": false,
+          "needsParent": true
+        },
+        "leftFrontShoulder": {
+          "parent": "chest",
+          "required": true,
+          "description": "scapula"
+        },
+        "leftFrontUpperLeg": {
+          "parent": "leftFrontShoulder",
+          "required": true
+        },
+        "leftFrontLowerLeg": {
+          "parent": "leftFrontUpperLeg",
+          "required": true
+        },
+        "leftFrontFoot": {
+          "parent": "leftFrontLowerLeg",
+          "required": true
+        },
+        "leftFrontPastern": {
+          "parent": "leftFrontFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "leftFrontHoof": {
+          "parent": "leftFrontPastern",
+          "required": true,
+          "needsParent": true
+        },
+        "leftHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "leftHindLowerLeg": {
+          "parent": "leftHindUpperLeg",
+          "required": true
+        },
+        "leftHindFoot": {
+          "parent": "leftHindLowerLeg",
+          "required": true
+        },
+        "leftHindPastern": {
+          "parent": "leftHindFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "leftHindHoof": {
+          "parent": "leftHindPastern",
+          "required": true,
+          "needsParent": true
+        },
+        "rightFrontShoulder": {
+          "parent": "chest",
+          "required": true,
+          "description": "scapula"
+        },
+        "rightFrontUpperLeg": {
+          "parent": "rightFrontShoulder",
+          "required": true
+        },
+        "rightFrontLowerLeg": {
+          "parent": "rightFrontUpperLeg",
+          "required": true
+        },
+        "rightFrontFoot": {
+          "parent": "rightFrontLowerLeg",
+          "required": true
+        },
+        "rightFrontPastern": {
+          "parent": "rightFrontFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "rightFrontHoof": {
+          "parent": "rightFrontPastern",
+          "required": true,
+          "needsParent": true
+        },
+        "rightHindUpperLeg": {
+          "parent": "hips",
+          "required": true
+        },
+        "rightHindLowerLeg": {
+          "parent": "rightHindUpperLeg",
+          "required": true
+        },
+        "rightHindFoot": {
+          "parent": "rightHindLowerLeg",
+          "required": true
+        },
+        "rightHindPastern": {
+          "parent": "rightHindFoot",
+          "required": true,
+          "needsParent": true
+        },
+        "rightHindHoof": {
+          "parent": "rightHindPastern",
+          "required": true,
+          "needsParent": true
+        }
+      },
+      "referencePose": {
+        "name": "STAND",
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "forward": [
+          0,
+          0,
+          -1
+        ],
+        "right": [
+          1,
+          0,
+          0
+        ],
+        "sides": [
+          {
+            "left": "leftFrontUpperLeg",
+            "right": "rightFrontUpperLeg"
+          },
+          {
+            "left": "leftHindUpperLeg",
+            "right": "rightHindUpperLeg"
+          }
+        ],
+        "checks": [
+          {
+            "from": "hips",
+            "to": "chest",
+            "direction": [
+              0,
+              0,
+              -1
+            ]
+          },
+          {
+            "from": "leftFrontUpperLeg",
+            "to": "leftFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "leftHindUpperLeg",
+            "to": "leftHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightFrontUpperLeg",
+            "to": "rightFrontFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "from": "rightHindUpperLeg",
+            "to": "rightHindFoot",
+            "direction": [
+              0,
+              -1,
+              0
+            ]
+          }
+        ],
+        "toleranceDeg": 45.0,
+        "toleranceStatus": "ADVISORY"
+      },
+      "localAxes": "UNCONSTRAINED",
+      "ikTemplates": [
+        {
+          "id": "leftFrontLeg",
+          "root": "leftFrontUpperLeg",
+          "mid": "leftFrontLowerLeg",
+          "end": "leftFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "leftHindLeg",
+          "root": "leftHindUpperLeg",
+          "mid": "leftHindLowerLeg",
+          "end": "leftHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "id": "rightFrontLeg",
+          "root": "rightFrontUpperLeg",
+          "mid": "rightFrontLowerLeg",
+          "end": "rightFrontFoot",
+          "pole": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "id": "rightHindLeg",
+          "root": "rightHindUpperLeg",
+          "mid": "rightHindLowerLeg",
+          "end": "rightHindFoot",
+          "pole": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "socketTemplates": [
+        {
+          "name": "head",
+          "role": "head"
+        },
+        {
+          "name": "back",
+          "role": "chest"
+        },
+        {
+          "name": "saddle",
+          "role": "spine"
+        }
+      ],
+      "semanticCompatibleWith": [
+        "animal.equine.v1"
+      ],
+      "retargetMaps": {},
+      "translationRoles": [
+        "hips"
+      ],
+      "notes": "PROVISIONAL: not a registered ADM 1.0 profile; SEMANTIC compatibility must not be claimed.",
+      "extends": "animal.generic_quadruped.v1"
+    }
+  ]
+}

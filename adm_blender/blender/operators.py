@@ -12,7 +12,6 @@ from . import props as P
 from .colliders import new_collider_object, refresh_collider_mesh, style_collider_object
 from .export_adm import ExportError, ExportOptions, ModelExporter, compute_rig_id, find_model_root
 from .materials import convert_to_adm_material
-from .rolemap import auto_map
 
 
 # --------------------------------------------------------------------------------------------------
@@ -438,7 +437,8 @@ class ADM_OT_convert_materials(bpy.types.Operator):
 # skeleton
 # --------------------------------------------------------------------------------------------------
 class ADM_OT_auto_map_roles(bpy.types.Operator):
-    """Suggest humanoid.vrm1 roles from bone names (Mixamo, Rigify, UE, VRoid, CC). Review the result!"""
+    """Suggest roles of the selected skeleton profile from bone names/hierarchy (humanoid: Mixamo, Rigify, UE,
+    VRoid, CC; quadrupeds: provisional heuristics). Review the result!"""
     bl_idname = "adm.auto_map_roles"
     bl_label = "Auto-Map Roles"
     bl_options = {"REGISTER", "UNDO"}
@@ -450,31 +450,22 @@ class ADM_OT_auto_map_roles(bpy.types.Operator):
         return active_armature(context) is not None
 
     def execute(self, context):
+        from ..core import skeleton_profiles as SP
+        from .rig import auto_map_profile
         arm = active_armature(context)
-        bones = arm.data.bones
-        names = [b.name for b in bones if b.use_deform] or [b.name for b in bones]
-        mapping = auto_map(names)
-        used = {b.adm.role for b in bones if b.adm.role and not self.overwrite}
-        n = 0
-        for b in bones:
-            if self.overwrite:
-                b.adm.role = ""
-        for name, role in mapping.items():
-            b = bones[name]
-            if b.adm.role and not self.overwrite:
-                continue
-            if role in used:
-                continue
-            b.adm.role = role
-            used.add(role)
-            n += 1
-        roles = {b.adm.role for b in bones if b.adm.role}
-        missing = [r for r in K.VRM1_REQUIRED if r not in roles]
+        pid = arm.data.adm.profile_id.strip()
+        if SP.status(pid) not in (SP.NORMATIVE, SP.PROVISIONAL):
+            self.report({"WARNING"}, f"'{pid}' has no semantic roles to map")
+            return {"CANCELLED"}
+        n = auto_map_profile(arm, overwrite=self.overwrite)
+        roles = {b.adm.role for b in arm.data.bones if b.adm.role}
+        req = SP.required_roles(pid)
+        missing = [r for r in req if r not in roles]
         arm.data.adm.export_profile = True
         if missing:
             self.report({"WARNING"}, f"mapped {n} bones; missing required: {', '.join(missing)}")
         else:
-            self.report({"INFO"}, f"mapped {n} bones; all 15 required roles present")
+            self.report({"INFO"}, f"mapped {n} bones; all {len(req)} required roles present")
         return {"FINISHED"}
 
 
@@ -552,10 +543,16 @@ class ADM_OT_ik_chain_add(bpy.types.Operator):
         if b is not None and b.parent is not None and b.parent.parent is not None:
             ch.end, ch.mid, ch.root = b.name, b.parent.name, b.parent.parent.name
             role = b.adm.role
-            ch.chain_id = {"leftFoot": "leftLeg", "rightFoot": "rightLeg", "leftHand": "leftArm",
-                           "rightHand": "rightArm"}.get(role, re.sub(r"[^A-Za-z0-9_]", "_", b.name) + "Chain")
-            if "Hand" in role:
-                ch.pole = (0.0, 1.0, 0.0)
+            from ..core import skeleton_profiles as SP
+            from .rig import pole_from_adm
+            tmpl = {t["end"]: t for t in SP.ik_templates(sk.profile_id.strip())}
+            if role in tmpl:
+                ch.chain_id = tmpl[role]["id"]
+                ch.pole = pole_from_adm(arm, tmpl[role]["pole"])
+            else:
+                ch.chain_id = re.sub(r"[^A-Za-z0-9_]", "_", b.name) + "Chain"
+                if not ch.chain_id[0].isalpha():
+                    ch.chain_id = "ik_" + ch.chain_id
         ids = {c.chain_id for c in sk.ik_chains if c != ch}
         base, i = ch.chain_id, 1
         while ch.chain_id in ids:

@@ -3,7 +3,7 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import file_io, operators, props, ui
+from . import file_io, operators, props, skeleton_ops, ui
 
 
 @persistent
@@ -13,7 +13,7 @@ def _load_post(_dummy):
 
 def register():
     props.register()
-    for c in operators.CLASSES:
+    for c in operators.CLASSES + skeleton_ops.CLASSES:
         bpy.utils.register_class(c)
     file_io.register()
     ui.register()
@@ -29,6 +29,6 @@ def unregister():
         bpy.app.timers.unregister(operators.ensure_role_names)
     ui.unregister()
     file_io.unregister()
-    for c in reversed(operators.CLASSES):
+    for c in reversed(operators.CLASSES + skeleton_ops.CLASSES):
         bpy.utils.unregister_class(c)
     props.unregister()

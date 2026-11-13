@@ -17,9 +17,14 @@ ADM_TYPES = [
 ]
 
 SKELETON_PROFILES = [
-    ("humanoid.vrm1", "Humanoid (VRM 1.0)", "Semantic humanoid roles from VRM 1.0 (retargetable)"),
-    ("generic.v1", "Generic", "Exact-rig only; roles optional"),
-    ("CUSTOM", "Custom…", "Registered versioned custom profile id"),
+    ("humanoid.vrm1", "Humanoid (VRM 1.0)", "Semantic humanoid roles from VRM 1.0 (retargetable)", "ARMATURE_DATA", 0),
+    ("animal.generic_quadruped.v1", "Quadruped (provisional)",
+     "PROVISIONAL generic quadruped mammal proposal - not a registered ADM profile", "OUTLINER_OB_ARMATURE", 3),
+    ("animal.canine.v1", "Canine (provisional)", "PROVISIONAL dog/wolf proposal (digitigrade)", "BLANK1", 4),
+    ("animal.feline.v1", "Feline (provisional)", "PROVISIONAL cat proposal (digitigrade)", "BLANK1", 5),
+    ("animal.equine.v1", "Equine (provisional)", "PROVISIONAL horse proposal (unguligrade)", "BLANK1", 6),
+    ("generic.v1", "Generic / Custom Rig", "Exact-rig only (rigId); roles optional", "BONE_DATA", 1),
+    ("CUSTOM", "Custom ID…", "Registered versioned custom profile id (org.domain.profile.vN)", "TEXT", 2),
 ]
 
 COLLIDER_SHAPES = [
@@ -156,6 +161,9 @@ class ADMIKChain(PropertyGroup):
     pole: FloatVectorProperty(name="Pole", size=3, default=(0.0, -1.0, 0.0), subtype="DIRECTION",
                               description="Pole direction in armature space (Blender axes)")
     weight: FloatProperty(name="Weight", default=1.0, min=0.0, max=1.0)
+    target: PointerProperty(type=bpy.types.Object, name="Preview Target",
+                            description="Editor-only object used as runtime IK target for the ADM-IK-1 preview "
+                                        "(never exported: ADM IK targets are runtime inputs)")
 
 
 class ADMSkeletonProps(PropertyGroup):
@@ -348,6 +356,9 @@ class ADMReportItem(PropertyGroup):
     code: StringProperty()
     path: StringProperty()
     message: StringProperty()
+    bone: StringProperty()
+    role: StringProperty()
+    fix: StringProperty()
 
 
 class ADMRoleName(PropertyGroup):
@@ -358,6 +369,12 @@ class ADMWindowProps(PropertyGroup):
     report: CollectionProperty(type=ADMReportItem)
     active_report: IntProperty()
     report_title: StringProperty()
+    rig_report: CollectionProperty(type=ADMReportItem)
+    active_rig_issue: IntProperty()
+    rig_report_title: StringProperty()
+    compat_report: CollectionProperty(type=ADMReportItem)
+    active_compat: IntProperty()
+    compat_title: StringProperty()
     role_names: CollectionProperty(type=ADMRoleName)
     collider_shape: EnumProperty(name="Shape", items=COLLIDER_SHAPES, default="BOX")
 

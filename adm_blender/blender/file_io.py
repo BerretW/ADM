@@ -166,6 +166,9 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
     armature: EnumProperty(name="Rig", items=_armature_items)
     strict: BoolProperty(name="Strict Compatibility", default=True,
                          description="Refuse libraries whose profile or rigId does not match the rig")
+    allow_provisional: BoolProperty(name="Allow Provisional Profiles", default=True,
+                                    description="Bind SEMANTIC libraries of PROVISIONAL (animal) profiles to a rig "
+                                                "declaring the same profile (not certified interoperable)")
     frame_start: IntProperty(name="Start Frame", default=1)
 
     def invoke(self, context, event):
@@ -182,6 +185,7 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
         try:
             imp, lib = import_library(context, self.filepath,
                                       AnimImportOptions(armature=arm, strict=self.strict,
+                                                        allow_provisional=self.allow_provisional,
                                                         frame_start=self.frame_start))
         except ImportError_ as exc:
             show_report(context, os.path.basename(self.filepath), exc.report, [exc])

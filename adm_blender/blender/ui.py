@@ -3,6 +3,7 @@
 import bpy
 
 from ..core import constants as K
+from ..core import skeleton_profiles as SP
 from .export_adm import find_model_root
 from .operators import _active_clip, _active_library, active_armature
 
@@ -86,11 +87,10 @@ class ADM_UL_ik_chains(bpy.types.UIList):
 class ADM_UL_bone_roles(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
-        row.label(text=item.name, icon="BONE_DATA" if item.use_deform else "BONE_DATA")
-        arm_props = data.adm if hasattr(data, "adm") else None
-        wm = context.window_manager.adm
-        if arm_props is not None and arm_props.profile == "humanoid.vrm1" and len(wm.role_names):
-            row.prop_search(item.adm, "role", wm, "role_names", text="", icon="NONE")
+        row.label(text=item.name, icon="BONE_DATA" if item.use_deform else "GROUP_BONE")
+        arm = active_armature(context)
+        if arm is not None and arm.data == data:
+            _role_widget(row, context, arm, item)
         else:
             row.prop(item.adm, "role", text="")
 
@@ -145,7 +145,10 @@ class ADM_UL_report(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         ic = {"ERROR": "CANCEL", "WARNING": "ERROR"}.get(item.severity, "INFO")
         row = layout.row(align=True)
-        row.label(text=f"{item.code}: {item.message}", icon=ic)
+        where = " · ".join(x for x in (item.role, item.bone) if x)
+        row.label(text=f"{item.code}{' [' + where + ']' if where else ''}: {item.message}", icon=ic)
+        if item.fix:
+            row.label(text="", icon="TOOL_SETTINGS")
 
 
 # ==================================================================================================
@@ -233,15 +236,25 @@ def draw_model_metadata(layout, props):
     layout.label(text="Vehicle / weapon profiles remain provisional", icon="INFO")
 
 
+def _role_widget(layout, context, arm, bone, text=None):
+    """Role editor: search list for the active profile (unique roles enforced by the operator)."""
+    wm = context.window_manager.adm
+    row = layout.row(align=True)
+    if arm.data.adm.profile == "humanoid.vrm1" and len(wm.role_names):
+        row.prop_search(bone.adm, "role", wm, "role_names", text=text if text is not None else "", icon="NONE")
+    else:
+        row.prop(bone.adm, "role", text=text if text is not None else "")
+    if SP.status(arm.data.adm.profile_id.strip()) in (SP.NORMATIVE, SP.PROVISIONAL):
+        op = row.operator("adm.set_bone_role", text="", icon="VIEWZOOM")
+        op.bone = bone.name
+    return row
+
+
 def draw_bone_props(layout, context, arm, bone):
     p = bone.adm
     layout.use_property_split = True
     layout.use_property_decorate = False
-    wm = context.window_manager.adm
-    if arm.data.adm.profile == "humanoid.vrm1" and len(wm.role_names):
-        layout.prop_search(p, "role", wm, "role_names")
-    else:
-        layout.prop(p, "role")
+    _role_widget(layout, context, arm, bone, text="Role")
     col = layout.column(heading="Reference")
     col.prop(p, "use_reference_correction", text="Correction")
     if p.use_reference_correction:
@@ -252,48 +265,119 @@ def draw_bone_props(layout, context, arm, bone):
         layout.prop(p, "component_profile")
 
 
+def _profile_status_box(layout, pid):
+    st = SP.status(pid)
+    if st == SP.PROVISIONAL:
+        box = layout.box()
+        box.label(text="PROVISIONAL profile - not registered in ADM 1.0", icon="ERROR")
+        box.label(text="Same-profile tooling only; no certified interoperability")
+    elif st is None and pid:
+        layout.label(text="Unregistered profile: EXACT (rigId) binding only", icon="INFO")
+    elif st == SP.EXACT_ONLY:
+        layout.label(text="generic.v1: exact-rig binding, roles optional", icon="INFO")
+
+
 def draw_skeleton(layout, context, arm):
+    """Profile selection, detection, validation summary (section 1, 2, 11)."""
     sk = arm.data.adm
+    wm = context.window_manager.adm
     layout.use_property_split = True
     layout.use_property_decorate = False
+    layout.prop(sk, "profile")
+    if sk.profile == "CUSTOM":
+        layout.prop(sk, "custom_profile")
+    _profile_status_box(layout, sk.profile_id.strip())
     layout.prop(sk, "export_profile")
     col = layout.column()
     col.enabled = sk.export_profile
-    col.prop(sk, "profile")
-    if sk.profile == "CUSTOM":
-        col.prop(sk, "custom_profile")
     row = col.row(heading="Target Height")
     row.prop(sk, "use_target_height", text="")
     sub = row.row()
     sub.enabled = sk.use_target_height
     sub.prop(sk, "target_height", text="")
     col.prop(sk, "write_rig_id")
-    row = layout.row(align=True)
-    row.operator("adm.auto_map_roles", icon="AUTOMERGE_ON")
-    row.operator("adm.clear_roles", icon="X", text="")
-    if sk.profile == "humanoid.vrm1":
-        roles = {b.adm.role for b in arm.data.bones if b.adm.role}
-        missing = [r for r in K.VRM1_REQUIRED if r not in roles]
-        if missing:
-            box = layout.box()
-            box.label(text=f"Missing {len(missing)} required role(s):", icon="ERROR")
-            flow = box.grid_flow(columns=2, align=True)
-            for r in missing:
-                flow.label(text=r)
-        else:
-            layout.label(text=f"{len(roles)} roles mapped · all required present", icon="CHECKMARK")
     layout.use_property_split = False
-    row = layout.row()
-    row.prop(sk, "roles_mapped_only", toggle=True, icon="FILTER")
-    layout.template_list("ADM_UL_bone_roles", "", arm.data, "bones", sk, "active_bone_index", rows=6)
+    row = layout.row(align=True)
+    row.operator("adm.detect_profile", icon="VIEWZOOM")
+    row.operator("adm.auto_map_roles", icon="AUTOMERGE_ON", text="Auto-Map")
+    row.operator("adm.clear_roles", icon="X", text="")
+    row = layout.row(align=True)
+    row.scale_y = 1.4
+    row.operator("adm.validate_rig", icon="CHECKMARK")
+    if wm.rig_report_title and wm.rig_report_title.startswith(arm.name + " "):
+        nerr = sum(1 for r in wm.rig_report if r.severity == "ERROR")
+        layout.label(text=wm.rig_report_title[len(arm.name) + 1:], icon="CANCEL" if nerr else "CHECKMARK")
     row = layout.row(align=True)
     row.operator("adm.compute_rig_id", icon="KEY_HLT")
     if sk.rig_id:
         layout.label(text=sk.rig_id[:32] + "…", icon="LINKED")
 
 
-def draw_ik(layout, context, arm):
+def draw_role_mapping(layout, context, arm):
+    """Role mapping editor + missing required roles (sections 3, 4)."""
     sk = arm.data.adm
+    pid = sk.profile_id.strip()
+    roles = {b.adm.role for b in arm.data.bones if b.adm.role}
+    required = SP.required_roles(pid)
+    if required:
+        missing = [r for r in required if r not in roles]
+        if missing:
+            box = layout.box()
+            box.label(text=f"Missing {len(missing)} of {len(required)} required role(s):", icon="ERROR")
+            flow = box.grid_flow(columns=2, align=True)
+            for r in missing:
+                flow.label(text=r)
+            box.operator("adm.auto_map_roles", icon="AUTOMERGE_ON", text="Auto-Map Missing")
+        else:
+            layout.label(text=f"{len(roles)} roles mapped · all {len(required)} required present",
+                         icon="CHECKMARK")
+        dup = sorted(r for r in roles if sum(1 for b in arm.data.bones if b.adm.role == r) > 1)
+        if dup:
+            layout.label(text="Duplicate roles: " + ", ".join(dup), icon="CANCEL")
+    row = layout.row()
+    row.prop(sk, "roles_mapped_only", toggle=True, icon="FILTER")
+    layout.template_list("ADM_UL_bone_roles", "", arm.data, "bones", sk, "active_bone_index", rows=6)
+
+
+def _report_subset(layout, wm, prefixes, empty_text):
+    items = [r for r in wm.rig_report if r.code.startswith(prefixes)]
+    if not wm.rig_report_title:
+        layout.label(text="Run 'Validate ADM Rig'", icon="INFO")
+        return
+    if not items:
+        layout.label(text=empty_text, icon="CHECKMARK")
+        return
+    for it in items[:8]:
+        box = layout.box()
+        row = box.row(align=True)
+        row.label(text=it.code + (f" [{it.role or it.bone}]" if it.role or it.bone else ""),
+                  icon={"ERROR": "CANCEL", "WARNING": "ERROR"}.get(it.severity, "INFO"))
+        if it.fix:
+            op = row.operator("adm.rig_fix", text="Fix", icon="TOOL_SETTINGS")
+            op.fix, op.role, op.bone = it.fix, it.role, it.bone
+        _wrap(box.column(align=True), it.message)
+
+
+def draw_reference(layout, context, arm):
+    """Reference pose + normalized corrections (section 5)."""
+    pid = arm.data.adm.profile_id.strip()
+    prof = SP.get(pid)
+    if prof and prof.get("referencePose"):
+        rp = prof["referencePose"]
+        layout.label(text=f"Reference pose '{rp['name']}': +Y up, -Z forward, +X = right", icon="ARMATURE_DATA")
+    _report_subset(layout, context.window_manager.adm, ("REFERENCE", "CORRECTION"),
+                   "Reference pose and corrections OK")
+    row = layout.row(align=True)
+    row.operator("adm.normalize_corrections", icon="ORIENTATION_GLOBAL")
+    row.operator("adm.clear_corrections", icon="X", text="")
+
+
+def draw_ik(layout, context, arm):
+    """IK chain editor (section 6)."""
+    sk = arm.data.adm
+    row = layout.row(align=True)
+    row.operator("adm.ik_from_profile", icon="CON_KINEMATIC")
+    row.operator("adm.ik_from_constraints", icon="CONSTRAINT_BONE")
     row = layout.row()
     row.template_list("ADM_UL_ik_chains", "", sk, "ik_chains", sk, "active_ik_chain", rows=3)
     col = row.column(align=True)
@@ -309,6 +393,75 @@ def draw_ik(layout, context, arm):
             col.prop_search(ch, f, arm.data, "bones")
         col.prop(ch, "pole")
         col.prop(ch, "weight")
+        col.prop(ch, "target")
+    row = layout.row(align=True)
+    row.operator("adm.ik_add_target", icon="EMPTY_AXIS", text="Targets")
+    row.operator("adm.ik_preview", icon="PLAY")
+    row.operator("adm.ik_reset", icon="LOOP_BACK", text="Reset")
+    _report_subset(layout, context.window_manager.adm, ("IK_", "BLENDER_"), "IK chains valid")
+
+
+def draw_sockets(layout, context, arm):
+    """Profile attachment sockets (section 7)."""
+    pid = arm.data.adm.profile_id.strip()
+    templates = SP.socket_templates(pid)
+    present = {o.adm.attachment_name or o.name: o for o in bpy.data.objects
+               if o.adm.adm_type == "ATTACHMENT" and o.parent == arm}
+    present.update({b.adm.attachment_name: b for b in arm.data.bones if b.adm.attachment_name})
+    col = layout.column(align=True)
+    for t in templates:
+        ok = t["name"] in present
+        col.label(text=f"{t['name']}  →  {t['role']}", icon="CHECKMARK" if ok else "DOT")
+    for name in sorted(set(present) - {t["name"] for t in templates}):
+        col.label(text=f"{name} (custom)", icon="EMPTY_ARROWS")
+    row = layout.row(align=True)
+    row.operator("adm.create_profile_sockets", icon="EMPTY_ARROWS")
+    row.operator("adm.create_attachment", icon="ADD", text="Custom")
+
+
+def draw_skinning(layout, context, arm):
+    """Skinning check (section 8)."""
+    _report_subset(layout, context.window_manager.adm, ("SKIN_",), "Skinning OK (≤ 4 normalized influences)")
+    layout.operator("adm.skin_fix", icon="MOD_VERTEX_WEIGHT")
+
+
+def draw_anim_compat(layout, context, arm):
+    """Animation library import + compatibility test (sections 9, 10)."""
+    wm = context.window_manager.adm
+    row = layout.row(align=True)
+    row.operator("import_anim.adm_anim", text="Import Library", icon="IMPORT")
+    row.operator("adm.anim_compat_test", text="Test Compatibility", icon="LINKED")
+    if wm.compat_title:
+        level = wm.compat_title.split(": ")[-1].split(" ")[0]
+        layout.label(text=wm.compat_title, icon={"INCOMPATIBLE": "CANCEL", "PROVISIONAL_SEMANTIC": "ERROR"}.get(
+            level, "CHECKMARK"))
+        if len(wm.compat_report):
+            layout.template_list("ADM_UL_report", "adm_compat", wm, "compat_report", wm, "active_compat", rows=3)
+            if 0 <= wm.active_compat < len(wm.compat_report):
+                _wrap(layout.box().column(align=True), wm.compat_report[wm.active_compat].message)
+
+
+def draw_rig_report(layout, context, arm):
+    """Full validation list with per-issue bone/role and fixes (section 11)."""
+    wm = context.window_manager.adm
+    layout.operator("adm.validate_rig", icon="CHECKMARK")
+    if not len(wm.rig_report):
+        return
+    layout.template_list("ADM_UL_report", "adm_rig", wm, "rig_report", wm, "active_rig_issue", rows=5)
+    if 0 <= wm.active_rig_issue < len(wm.rig_report):
+        it = wm.rig_report[wm.active_rig_issue]
+        box = layout.box()
+        col = box.column(align=True)
+        if it.role:
+            col.label(text=f"Role: {it.role}", icon="GROUP_BONE")
+        if it.bone:
+            row = col.row(align=True)
+            row.label(text=f"Bone/Object: {it.bone}", icon="BONE_DATA")
+            row.operator("adm.select_issue", text="", icon="RESTRICT_SELECT_OFF").bone = it.bone
+        _wrap(col, it.message)
+        if it.fix:
+            op = box.operator("adm.rig_fix", text=f"Apply Fix: {it.fix}", icon="TOOL_SETTINGS")
+            op.fix, op.role, op.bone = it.fix, it.role, it.bone
 
 
 # ==================================================================================================
@@ -377,7 +530,7 @@ class ADM_PT_object(_Side, bpy.types.Panel):
 
 
 class ADM_PT_skeleton(_Side, bpy.types.Panel):
-    bl_label = "Skeleton"
+    bl_label = "ADM Skeleton & Animation"
     bl_order = 2
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -392,13 +545,48 @@ class ADM_PT_skeleton(_Side, bpy.types.Panel):
         draw_skeleton(self.layout, context, active_armature(context))
 
 
-class ADM_PT_ik(_Side, bpy.types.Panel):
-    bl_label = "IK Chains"
+class _SkelSub(_Side):
     bl_parent_id = "ADM_PT_skeleton"
     bl_options = {"DEFAULT_CLOSED"}
+    drawer = None
 
     def draw(self, context):
-        draw_ik(self.layout, context, active_armature(context))
+        type(self).drawer(self.layout, context, active_armature(context))
+
+
+class ADM_PT_skel_roles(_SkelSub, bpy.types.Panel):
+    bl_label = "Role Mapping"
+    drawer = staticmethod(draw_role_mapping)
+
+
+class ADM_PT_skel_reference(_SkelSub, bpy.types.Panel):
+    bl_label = "Reference Pose"
+    drawer = staticmethod(draw_reference)
+
+
+class ADM_PT_ik(_SkelSub, bpy.types.Panel):
+    bl_label = "IK Chains"
+    drawer = staticmethod(draw_ik)
+
+
+class ADM_PT_skel_sockets(_SkelSub, bpy.types.Panel):
+    bl_label = "Sockets"
+    drawer = staticmethod(draw_sockets)
+
+
+class ADM_PT_skel_skin(_SkelSub, bpy.types.Panel):
+    bl_label = "Skinning"
+    drawer = staticmethod(draw_skinning)
+
+
+class ADM_PT_skel_anim(_SkelSub, bpy.types.Panel):
+    bl_label = "Animation Libraries & Compatibility"
+    drawer = staticmethod(draw_anim_compat)
+
+
+class ADM_PT_skel_report(_SkelSub, bpy.types.Panel):
+    bl_label = "Rig Validation Report"
+    drawer = staticmethod(draw_rig_report)
 
 
 class ADM_PT_face(_Side, bpy.types.Panel):
@@ -635,10 +823,16 @@ class ADM_PT_armature_properties(bpy.types.Panel):
 
     def draw(self, context):
         draw_skeleton(self.layout, context, context.object)
-        hdr, body = self.layout.panel("adm_arm_ik", default_closed=True)
-        hdr.label(text="IK Chains")
-        if body is not None:
-            draw_ik(body, context, context.object)
+        for key, label, fn in (("adm_arm_roles", "Role Mapping", draw_role_mapping),
+                               ("adm_arm_ref", "Reference Pose", draw_reference),
+                               ("adm_arm_ik", "IK Chains", draw_ik),
+                               ("adm_arm_sockets", "Sockets", draw_sockets),
+                               ("adm_arm_skin", "Skinning", draw_skinning),
+                               ("adm_arm_report", "Rig Validation Report", draw_rig_report)):
+            hdr, body = self.layout.panel(key, default_closed=True)
+            hdr.label(text=label)
+            if body is not None:
+                fn(body, context, context.object)
 
 
 class ADM_PT_material_properties(bpy.types.Panel):
@@ -846,8 +1040,9 @@ def menu_add(self, context):
     self.layout.menu(ADM_MT_add.bl_idname, icon="MOD_BUILD")
 
 
-SIDEBAR_PANELS = (ADM_PT_tools, ADM_PT_object, ADM_PT_skeleton, ADM_PT_ik, ADM_PT_face, ADM_PT_expressions,
-                  ADM_PT_shaders, ADM_PT_animation, ADM_PT_validation)
+SIDEBAR_PANELS = (ADM_PT_tools, ADM_PT_object, ADM_PT_skeleton, ADM_PT_skel_roles, ADM_PT_skel_reference, ADM_PT_ik,
+                  ADM_PT_skel_sockets, ADM_PT_skel_skin, ADM_PT_skel_anim, ADM_PT_skel_report,
+                  ADM_PT_face, ADM_PT_expressions, ADM_PT_shaders, ADM_PT_animation, ADM_PT_validation)
 
 CLASSES = (
     ADM_UL_lod_levels, ADM_UL_face_bindings, ADM_UL_expressions, ADM_UL_expression_bindings, ADM_UL_ik_chains,

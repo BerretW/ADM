@@ -13,6 +13,8 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 
 from ..core import constants as K
+from ..core import skeleton as SK
+from ..core import skeleton_profiles as SP
 from ..core.buffers import BinBuilder
 from ..core.container import AdmFormatError, write_container
 from ..core.rigid import rig_id_from_document
@@ -20,9 +22,12 @@ from ..core.validate import validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError
 
-GENERATOR = "ADM Tools for Blender 1.1.0 (ADM Draft 0.4)"
+GENERATOR = "ADM Tools for Blender 1.2.0 (ADM Draft 0.4)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
+# rig analysis results that would produce a structurally invalid skeletonProfiles entry
+EXPORT_BLOCKING_RIG_CODES = {"PROFILE_ID", "ROLE_UNKNOWN", "ROLE_DUPLICATE", "ROLE_MISSING", "ROLE_NEEDS_PARENT",
+                             "ROLE_HIERARCHY", "ROLE_BONE_MISSING"}
 
 
 class ExportError(Exception):
@@ -767,12 +772,25 @@ class ModelExporter:
                 missing = [r for r in K.VRM1_REQUIRED if r not in roles]
                 if missing:
                     raise ExportError(f"armature '{arm.name}': missing required humanoid roles: {', '.join(missing)}")
+            reg = SP.get(pid)
+            if reg is not None and reg["status"] in (SP.NORMATIVE, SP.PROVISIONAL):
+                from .rig import joint_table
+                for issue in SK.analyze_rig(pid, joint_table(arm), [(b.name, b.adm.role.strip())
+                                                                     for b in arm.data.bones if b.adm.role.strip()]):
+                    where = f"armature '{arm.name}'" + (f" bone '{issue.bone}'" if issue.bone else "")
+                    if issue.code in EXPORT_BLOCKING_RIG_CODES:
+                        raise ExportError(f"{where}: {issue.message}")
+                    if issue.severity != SK.INFO:
+                        self.warn(f"{where}: {issue.code}: {issue.message}")
+            elif reg is None:
+                self.warn(f"armature '{arm.name}': skeleton profile '{pid}' is not in the profile registry; "
+                          f"only EXACT (rigId) animation binding is portable")
             skin = self.profile_skin(arm)
             if "skeletonProfile" in self.skins[skin]:
                 continue
             prof = {"id": pid, "skin": skin, "roles": dict(sorted(roles.items()))}
-            if pid == "humanoid.vrm1":
-                prof["referencePose"] = "T"
+            if reg is not None and reg.get("referencePose"):
+                prof["referencePose"] = reg["referencePose"]["name"]
             if sk.use_target_height:
                 prof["targetHeight"] = cv.f32(sk.target_height)
             if corr:
@@ -836,9 +854,12 @@ class ModelExporter:
         return faces, exprs
 
     def _ik_chains(self):
+        from .rig import constraint_issues
         out = []
         for arm_name in sorted(self.arm_joints):
             arm = bpy.data.objects[arm_name]
+            for issue in constraint_issues(arm):
+                self.warn(f"armature '{arm_name}': {issue.code}: {issue.message}")
             arm_world = self.nodes[self.obj_node[arm_name]].world
             for ch in arm.data.adm.ik_chains:
                 keys = [(arm_name, ch.root), (arm_name, ch.mid), (arm_name, ch.end)]

@@ -9,6 +9,8 @@ from bpy_extras import anim_utils
 from mathutils import Quaternion
 
 from ..core import constants as K
+from ..core import skeleton as SK
+from ..core import skeleton_profiles as SP
 from ..core.buffers import BinBuilder
 from ..core.container import AdmFormatError, write_container
 from ..core.validate import (BCP47_RE, EVENT_NAME_RE, LIBRARY_ID_RE, NAMESPACE_RE, SEGMENT_RE, SEMVER_RE,
@@ -181,8 +183,22 @@ class AnimExporter:
         if model_any:
             return d
         if lib.binding == "SEMANTIC":
-            if d["targetProfile"] == "generic.v1":
-                raise ExportError("generic.v1 supports only EXACT binding")
+            pid = d["targetProfile"]
+            if SP.status(pid) == SP.EXACT_ONLY:
+                raise ExportError(f"{pid} supports only EXACT binding")
+            if SP.status(pid) is None:
+                raise ExportError(f"profile '{pid}' is not in the skeleton profile registry; SEMANTIC retarget "
+                                  f"rules are undefined (use EXACT binding)")
+            from .export_adm import EXPORT_BLOCKING_RIG_CODES
+            from .rig import assignments, correction_issues, joint_table
+            for i in SK.analyze_rig(pid, joint_table(arm), assignments(arm)):
+                if i.code in EXPORT_BLOCKING_RIG_CODES:
+                    raise ExportError(f"rig '{arm.name}'{' bone ' + repr(i.bone) if i.bone else ''}: {i.message} "
+                                      f"(Validate ADM Rig)")
+                if i.severity != SK.INFO:
+                    self.warn(f"rig '{arm.name}': {i.code}: {i.message}")
+            for i in correction_issues(arm):
+                self.warn(f"rig '{arm.name}': {i.code}: {i.message}")
             if lib.use_motion_scale:
                 d["motionScale"] = "SOURCE_HEIGHT"
                 d["sourceHeight"] = cv.f32(lib.source_height)

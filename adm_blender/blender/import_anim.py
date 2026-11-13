@@ -9,6 +9,7 @@ from bpy_extras import anim_utils
 from mathutils import Matrix, Quaternion
 
 from ..core import constants as K
+from ..core import skeleton as SK
 from ..core.buffers import read_accessor_np
 from ..core.validate import validate_anim
 from . import convert as cv
@@ -24,6 +25,7 @@ class AnimImportOptions:
         self.armature = None
         self.frame_start = 1
         self.strict = True        # refuse incompatible profile / rigId instead of warning
+        self.allow_provisional = True  # same-profile SEMANTIC binding for PROVISIONAL (animal) profiles
         self.set_active = True    # assign the first clip to the rig
         for k, v in kw.items():
             if not hasattr(self, k):
@@ -47,6 +49,54 @@ def _qmat_right(q):
     """4x4 matrix M so that (p @ q) as wxyz vector == M @ p_wxyz."""
     w, x, y, z = q
     return np.array([[w, -x, -y, -z], [x, w, z, -y], [y, -z, w, x], [z, y, -x, w]])
+
+
+def library_channel_roles(doc):
+    roles = set()
+    for clip in doc.get("clips", []):
+        for ch in clip.get("channels", []):
+            t = ch.get("target", {})
+            if t.get("kind") == "bone" and "role" in t:
+                roles.add(t["role"])
+    return roles
+
+
+def check_library_compat(context, arm, doc, allow_provisional=True):
+    """Compatibility level of a validated .adm_anim document with ``arm``.
+
+    Returns (level, reasons, rig_warnings).  Structural rig errors (role mapping) make SEMANTIC
+    binding INCOMPATIBLE; reference pose deviations are advisory (numeric tolerance is a SPEC_GAP)
+    and are returned as warnings.
+    """
+    from .export_adm import EXPORT_BLOCKING_RIG_CODES
+    from .rig import assignments, joint_table
+    lib = doc["library"]
+    rig_warnings = []
+    if arm is None:
+        level, reasons = SK.library_compatibility(lib, "", set())
+        return level, reasons, rig_warnings
+    sk = arm.data.adm
+    pid = sk.profile_id.strip()
+    exact = None
+    if lib.get("binding") == "EXACT" and lib.get("rigId"):
+        exact = bool(rig_id_matches(context, arm, lib["rigId"]))
+    issues = []
+    if lib.get("binding") == "SEMANTIC":
+        for i in SK.analyze_rig(pid, joint_table(arm), assignments(arm)):
+            if i.code in EXPORT_BLOCKING_RIG_CODES:
+                issues.append(i)
+            elif i.severity != SK.INFO and i.code not in ("PROFILE_PROVISIONAL",):
+                rig_warnings.append(f"rig '{arm.name}' {i.code}"
+                                    f"{' (' + (i.bone or i.role) + ')' if (i.bone or i.role) else ''}: {i.message}")
+    rig_roles = {r for _b, r in assignments(arm)}
+    level, reasons = SK.library_compatibility(lib, pid, rig_roles, exact, issues, library_channel_roles(doc))
+    if level == SK.INCOMPATIBLE and exact is False:
+        rig = compute_rig_id(context, arm)
+        reasons.append(f"library {lib['rigId'][:12]}… vs rig {rig[:12]}… (EXACT clips require the identical rig)")
+    if level == SK.PROVISIONAL_SEMANTIC and not allow_provisional:
+        return SK.INCOMPATIBLE, reasons + ["PROVISIONAL profiles are disabled ('Allow Provisional' off)"], \
+            rig_warnings
+    return level, reasons, rig_warnings
 
 
 class AnimImporter:
@@ -134,22 +184,21 @@ class AnimImporter:
 
     # ----------------------------------------------------------------------------------------------
     def _check_compat(self, lib):
-        arm = self.arm
-        tp = lib["targetProfile"]
-        ours = arm.data.adm.profile_id
-        problems = []
-        if self.binding == "SEMANTIC":
-            if tp != ours:
-                problems.append(f"library targets profile '{tp}' but rig '{arm.name}' declares '{ours}'")
-        else:
-            if not rig_id_matches(self.context, arm, lib["rigId"]):
-                rig = compute_rig_id(self.context, arm)
-                problems.append(f"rigId mismatch: library {lib['rigId'][:12]}… vs rig {rig[:12]}… "
-                                f"(EXACT clips require the identical rig)")
-        for p in problems:
+        level, reasons, rig_warnings = check_library_compat(self.context, self.arm, self.doc,
+                                                            allow_provisional=self.opts.allow_provisional)
+        self.compat_level = level
+        for w in rig_warnings:
+            self.warn(w)
+        if level == SK.INCOMPATIBLE:
+            msg = "INCOMPATIBLE: " + "; ".join(reasons)
             if self.opts.strict:
-                raise ImportError_("INCOMPATIBLE: " + p + ". Disable 'Strict' to import anyway.")
-            self.warn("INCOMPATIBLE: " + p)
+                raise ImportError_(msg + ". Disable 'Strict' to import anyway.")
+            self.warn(msg)
+        elif level == SK.PROVISIONAL_SEMANTIC:
+            self.warn("PROVISIONAL: " + "; ".join(reasons))
+        else:
+            for r in reasons[:-1]:
+                self.warn(r)
 
     def _prepare_targets(self, lib):
         arm = self.arm

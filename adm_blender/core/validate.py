@@ -18,6 +18,8 @@ from .buffers import read_accessor_flat, read_accessor_np, read_view
 from .container import (AdmFormatError, DEFAULT_LIMITS, ResourceLimitError, read_container)
 from .mathutil import (IDENTITY, det3, mat_mul, mat_translation, node_local_matrix, vcross, vlen, vsub)
 from .rigid import rig_id_from_document
+from . import skeleton as SK
+from . import skeleton_profiles as SP
 
 try:  # optional acceleration
     import numpy as _np
@@ -1119,22 +1121,39 @@ class AdmValidator(_Base):
                                  f"node {node} already mapped to '{seen_nodes[node]}'")
                 seen_nodes[node] = role
             self.profile_roles[pi] = dict(roles)
-            if pid == "humanoid.vrm1":
+            pstatus = SP.status(pid) if isinstance(pid, str) else None
+            if pstatus == SP.PROVISIONAL:
+                self.r.warning("PROFILE_PROVISIONAL", p + ".id",
+                               f"'{pid}' is a provisional proposal, not a registered ADM 1.0 profile; "
+                               "SEMANTIC interoperability must not be claimed")
+            elif pstatus is None and isinstance(pid, str) and PROFILE_ID_RE.match(pid):
+                self.r.warning("PROFILE_UNREGISTERED", p + ".id",
+                               f"profile '{pid}' is not in the registry; its role rules cannot be checked")
+            if pstatus in (SP.NORMATIVE, SP.PROVISIONAL):
+                defs = SP.roles(pid)
+                ref_name = SP.get(pid)["referencePose"]["name"]
                 for role in roles:
-                    if role not in K.VRM1_PARENT:
-                        self.r.error("PROFILE_ROLE_UNKNOWN", f"{p}.roles", f"'{role}' is not a VRM 1.0 humanoid role")
-                missing = [r for r in K.VRM1_REQUIRED if r not in roles]
+                    if role not in defs:
+                        self.r.error("PROFILE_ROLE_UNKNOWN", f"{p}.roles", f"'{role}' is not a role of {pid}")
+                missing = [r for r in SP.required_roles(pid) if r not in roles]
                 if missing:
-                    self.r.error("PROFILE_ROLE_MISSING", p, "missing required humanoid roles: " + ", ".join(missing))
-                if prof.get("referencePose") != "T":
+                    self.r.error("PROFILE_ROLE_MISSING", p, f"missing required {pid} roles: " + ", ".join(missing))
+                for role in roles:
+                    if role in defs and defs[role].get("needsParent") and defs[role]["parent"] not in roles:
+                        self.r.error("PROFILE_ROLE_NEEDS_PARENT", f"{p}.roles.{role}",
+                                     f"'{role}' requires parent role '{defs[role]['parent']}' to be mapped")
+                if pid == SP.HUMANOID and prof.get("referencePose") != "T":
                     self.r.error("PROFILE_REFERENCE_POSE", p, "humanoid.vrm1 requires referencePose \"T\"")
+                elif "referencePose" in prof and prof["referencePose"] not in ("T", ref_name):
+                    self.r.error("PROFILE_REFERENCE_POSE", p, f"referencePose must be \"{ref_name}\"")
+                self._check_reference_alignment(p, pid, roles)
                 node_role = {v: k for k, v in roles.items() if _is_int(v) and v < len(self.nodes)}
                 for role, node in roles.items():
-                    if role not in K.VRM1_PARENT or not _is_int(node) or node >= len(self.nodes):
+                    if role not in defs or not _is_int(node) or node >= len(self.nodes):
                         continue
-                    expected = K.VRM1_PARENT[role]
+                    expected = defs[role]["parent"]
                     while expected is not None and expected not in roles:
-                        expected = K.VRM1_PARENT[expected]
+                        expected = defs[expected]["parent"]
                     actual = None
                     a = self.parent[node]
                     guard = 0
@@ -1146,7 +1165,7 @@ class AdmValidator(_Base):
                         guard += 1
                     if actual != expected:
                         self.r.error("PROFILE_HIERARCHY", f"{p}.roles.{role}",
-                                     f"nearest mapped ancestor is {actual!r}, VRM hierarchy requires {expected!r}")
+                                     f"nearest mapped ancestor is {actual!r}, profile hierarchy requires {expected!r}")
             elif "referencePose" in prof and prof["referencePose"] != "T":
                 self.r.error("PROFILE_REFERENCE_POSE", p, "referencePose must be \"T\"")
             if "targetHeight" in prof and not (_is_num(prof["targetHeight"]) and prof["targetHeight"] > 0):
@@ -1174,6 +1193,25 @@ class AdmValidator(_Base):
                     else:
                         if calc != rid:
                             self.r.error("RIG_ID_MISMATCH", p + ".rigId", f"declared {rid} but computed {calc}")
+
+    def _check_reference_alignment(self, p, pid, roles):
+        """Advisory geometric check of the rest pose against the profile reference pose (SPEC_GAP tolerance)."""
+        joints = {}
+        for role, node in roles.items():
+            if _is_int(node) and node < len(self.nodes) and self.world[node] is not None:
+                joints[node] = {"parent": None, "head": mat_translation(self.world[node])}
+        role_bone = {r: n for r, n in roles.items() if n in joints}
+        if SK.facing_mirrored(pid, joints, role_bone):
+            self.r.warning("PROFILE_REFERENCE_FACING", p, "left/right role joints are mirrored: the rest pose faces "
+                                                          "+Z, the ADM reference pose faces -Z with +X on the "
+                                                          "character's right")
+            return
+        tol = SP.get(pid)["referencePose"]["toleranceDeg"]
+        for chk, ang in SK.pose_deviations(pid, joints, role_bone):
+            if ang > tol:
+                self.r.warning("PROFILE_REFERENCE_ALIGNMENT", f"{p}.roles.{chk['from']}",
+                               f"{chk['from']}->{chk['to']} deviates {ang:.1f} deg from reference direction "
+                               f"{chk['direction']} (advisory tolerance {tol:g} deg)")
 
     # face ----------------------------------------------------------------------------------------
     def morph_node_targets(self, node_index):
@@ -1542,6 +1580,16 @@ class AnimValidator(_Base):
             self.r.error("PROFILE_ID", "library.targetProfile", f"invalid profile id {tp!r}")
         if tp == K.MODEL_ANY_PROFILE and lib["binding"] != "SEMANTIC":
             self.r.error("LIBRARY_MODEL_ANY_BINDING", "library.binding", "model.any.v1 requires SEMANTIC binding")
+        if lib["binding"] == "SEMANTIC" and isinstance(tp, str) and tp != K.MODEL_ANY_PROFILE:
+            st = SP.status(tp)
+            if st == SP.EXACT_ONLY:
+                self.r.error("LIBRARY_PROFILE_EXACT_ONLY", "library.targetProfile", f"{tp} supports only EXACT binding")
+            elif st == SP.PROVISIONAL:
+                self.r.warning("PROFILE_PROVISIONAL", "library.targetProfile",
+                               f"'{tp}' is a provisional proposal; SEMANTIC interoperability must not be claimed")
+            elif st is None:
+                self.r.warning("PROFILE_UNREGISTERED", "library.targetProfile",
+                               f"'{tp}' is not registered; semantic retarget rules are undefined")
         if lib["binding"] not in K.BINDINGS:
             self.r.error("LIBRARY_BINDING", "library.binding", f"invalid binding {lib['binding']!r}")
         elif lib["binding"] == "EXACT":
@@ -1570,10 +1618,10 @@ class AnimValidator(_Base):
 
     def semantic_roles(self):
         tp = self.lib.get("targetProfile")
-        if tp == "humanoid.vrm1":
-            return set(K.VRM1_ROLES)
         if tp == K.MODEL_ANY_PROFILE:
             return set()
+        if SP.status(tp) in (SP.NORMATIVE, SP.PROVISIONAL):
+            return SP.semantic_role_names(tp)
         return None  # unknown registry contents
 
     def check_clips(self):
