@@ -20,6 +20,7 @@ This register records ambiguities discovered while implementing the reference Bl
 | `SPEC_GAP-RETARGET-MAP` | §11 registry | ADM 1.0 registers no cross-profile map format or mapping. `retargetMaps` must be empty; different profile IDs are INCOMPATIBLE. A future mapping requires a reviewed versioned profile-pair annex with explicit role transforms and fixtures. |
 | `SPEC_GAP-CUSTOM-PROFILE` | §11 / §28 | Unregistered reverse-DNS versioned IDs are EXACT_ONLY. Semantic use requires a complete published annex and machine-readable registry entry with role, hierarchy, pose, correction, retarget, IK/socket and fixture rules. |
 | `SPEC_GAP-KTX2-SUBSET` | §8.6 | Resolved in P3: optional KTX2/DDS subsets, RGBA8/BC1/BC3, sRGB/UNORM role rules, mips and mandatory same-size PNG/JPEG fallback are specified. Unsupported encodings and layouts are rejected. |
+| `SPEC_GAP-SHADER-CORE20` | Shader registry | The proposed Core 20 list is not yet a complete normative registry. Only core PBR, layered PBR and cutout have registered contracts in P5; the remaining profiles need exact parameter tables, deterministic rendering math, fallback behavior, independent tests and per-profile documentation. | Specify and implement each profile in a versioned annex, add reference and negative fixtures, Blender node and round-trip tests, then publish the complete registry. |
 
 ## Deliberately retained: approval and certification blockers
 

@@ -51,3 +51,10 @@
 - Specified exact two-bone reach clamping and the equal-length zero-distance singularity rule; documented that joint limits and multi-segment IK are outside ADM-IK-1.
 - Animal profiles, their STAND pose, and cross-species retarget remain provisional pending explicit anatomical approval and independent fixtures.
 - Updated the reference solver and validator to match the clarified humanoid reference-pose, correction and IK rules.
+
+## Draft 0.4 revision P5 — shader registry foundation
+
+- Added the machine-readable shader registry and registered the existing core PBR and layered profiles without changing their parameter semantics.
+- Added `adm.surface.cutout@1.0.0`, requiring masked alpha with the exact ADM §8 cutoff rule; Blender selection, validation and export/import preserve that contract.
+- Added a profile contract and a registry consistency test. The requested Core 20 set is not complete; only profiles with a concrete contract are listed as official.
+- No binary container change.

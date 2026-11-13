@@ -82,6 +82,7 @@ MODEL_ANY_PROFILE = "model.any.v1"
 # --- shaders (§8.1-8.4) ------------------------------------------------------------------------
 SHADER_CORE = ("adm.pbr.metallic_roughness", "1.0.0")
 SHADER_LAYERED = ("adm.pbr.layered", "1.0.0")
+SHADER_CUTOUT = ("adm.surface.cutout", "1.0.0")
 LAYERS_EXT = "ADM_material_layers_v1"
 SUPPORTED_EXTENSIONS = (LAYERS_EXT,)
 SHADER_PARAM_TYPES = ("F32", "VEC2", "VEC3", "VEC4", "BOOL", "TEXTURE")
@@ -93,6 +94,7 @@ OFFICIAL_SHADERS = {
         "name": "layer_factor", "type": "F32", "default": 0.0, "minimum": 0.0, "maximum": 1.0,
         "animatable": True, "description": "Blend factor between the base and overlay layer.",
     }],
+    SHADER_CUTOUT: [],
 }
 # pbrParameter animation targets: name -> (accessor type, minimum, maximum)
 PBR_PARAMETERS = {

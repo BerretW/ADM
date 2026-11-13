@@ -29,6 +29,8 @@ python3 tools/container.py fixtures/valid/triangle.adm
 - A file starts with an indexable, noncompressed JSON manifest and a directory of independently accessible chunks.
 - Small viewers can implement basic PBR and skip optional shader technology.
 - Every advanced material contains explicitly serialized portable PBR fallback fields.
+- The machine-readable shader registry currently contains core PBR, layered PBR and masked cutout.
+  The proposed Core 20 set is incomplete; see `SPEC_GAPS.md`.
 - `AMA0` animation libraries store searchable clip descriptions and may animate bones, morph targets, expressions and numeric shader/PBR fields.
 - Humanoid bone roles follow VRM 1.0; ADM-REF-NORM-1 and the ADM-IK-1 two-bone solver are now specified, but independent conformance work remains.
 - Vehicle/weapon roles are now defined in **normative annexes** `profiles/vehicle.car.v1.md` and `profiles/weapon.firearm.v1.md`. The profiles are specified but **not yet independently certified**. No gameplay behavior is encoded.

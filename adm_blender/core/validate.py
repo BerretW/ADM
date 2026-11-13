@@ -653,6 +653,9 @@ class AdmValidator(_Base):
             if missing:
                 self.r.error("ADM_ERR_MISSING_PBR_FALLBACK", p,
                              f"non-core shaders require explicit portable PBR fields: {', '.join(missing)}")
+        if key == K.SHADER_CUTOUT and m.get("alphaMode", "OPAQUE") != "MASK":
+            self.r.error("SHADER_CUTOUT_ALPHA_MODE", p + ".alphaMode",
+                         "adm.surface.cutout@1.0.0 requires alphaMode MASK")
         params = self.shaders.get(key)
         if params is None:
             if key[0].startswith("adm."):

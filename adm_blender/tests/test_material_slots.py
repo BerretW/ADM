@@ -35,7 +35,7 @@ def image(name, rgba, size=4):
 def main(tmp):
     adm_blender.register()
     from adm_blender.blender import materials as M
-    from adm_blender.blender.export_adm import ExportOptions, ModelExporter
+    from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
 
     bpy.ops.wm.read_homefile(use_empty=True)
@@ -189,6 +189,28 @@ def main(tmp):
     check(M.material_output(other).is_active_output, "own output active again")
     other.adm.shader = "CUSTOM"
     check(not any(M.is_preview_node(n) for n in nt.nodes), "custom shows PBR fallback")
+    print("== cutout shader profile")
+    other.adm.shader = "CUTOUT"
+    check(other.adm.alpha_mode == "MASK", "selecting cutout requires Mask alpha mode")
+    check(not any(M.is_preview_node(n) for n in nt.nodes), "cutout uses the standard PBR node tree")
+    cutout_data, cutout_report = ModelExporter(bpy.context, root, ExportOptions()).export()
+    check(cutout_report.ok, "cutout model validates on export")
+    cutout_mat = cutout_report.doc["materials"][0]
+    check(cutout_mat.get("shader") == {"id": "adm.surface.cutout", "version": "1.0.0"},
+          "cutout shader identity exported exactly")
+    check(cutout_mat.get("alphaMode") == "MASK", "cutout alpha mode exported")
+    cutout_path = os.path.join(tmp, "cutout.adm")
+    with open(cutout_path, "wb") as fh:
+        fh.write(cutout_data)
+    ModelImporter(bpy.context, cutout_path, ImportOptions()).run()
+    imported_cutout = next(x for x in bpy.data.materials if x.adm.shader == "CUTOUT")
+    check(imported_cutout.adm.alpha_mode == "MASK", "cutout alpha mode survives import")
+    other.adm.alpha_mode = "OPAQUE"
+    try:
+        ModelExporter(bpy.context, root, ExportOptions()).export()
+        check(False, "invalid cutout alpha mode rejected on export")
+    except ExportError as exc:
+        check("requires Alpha Mode MASK" in str(exc), f"invalid cutout alpha mode rejected: {exc}")
     adm_blender.unregister()
 
 

@@ -1,0 +1,33 @@
+{
+  "registryVersion": "1.0.0",
+  "shaders": [
+    {
+      "id": "adm.pbr.metallic_roughness",
+      "version": "1.0.0",
+      "parameters": [],
+      "contract": "../ADM-1.0-SPEC.md#83-required-core-shader-and-reference-parameter-table"
+    },
+    {
+      "id": "adm.pbr.layered",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "layer_factor",
+          "type": "F32",
+          "default": 0.0,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true,
+          "description": "Blend factor between the base and overlay layer."
+        }
+      ],
+      "contract": "../ADM-1.0-SPEC.md#84-standard-optional-layered-shader-adm-shader-layered-1"
+    },
+    {
+      "id": "adm.surface.cutout",
+      "version": "1.0.0",
+      "parameters": [],
+      "contract": "adm.surface.cutout.v1.md"
+    }
+  ]
+}

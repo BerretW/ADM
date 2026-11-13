@@ -945,7 +945,9 @@ def draw_material(lay, context, mat):
     col = lay.column()
     col.use_property_split = True
     col.use_property_decorate = False
-    col.prop(p, "alpha_mode")
+    alpha_mode_row = col.row()
+    alpha_mode_row.enabled = p.shader != "CUTOUT"
+    alpha_mode_row.prop(p, "alpha_mode")
     if p.alpha_mode in {"MASK", "AUTO"}:
         col.prop(p, "alpha_cutoff")
     lay.operator("adm.convert_materials", icon="MATERIAL")
@@ -955,7 +957,11 @@ def draw_material(lay, context, mat):
     col = box.column()
     col.use_property_split = True
     col.use_property_decorate = False
-    col.prop(p, "shader")
+    if p.shader == "CUTOUT":
+        col.prop(p, "shader")
+        col.label(text="Alpha Mode: Mask (required by this profile)", icon="INFO")
+    else:
+        col.prop(p, "shader")
     if p.shader == "LAYERED":
         col.label(text="Viewport: layered preview (ADM Preview nodes, not exported)", icon="INFO")
     elif p.shader == "CUSTOM":

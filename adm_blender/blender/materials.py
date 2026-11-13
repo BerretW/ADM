@@ -460,6 +460,12 @@ class MaterialExporter:
             if a.layers_required:
                 self.extensions_required.add(K.LAYERS_EXT)
             return
+        if a.shader == "CUTOUT":
+            if a.alpha_mode != "MASK":
+                raise ShaderExportError(
+                    f"material '{mat.name}': adm.surface.cutout@1.0.0 requires Alpha Mode MASK")
+            out["shader"] = {"id": K.SHADER_CUTOUT[0], "version": K.SHADER_CUTOUT[1]}
+            return
         key = a.shader_key()
         sdef = self.shader_defs.get(key)
         if sdef is None:
@@ -782,6 +788,8 @@ def apply_shader(mat, m, scene, resolve_image):
             if "maskTexture" in ext:
                 a.layer_mask = resolve_image(ext["maskTexture"])
                 a.layer_mask_uv = ext["maskTexture"].get("texCoord", 0)
+    elif key == K.SHADER_CUTOUT:
+        a.shader = "CUTOUT"
     else:
         a.shader = "CUSTOM"
         a.custom_shader = f"{key[0]}@{key[1]}"

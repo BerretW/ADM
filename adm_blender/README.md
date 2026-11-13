@@ -70,6 +70,12 @@ Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `r
 
 ### Material textures (Sollumz-style)
 
+The official shader registry currently includes `adm.pbr.metallic_roughness@1.0.0`,
+`adm.pbr.layered@1.0.0` and `adm.surface.cutout@1.0.0`. Cutout selection sets the alpha mode to
+Mask and export rejects a cutout material whose alpha mode was changed away from Mask. The proposed
+Core 20 catalog is being added incrementally; profiles without a complete normative contract and
+conformance tests are not advertised as official or interoperable.
+
 The material panel (Properties › Material › ADM, and the sidebar Shaders tab) has a **Texture Parameters**
 box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlusion and Emissive.
 

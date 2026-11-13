@@ -195,7 +195,9 @@ SHADER_KINDS = [
     ("CORE", "PBR Metallic-Roughness", "adm.pbr.metallic_roughness@1.0.0 (default, always supported)", "SHADING_SOLID", 0),
     ("LAYERED", "PBR Layered", "adm.pbr.layered@1.0.0: two PBR layers blended by animatable layer_factor",
      "RENDERLAYERS", 1),
-    ("CUSTOM", "Custom Shader", "Custom shader with an embedded typed parameter schema", "NODE_MATERIAL", 2),
+    ("CUTOUT", "Surface Cutout", "adm.surface.cutout@1.0.0: masked alpha; requires Alpha Mode MASK",
+     "MOD_MASK", 2),
+    ("CUSTOM", "Custom Shader", "Custom shader with an embedded typed parameter schema", "NODE_MATERIAL", 3),
 ]
 PARAM_TYPES = [(t, t, "") for t in K.SHADER_PARAM_TYPES]
 
@@ -252,6 +254,10 @@ def _preview_update(self, context):
 
 
 def _shader_update(self, context):
+    if self.shader == "CUTOUT":
+        self.alpha_mode = "MASK"
+        from .materials import apply_alpha_mode_to_material
+        apply_alpha_mode_to_material(self.id_data, "MASK")
     from .materials import refresh_shader_preview
     refresh_shader_preview(self.id_data)
 
