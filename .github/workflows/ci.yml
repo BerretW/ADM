@@ -1,0 +1,35 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Test container and semantics
+        run: python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 -v
+      - name: Test independent reference validator
+        run: python adm-standard/tools/run_tests.py
+      - name: Regenerate fixtures without external inputs
+        run: python adm-standard/tools/build_fixtures.py
+      - name: Check fixture reproducibility
+        run: git diff --exit-code -- adm-standard/fixtures

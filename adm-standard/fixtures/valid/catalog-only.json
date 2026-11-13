@@ -1,0 +1,32 @@
+{
+  "asset": {
+    "generator": "ADM integrated draft sample"
+  },
+  "library": {
+    "id": "human@walking@wounded",
+    "title": "Wounded walking",
+    "description": "Locomotion samples for an injured humanoid.",
+    "language": "en",
+    "targetProfile": "humanoid.vrm1",
+    "binding": "SEMANTIC"
+  },
+  "clips": [
+    {
+      "id": "walk1",
+      "title": "Injured walk placeholder",
+      "description": "Placeholder catalog entry with no motion tracks.",
+      "language": "en",
+      "duration": 0,
+      "loop": "ONCE",
+      "rootMotion": "IN_PLACE",
+      "channels": [],
+      "samplers": [],
+      "tags": [
+        "locomotion",
+        "wounded"
+      ]
+    }
+  ],
+  "bufferViews": [],
+  "accessors": []
+}

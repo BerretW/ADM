@@ -1,0 +1,27 @@
+# Local Python environments and generated caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Extension packages and build output (keep ADM reference fixtures tracked)
+dist/
+build/
+*.zip
+*.egg-info/
+
+# Local settings, secrets, logs and Blender backups
+.vscode/
+.env
+.env.*
+!.env.example
+*.log
+*.blend[0-9]
+*.blend@
+.DS_Store
+Thumbs.db

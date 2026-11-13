@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+
+id = "adm_tools"
+version = "1.1.0"
+name = "ADM Tools"
+tagline = "Import, export and validate ADM 1.0 models and animations"
+maintainer = "ADM contributors"
+type = "add-on"
+
+tags = ["Import-Export", "Animation", "Material", "Rigging"]
+
+blender_version_min = "5.2.0"
+
+license = ["SPDX:MIT"]
+
+[permissions]
+files = "Import/export ADM (.adm, .adm_anim) files from/to disk"
+
+[build]
+paths_exclude_pattern = ["__pycache__/", "*.pyc", "/tests/", ".*"]

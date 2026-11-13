@@ -1,0 +1,68 @@
+{
+  "asset": {
+    "generator": "ADM reference fixture 1.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Triangle",
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 1
+        }
+      ]
+    }
+  ],
+  "bufferViews": [
+    {
+      "byteOffset": 0,
+      "byteLength": 36,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 0,
+      "byteLength": 6,
+      "chunkId": 2
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": "F32",
+      "type": "VEC3",
+      "count": 3
+    },
+    {
+      "bufferView": 1,
+      "componentType": "U16",
+      "type": "SCALAR",
+      "count": 3
+    }
+  ],
+  "chunkDependencies": [],
+  "streamHints": [
+    {
+      "chunkId": 1,
+      "priority": 0
+    },
+    {
+      "chunkId": 2,
+      "priority": 1
+    }
+  ]
+}

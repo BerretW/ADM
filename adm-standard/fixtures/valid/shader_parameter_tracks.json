@@ -1,0 +1,96 @@
+{
+  "asset": {
+    "generator": "ADM draft shader fixture"
+  },
+  "library": {
+    "id": "material@surface@dirty",
+    "title": "Surface dirt buildup",
+    "description": "Animated dirt blend and portable roughness fallback.",
+    "language": "en",
+    "targetProfile": "model.any.v1",
+    "binding": "SEMANTIC"
+  },
+  "clips": [
+    {
+      "id": "mud_build_up",
+      "title": "Mud gradually accumulates",
+      "description": "Increase the mud blend and portable fallback roughness over two seconds.",
+      "language": "en",
+      "duration": 2.0,
+      "loop": "ONCE",
+      "rootMotion": "IGNORE",
+      "channels": [
+        {
+          "target": {
+            "kind": "shaderParameter",
+            "materialId": "body_paint",
+            "shaderId": "adm.pbr.layered",
+            "shaderVersion": "1.0.0",
+            "parameter": "layer_factor"
+          },
+          "path": "value",
+          "sampler": 0
+        },
+        {
+          "target": {
+            "kind": "pbrParameter",
+            "materialId": "body_paint",
+            "parameter": "roughnessFactor"
+          },
+          "path": "value",
+          "sampler": 1
+        }
+      ],
+      "samplers": [
+        {
+          "input": 0,
+          "output": 1,
+          "interpolation": "LINEAR"
+        },
+        {
+          "input": 0,
+          "output": 2,
+          "interpolation": "LINEAR"
+        }
+      ],
+      "events": []
+    }
+  ],
+  "bufferViews": [
+    {
+      "byteOffset": 0,
+      "byteLength": 8,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 8,
+      "byteLength": 8,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 16,
+      "byteLength": 8,
+      "chunkId": 1
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": "F32",
+      "type": "SCALAR",
+      "count": 2
+    },
+    {
+      "bufferView": 1,
+      "componentType": "F32",
+      "type": "SCALAR",
+      "count": 2
+    },
+    {
+      "bufferView": 2,
+      "componentType": "F32",
+      "type": "SCALAR",
+      "count": 2
+    }
+  ]
+}

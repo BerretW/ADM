@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+*.adm binary
+*.adm_anim binary
+*.blend binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ktx2 binary
+*.zip binary
