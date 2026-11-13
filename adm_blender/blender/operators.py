@@ -995,6 +995,26 @@ class ADM_OT_material_texture_clear(_SlotOp, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ADM_OT_material_texture_adopt(_SlotOp, bpy.types.Operator):
+    """Replace the slot's custom node setup with a simple ADM chain using the texture found in it.
+The custom nodes are only disconnected, not deleted"""
+    bl_idname = "adm.material_texture_adopt"
+    bl_label = "Use Detected Texture"
+    bl_options = {"REGISTER", "UNDO"}
+    node: StringProperty(name="Node", description="Image texture node of the custom setup (empty = best match)")
+
+    def execute(self, context):
+        from .materials import custom_source_candidates, set_slot_image
+        mat = _active_material(context)
+        cands = custom_source_candidates(mat, self.slot)
+        src = next((n for n in cands if n.name == self.node), None) if self.node else (cands[0] if cands else None)
+        if src is None:
+            self.report({"WARNING"}, "No image texture found in the custom node setup")
+            return {"CANCELLED"}
+        set_slot_image(mat, self.slot, src.image, source=src)
+        return {"FINISHED"}
+
+
 class ADM_OT_material_texture_uv(_SlotOp, bpy.types.Operator):
     """Choose which UV map (texCoord 0 or 1) the texture uses"""
     bl_idname = "adm.material_texture_uv"
@@ -1243,7 +1263,8 @@ CLASSES = (
     ADM_OT_list_add, ADM_OT_list_remove, ADM_OT_list_move,
     ADM_OT_clips_from_actions, ADM_OT_play_clip, ADM_OT_events_from_markers, ADM_OT_expression_preview,
     ADM_OT_material_auto_animation_id, ADM_OT_material_sync_params, ADM_OT_material_layers_from_pbr,
-    ADM_OT_material_texture_open, ADM_OT_material_texture_clear, ADM_OT_material_texture_uv,
+    ADM_OT_material_texture_open, ADM_OT_material_texture_clear, ADM_OT_material_texture_adopt,
+    ADM_OT_material_texture_uv,
     ADM_OT_material_texture_alpha,
     ADM_OT_material_link_clip, ADM_OT_material_key_param,
     ADM_OT_validate_model, ADM_OT_validate_library, ADM_OT_validate_file, ADM_OT_clear_report,

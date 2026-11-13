@@ -881,6 +881,12 @@ def draw_texture_slots(lay, context, mat):
         head.label(text=label, icon=icon)
         if state == "CUSTOM":
             head.label(text="custom node setup", icon="NODETREE")
+            for src in M.custom_source_candidates(mat, sid)[:3]:
+                op = col.operator("adm.material_texture_adopt", icon="IMPORT",
+                                  text=f"Use {src.label + ': ' if src.label else ''}{src.image.name}")
+                op.slot, op.node = sid, src.name
+            col.template_ID(p, "pick_" + sid.lower(), new="image.new", open="image.open")
+            col.label(text="Picking a texture replaces the custom setup (nodes are kept)", icon="INFO")
             continue
         if node is None:
             col.template_ID(p, "pick_" + sid.lower(), new="image.new", open="image.open")
@@ -950,7 +956,9 @@ def draw_material(lay, context, mat):
     col.use_property_split = True
     col.use_property_decorate = False
     col.prop(p, "shader")
-    if p.shader != "CORE":
+    if p.shader == "LAYERED":
+        col.label(text="Viewport: layered preview (ADM Preview nodes, not exported)", icon="INFO")
+    elif p.shader == "CUSTOM":
         col.label(text="SHADER_FALLBACK: portable PBR preview", icon="INFO")
     if p.shader == "CUSTOM":
         col.prop_search(p, "custom_shader", context.scene.adm_anim, "shaders", icon="SCRIPT")

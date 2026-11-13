@@ -14,6 +14,7 @@ from ..core.validate import ANIMATION_ID_RE, param_value_error, shader_registry
 UV_NAMES = ("UVMap", "UVMap_1")
 OCCLUSION_NODE = "ADM Occlusion"
 ALPHA_CLIP_NODE = "ADM Alpha Clip"
+PREVIEW_PREFIX = "ADM Preview"
 
 
 # ================================================================================================
@@ -35,11 +36,20 @@ def _from(socket):
     return None
 
 
-def output_surface_shader(mat):
+def is_preview_node(node):
+    return node.name.startswith(PREVIEW_PREFIX)
+
+
+def material_output(mat):
+    """The material's own output node; the shader preview output is never part of the exported data."""
     if not mat.node_tree:
         return None
-    outs = [n for n in mat.node_tree.nodes if n.type == "OUTPUT_MATERIAL"]
-    out = next((n for n in outs if n.is_active_output), outs[0] if outs else None)
+    outs = [n for n in mat.node_tree.nodes if n.type == "OUTPUT_MATERIAL" and not is_preview_node(n)]
+    return next((n for n in outs if n.is_active_output), outs[0] if outs else None)
+
+
+def output_surface_shader(mat):
+    out = material_output(mat)
     if out is None:
         return None
     s = _from(out.inputs.get("Surface"))
@@ -51,7 +61,8 @@ def principled_of(mat):
     if node is not None and node.type == "BSDF_PRINCIPLED":
         return node
     if mat.node_tree:
-        return next((n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        return next((n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED" and not is_preview_node(n)),
+                    None)
     return None
 
 
@@ -981,7 +992,7 @@ def convert_to_adm_material(mat):
             if name in old.inputs and not old.inputs[name].is_linked and old.inputs[name].type == "RGBA":
                 color = tuple(old.inputs[name].default_value)
                 break
-    out = next((n for n in nt.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
+    out = material_output(mat)
     if out is None:
         out = nt.nodes.new("ShaderNodeOutputMaterial")
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
@@ -1065,6 +1076,84 @@ def slot_texture_node(mat, slot):
     return node if state == "TEXTURE" else None
 
 
+def _slot_sockets(mat, slot):
+    """BSDF/normal-map input sockets a slot drives (the ones a custom setup is detached from)."""
+    if slot == "OCCLUSION":
+        return []
+    bsdf = principled_of(mat)
+    if bsdf is None:
+        return []
+    if slot == "NORMAL":
+        nm = normal_map_node(mat)
+        return [nm.inputs["Color"]] if nm is not None else [bsdf.inputs["Normal"]]
+    if slot == "BASE_COLOR":
+        return [bsdf.inputs["Base Color"]]
+    return [bsdf.inputs[n] for n in _SLOT_INPUTS[slot]]
+
+
+_SLOT_HINTS = {
+    "BASE_COLOR": re.compile(r"albedo|diffuse|base.?colou?r|(^|[_.\s])(ab|d|al|abal)($|[_.\s])", re.I),
+    "METALLIC_ROUGHNESS": re.compile(r"mrao|metal|rough|orm|(^|[_.\s])(ma|mr|sm)($|[_.\s])", re.I),
+    "NORMAL": re.compile(r"normal|(^|[_.\s])(nm|n|nrm)($|[_.\s])", re.I),
+    "EMISSIVE": re.compile(r"emiss|emit|glow|(^|[_.\s])(em|e)($|[_.\s])", re.I),
+}
+_SLOT_EXCLUDE = re.compile(r"palette|(^|[_.\s])pal($|[_.\s])", re.I)
+
+
+def custom_source_candidates(mat, slot):
+    """Image texture nodes feeding a slot's custom node setup, best match first.
+
+    Ranked by role hints in the node label/image name, then colour space (sRGB for colour slots,
+    Non-Color for data slots), then graph distance. Emissive only accepts explicitly named textures.
+    """
+    _, _, _, non_color, _ = _slot_info(slot)
+    hint = _SLOT_HINTS.get(slot)
+    found = []
+    seen, frontier = set(), [s for s in _slot_sockets(mat, slot) if s.is_linked]
+    for depth in range(32):
+        nxt = []
+        for sock in frontier:
+            for link in sock.links:
+                if link.is_muted or not link.is_valid:
+                    continue
+                n = link.from_node
+                if n in seen:
+                    continue
+                seen.add(n)
+                if n.type == "TEX_IMAGE" and n.image is not None:
+                    found.append((n, depth))
+                nxt.extend(i for i in n.inputs if i.is_linked and i.enabled)
+        if not nxt:
+            break
+        frontier = nxt
+
+    def score(item):
+        n, depth = item
+        text = f"{n.label} {n.image.name}"
+        named = bool(hint and hint.search(text))
+        cs_ok = (n.image.colorspace_settings.name == "Non-Color") == non_color
+        return (not named, not cs_ok, depth)
+
+    ranked = [it for it in found if not _SLOT_EXCLUDE.search(f"{it[0].label} {it[0].image.name}")]
+    if slot == "EMISSIVE":
+        ranked = [it for it in ranked if hint.search(f"{it[0].label} {it[0].image.name}")]
+    return [n for n, _d in sorted(ranked, key=score)]
+
+
+def custom_source_node(mat, slot):
+    """Best image texture of a slot's custom node setup (None if there is none)."""
+    c = custom_source_candidates(mat, slot)
+    return c[0] if c else None
+
+
+def detach_custom(mat, slot):
+    """Disconnect a slot's custom setup from the BSDF; its nodes stay in the tree for manual reuse."""
+    nt = mat.node_tree
+    for sock in _slot_sockets(mat, slot):
+        for link in list(sock.links):
+            nt.links.remove(link)
+
+
 def _set_colorspace(image, non_color):
     if image is None:
         return
@@ -1074,13 +1163,18 @@ def _set_colorspace(image, non_color):
         pass
 
 
-def set_slot_image(mat, slot, image):
-    """Assign ``image`` to a PBR texture slot, creating the node chain the exporter reads."""
+def set_slot_image(mat, slot, image, source=None):
+    """Assign ``image`` to a PBR texture slot, creating the node chain the exporter reads.
+
+    A custom node setup on the slot is disconnected (not deleted) and replaced by the simple chain;
+    ``source`` optionally supplies sampler settings and UV map to copy from an existing texture node.
+    """
     convert_to_adm_material(mat)
     _, label, _, non_color, _ = _slot_info(slot)
     state, node = slot_state(mat, slot)
     if state == "CUSTOM":
-        raise ValueError(f"{label} is driven by a custom node setup; edit it in the Shader Editor")
+        detach_custom(mat, slot)
+        node = None
     if node is not None:
         node.image = image
         _set_colorspace(image, non_color)
@@ -1091,6 +1185,13 @@ def set_slot_image(mat, slot, image):
     y = bsdf.location.y + 300 - 300 * SLOT_IDS.index(slot)
     tn = _tex_node(nt, image, None, non_color, x, y, label)
     _set_colorspace(image, non_color)
+    if source is not None:
+        tn.interpolation = source.interpolation
+        tn.extension = source.extension
+        uv = _from(source.inputs["Vector"])
+        if uv is not None and uv.node.type == "UVMAP" and uv.node.uv_map:
+            _uv_node(nt, tn, 1, x, y)
+            tn.inputs["Vector"].links[0].from_node.uv_map = uv.node.uv_map
     if slot == "BASE_COLOR":
         nt.links.new(tn.outputs["Color"], bsdf.inputs["Base Color"])
         if mat.adm.alpha_mode in ("BLEND", "MASK") and not bsdf.inputs["Alpha"].is_linked:
@@ -1108,6 +1209,9 @@ def set_slot_image(mat, slot, image):
             nm.location = (x + 450, y)
             nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
         nt.links.new(tn.outputs["Color"], nm.inputs["Color"])
+        uvs = _from(tn.inputs["Vector"])
+        if uvs is not None and uvs.node.type == "UVMAP":
+            nm.uv_map = uvs.node.uv_map
     elif slot == "OCCLUSION":
         tn.name = OCCLUSION_NODE
         tn.label = "Occlusion (ADM)"
@@ -1236,3 +1340,132 @@ def set_slot_alpha(mat, use):
             if not any(link.to_node not in doomed for o in n.outputs for link in o.links):
                 nt.nodes.remove(n)
     return True
+
+
+# ================================================================================================
+# shader preview (Sollumz-style: switching the ADM shader updates the viewport material)
+# ================================================================================================
+# The preview is an extra node group (output + BSDF + mix nodes, all named "ADM Preview *") made the
+# active output. The material's own output/BSDF stay untouched and remain the exported PBR fallback.
+def _sock(node, identifier):
+    return next(s for s in node.inputs if s.identifier == identifier)
+
+
+def _out(node, identifier):
+    return next(s for s in node.outputs if s.identifier == identifier)
+
+
+def remove_shader_preview(mat):
+    nt = mat.node_tree
+    if nt is None:
+        return False
+    doomed = [n for n in nt.nodes if is_preview_node(n)]
+    if nt.animation_data is not None:
+        for fc in list(nt.animation_data.drivers):
+            if f'nodes["{PREVIEW_PREFIX}' in fc.data_path:
+                nt.animation_data.drivers.remove(fc)
+    for n in doomed:
+        nt.nodes.remove(n)
+    out = material_output(mat)
+    if out is not None:
+        out.is_active_output = True
+    return bool(doomed)
+
+
+def _preview_mix(nt, kind, a, b, fac, x, y, name):
+    n = nt.nodes.new("ShaderNodeMix")
+    n.name = n.label = f"{PREVIEW_PREFIX} {name}"
+    n.data_type = kind
+    n.location = (x, y)
+    suffix = {"RGBA": "Color", "FLOAT": "Float", "VECTOR": "Vector"}[kind]
+    _sock(n, f"A_{suffix}").default_value = a
+    _sock(n, f"B_{suffix}").default_value = b
+    nt.links.new(fac, _sock(n, "Factor_Float"))
+    return _out(n, f"Result_{suffix}")
+
+
+def _build_layered_preview(mat):
+    nt = mat.node_tree
+    a = mat.adm
+    base, over = a.layer_base, a.layer_overlay
+    own = material_output(mat)
+    x0, y0 = (own.location.x, own.location.y - 700) if own is not None else (300, -700)
+
+    def new(kind, name, x, y):
+        n = nt.nodes.new(kind)
+        n.name = n.label = f"{PREVIEW_PREFIX} {name}"
+        n.location = (x0 + x, y0 + y)
+        return n
+
+    # a = clamp(layer_factor * mask, 0, 1)   (spec §8.4)
+    fac = new("ShaderNodeMath", "Layer Factor", -900, 0)
+    fac.operation = "MULTIPLY"
+    fac.use_clamp = True
+    fac.inputs[1].default_value = 1.0
+    fc = fac.inputs[0].driver_add("default_value")
+    fc.driver.type = "AVERAGE"
+    var = fc.driver.variables.new()
+    var.type = "SINGLE_PROP"
+    var.targets[0].id_type = "MATERIAL"
+    var.targets[0].id = mat
+    var.targets[0].data_path = "adm.layer_factor"
+    fac.inputs[0].default_value = a.layer_factor
+    if a.layer_mask is not None:
+        tex = new("ShaderNodeTexImage", "Mask", -1400, 0)
+        tex.image = a.layer_mask
+        _uv_node(nt, tex, a.layer_mask_uv, tex.location.x, tex.location.y)
+        uvs = _from(tex.inputs["Vector"])
+        if uvs is not None:
+            uvs.node.name = uvs.node.label = f"{PREVIEW_PREFIX} Mask UV"
+        sep = new("ShaderNodeSeparateColor", "Mask Red", -1150, 0)
+        nt.links.new(tex.outputs["Color"], sep.inputs[0])
+        nt.links.new(sep.outputs["Red"], fac.inputs[1])
+    f = fac.outputs[0]
+
+    bsdf = new("ShaderNodeBsdfPrincipled", "BSDF", -300, 0)
+    col = _preview_mix(nt, "RGBA", tuple(base.base_color), tuple(over.base_color), f, x0 - 600, y0 + 200, "Base Color")
+    nt.links.new(col, bsdf.inputs["Base Color"])
+    for i, (key, sock, va, vb) in enumerate((
+            ("Alpha", "Alpha", base.base_color[3], over.base_color[3]),
+            ("Metallic", "Metallic", base.metallic, over.metallic),
+            ("Roughness", "Roughness", base.roughness, over.roughness))):
+        r = _preview_mix(nt, "FLOAT", va, vb, f, x0 - 600, y0 - 20 - 200 * i, key)
+        nt.links.new(r, bsdf.inputs[sock])
+    em = _preview_mix(nt, "RGBA", (*base.emissive, 1.0), (*over.emissive, 1.0), f, x0 - 600, y0 - 620, "Emissive")
+    nt.links.new(em, bsdf.inputs["Emission Color"])
+    bsdf.inputs["Emission Strength"].default_value = 1.0
+    if base.use_normal_factor or over.use_normal_factor:
+        nb = tuple(base.normal_factor) if base.use_normal_factor else (0.0, 0.0, 1.0)
+        no = tuple(over.normal_factor) if over.use_normal_factor else (0.0, 0.0, 1.0)
+        n = _preview_mix(nt, "VECTOR", nb, no, f, x0 - 600, y0 - 840, "Normal")
+        norm = new("ShaderNodeVectorMath", "Normalize", -450, -840)
+        norm.operation = "NORMALIZE"
+        nt.links.new(n, norm.inputs[0])
+        enc = new("ShaderNodeVectorMath", "Encode", -300, -840)
+        enc.operation = "MULTIPLY_ADD"
+        enc.inputs[1].default_value = (0.5, 0.5, 0.5)
+        enc.inputs[2].default_value = (0.5, 0.5, 0.5)
+        nt.links.new(norm.outputs[0], enc.inputs[0])
+        nm = new("ShaderNodeNormalMap", "Normal Map", -150, -840)
+        nt.links.new(enc.outputs[0], nm.inputs["Color"])
+        nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+    out = new("ShaderNodeOutputMaterial", "Output", 0, 0)
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    out.is_active_output = True
+    return out
+
+
+def refresh_shader_preview(mat):
+    """Rebuild the viewport preview for the material's selected ADM shader.
+
+    CORE: the material's own Principled BSDF chain (created if missing). LAYERED: deterministic
+    two-layer preview of adm.pbr.layered@1.0.0. CUSTOM: the portable PBR fallback (SHADER_FALLBACK),
+    because custom shader definitions carry no executable rendering code.
+    """
+    if mat is None or mat.node_tree is None:
+        return
+    remove_shader_preview(mat)
+    if mat.adm.shader == "CORE":
+        convert_to_adm_material(mat)
+    elif mat.adm.shader == "LAYERED":
+        _build_layered_preview(mat)

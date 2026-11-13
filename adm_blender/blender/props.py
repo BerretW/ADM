@@ -244,14 +244,28 @@ class ADMShaderParamValue(PropertyGroup):
     tex_coord: IntProperty(name="UV", min=0, max=1)
 
 
+def _preview_update(self, context):
+    mat = self.id_data
+    if isinstance(mat, bpy.types.Material) and mat.adm.shader == "LAYERED":
+        from .materials import refresh_shader_preview
+        refresh_shader_preview(mat)
+
+
+def _shader_update(self, context):
+    from .materials import refresh_shader_preview
+    refresh_shader_preview(self.id_data)
+
+
 class ADMLayerRecord(PropertyGroup):
     base_color: FloatVectorProperty(name="Base Color", size=4, subtype="COLOR", min=0.0, max=1.0,
-                                    default=(1.0, 1.0, 1.0, 1.0))
-    metallic: FloatProperty(name="Metallic", min=0.0, max=1.0, default=1.0)
-    roughness: FloatProperty(name="Roughness", min=0.0, max=1.0, default=1.0)
-    emissive: FloatVectorProperty(name="Emissive", size=3, subtype="COLOR", min=0.0, soft_max=1.0)
-    use_normal_factor: BoolProperty(name="Normal Factor")
-    normal_factor: FloatVectorProperty(name="Normal", size=3, default=(0.0, 0.0, 1.0), subtype="XYZ")
+                                    default=(1.0, 1.0, 1.0, 1.0), update=_preview_update)
+    metallic: FloatProperty(name="Metallic", min=0.0, max=1.0, default=1.0, update=_preview_update)
+    roughness: FloatProperty(name="Roughness", min=0.0, max=1.0, default=1.0, update=_preview_update)
+    emissive: FloatVectorProperty(name="Emissive", size=3, subtype="COLOR", min=0.0, soft_max=1.0,
+                                  update=_preview_update)
+    use_normal_factor: BoolProperty(name="Normal Factor", update=_preview_update)
+    normal_factor: FloatVectorProperty(name="Normal", size=3, default=(0.0, 0.0, 1.0), subtype="XYZ",
+                                       update=_preview_update)
 
 
 # --- materials -------------------------------------------------------------------------------------
@@ -293,7 +307,8 @@ class ADMMaterialProps(PropertyGroup):
         ("OPAQUE", "Opaque", ""), ("MASK", "Mask", ""), ("BLEND", "Blend", "")])
     alpha_cutoff: FloatProperty(name="Alpha Cutoff", default=0.5, min=0.0, max=1.0)
     occlusion_strength: FloatProperty(name="Occlusion Strength", default=1.0, min=0.0, max=1.0)
-    shader: EnumProperty(name="Shader", items=SHADER_KINDS, default="CORE")
+    shader: EnumProperty(name="Shader", items=SHADER_KINDS, default="CORE", update=_shader_update,
+                         description="ADM shader of this material; switching rebuilds the viewport preview")
     custom_shader: StringProperty(name="Custom Shader", description="id@version of a scene shader definition",
                                   update=_custom_shader_update)
     animation_id: StringProperty(name="Animation ID",
@@ -303,9 +318,9 @@ class ADMMaterialProps(PropertyGroup):
                                 description="Animatable blend between base and overlay layer")
     layer_base: PointerProperty(type=ADMLayerRecord)
     layer_overlay: PointerProperty(type=ADMLayerRecord)
-    layer_mask: PointerProperty(name="Mask Texture", type=bpy.types.Image,
+    layer_mask: PointerProperty(name="Mask Texture", type=bpy.types.Image, update=_preview_update,
                                 description="Optional mask; the linear red channel scales layer_factor")
-    layer_mask_uv: IntProperty(name="Mask UV", min=0, max=1)
+    layer_mask_uv: IntProperty(name="Mask UV", min=0, max=1, update=_preview_update)
     layers_required: BoolProperty(name="Require Layered Rendering",
                                   description="List ADM_material_layers_v1 under extensionsRequired")
     params: CollectionProperty(type=ADMShaderParamValue)
