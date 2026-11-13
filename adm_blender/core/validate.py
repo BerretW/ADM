@@ -12,11 +12,12 @@ import math
 import re
 import struct
 import sys
+from pathlib import Path
 
 from . import constants as K
 from . import gputex
 from .buffers import read_accessor_flat, read_accessor_np, read_view
-from .container import (AdmFormatError, DEFAULT_LIMITS, ResourceLimitError, read_container)
+from .container import (AdmFormatError, DEFAULT_LIMITS, MAX_CHUNK, ResourceLimitError, read_container)
 from .mathutil import (IDENTITY, det3, mat_mul, mat_translation, node_local_matrix, vcross, vlen, vsub)
 from .rigid import rig_id_from_document
 from . import skeleton as SK
@@ -431,6 +432,7 @@ class AdmValidator(_Base):
         self.check_lods()
         self.check_attachments()
         self.check_physical_metadata()
+        self.check_physical_surfaces()
         self.check_model_components()
 
     # textures ------------------------------------------------------------------------------------
@@ -440,8 +442,31 @@ class AdmValidator(_Base):
         gpu_info, portable_dims = {}, {}
         for i, im in enumerate(images):
             p = f"images[{i}]"
-            if not self.keys(im, p, ("bufferView", "mimeType"), ("name",)):
+            if not self.keys(im, p, ("mimeType",), ("bufferView", "uri", "name", "sha256")):
                 continue
+            embedded = "bufferView" in im
+            external = "uri" in im
+            if embedded == external:
+                self.r.error("IMAGE_SOURCE", p, "exactly one of bufferView or uri is required")
+                continue
+            if external:
+                required = self.doc.get("extensionsRequired", [])
+                if K.EXTERNAL_IMAGES_EXT not in required:
+                    self.r.error("IMAGE_EXTERNAL_EXT", p,
+                                 f"external image requires '{K.EXTERNAL_IMAGES_EXT}' in extensionsRequired")
+                from .external_images import normalize_image_uri, valid_sha256
+                try:
+                    normalize_image_uri(im["uri"])
+                except ValueError as exc:
+                    self.r.error("IMAGE_EXTERNAL_URI", p + ".uri", str(exc))
+                if "sha256" in im and not valid_sha256(im["sha256"]):
+                    self.r.error("IMAGE_EXTERNAL_SHA256", p + ".sha256",
+                                 "must be a lowercase 64-character SHA-256 hex digest")
+                if not _is_str(im["mimeType"]) or im["mimeType"] not in K.IMAGE_MIMES:
+                    self.r.error("IMAGE_MIME", p, f"mimeType {im['mimeType']!r} not allowed")
+                continue
+            if "sha256" in im:
+                self.r.error("IMAGE_SHA256", p + ".sha256", "sha256 is only valid for external images")
             if "name" in im and not _is_str(im["name"]):
                 self.r.error("TYPE_STRING", p + ".name", "must be a string")
             if im["mimeType"] not in K.IMAGE_MIMES:
@@ -513,6 +538,8 @@ class AdmValidator(_Base):
             if "sampler" in t:
                 self.index(t["sampler"], len(samplers), p + ".sampler", "samplers")
         self._check_gpu_colorspace(textures, gpu_info)
+        self.image_dimensions = dict(portable_dims)
+        self.image_dimensions.update({i: (info["width"], info["height"]) for i, info in gpu_info.items()})
 
     def _check_gpu_colorspace(self, textures, gpu_info):
         """GPU texture sRGB/UNORM variant must match how the material decodes the texture (§8.6)."""
@@ -722,6 +749,52 @@ class AdmValidator(_Base):
                             self.r.error("MATERIAL_TEXCOORD", lp + ".maskTexture.texCoord", "must be 0 or 1")
                         else:
                             self.material_uv_needs.setdefault(self._mi, set()).add("TEXCOORD_%d" % tc)
+        vertex = ext.get(K.VERTEX_CONTROL_EXT)
+        if vertex is not None:
+            vp = f"{p}.extensions.{K.VERTEX_CONTROL_EXT}"
+            if K.VERTEX_CONTROL_EXT not in self.doc.get("extensionsRequired", []):
+                self.r.error("VERTEX_CONTROL_REQUIRED", vp,
+                             f"'{K.VERTEX_CONTROL_EXT}' must be listed in extensionsRequired")
+            if self.keys(vertex, vp, (), ("tintPalette", "tintMode", "parameters")):
+                mode = vertex.get("tintMode", "MULTIPLY")
+                if mode not in ("MULTIPLY", "REPLACE"):
+                    self.r.error("VERTEX_CONTROL_TINT_MODE", vp + ".tintMode",
+                                 "must be MULTIPLY or REPLACE")
+                params = vertex.get("parameters", {})
+                bounds = {"tintOffset": (-1024.0, 1024.0), "normalMultiplier": (0.0, 4.0),
+                          "reflectionMultiplier": (0.0, 4.0), "wetnessOffset": (-1.0, 1.0)}
+                if not isinstance(params, dict):
+                    self.r.error("TYPE_OBJECT", vp + ".parameters", "must be a JSON object")
+                else:
+                    for name, value in params.items():
+                        if name not in bounds:
+                            self.r.error("VERTEX_CONTROL_PARAMETER", vp + ".parameters." + str(name),
+                                         "unknown vertex-control parameter")
+                            continue
+                        lo, hi = bounds[name]
+                        if not _is_num(value) or not lo <= value <= hi:
+                            self.r.error("VERTEX_CONTROL_PARAMETER", vp + ".parameters." + name,
+                                         f"must be finite in [{lo},{hi}]")
+                if "tintPalette" in vertex:
+                    ref = vertex["tintPalette"]
+                    if self.keys(ref, vp + ".tintPalette", ("index",), ("texCoord",)):
+                        if self.index(ref["index"], ntex, vp + ".tintPalette.index", "textures"):
+                            texture = self.doc["textures"][ref["index"]]
+                            sampler_index = texture.get("sampler")
+                            if sampler_index is None:
+                                self.r.error("VERTEX_CONTROL_PALETTE_FILTER", vp + ".tintPalette",
+                                             "tint palette texture requires an explicit NEAREST sampler")
+                            elif _is_int(sampler_index) and sampler_index < len(self.array("samplers")):
+                                sampler = self.doc["samplers"][sampler_index]
+                                if sampler.get("magFilter", "LINEAR") != "NEAREST" or \
+                                        sampler.get("minFilter", "LINEAR") != "NEAREST":
+                                    self.r.error("VERTEX_CONTROL_PALETTE_FILTER", vp + ".tintPalette",
+                                                 "tint palettes require NEAREST minification and magnification")
+                            source = texture.get("fallbackSource", texture.get("source"))
+                            dims = self.image_dimensions.get(source)
+                            if dims and dims[1] != 1:
+                                self.r.error("VERTEX_CONTROL_PALETTE_SIZE", vp + ".tintPalette",
+                                             "tint palette image must have height 1")
 
     # materials -----------------------------------------------------------------------------------
     def check_materials(self):
@@ -787,9 +860,14 @@ class AdmValidator(_Base):
             "TEXCOORD_0": (("F32",), ("VEC2",), False),
             "TEXCOORD_1": (("F32",), ("VEC2",), False),
             "COLOR_0": (("U8", "F32"), ("VEC4",), lambda ct: ct == "U8"),
+            "COLOR_1": (("U8", "F32"), ("VEC4",), lambda ct: ct == "U8"),
             "JOINTS_0": (("U8", "U16"), ("VEC4",), False),
             "WEIGHTS_0": (("F32", "U8", "U16"), ("VEC4",), lambda ct: ct != "F32"),
         }
+        vertex_control = K.VERTEX_CONTROL_EXT in self.doc.get("extensionsRequired", [])
+        if K.VERTEX_CONTROL_EXT in self.doc.get("extensionsUsed", []) and not vertex_control:
+            self.r.error("VERTEX_CONTROL_REQUIRED", "extensionsRequired",
+                         f"'{K.VERTEX_CONTROL_EXT}' must be required because it changes COLOR_0 semantics")
         nmat = len(self.materials)
         for mi, mesh in enumerate(self.meshes):
             p = f"meshes[{mi}]"
@@ -802,6 +880,7 @@ class AdmValidator(_Base):
             ntargets = None
             skinned = None
             max_joint = -1
+            color1_presence = set()
             for pi, prim in enumerate(prims):
                 pp = f"{p}.primitives[{pi}]"
                 if not self.keys(prim, pp, ("attributes", "indices"), ("material", "targets", "mode")):
@@ -812,11 +891,14 @@ class AdmValidator(_Base):
                 if not isinstance(attrs, dict):
                     self.r.error("TYPE_OBJECT", pp + ".attributes", "must be an object")
                     continue
+                color1_presence.add("COLOR_1" in attrs)
                 if "POSITION" not in attrs:
                     self.r.error("MESH_NO_POSITION", pp, "POSITION attribute is required")
                     continue
                 for sem in attrs:
-                    if sem not in attr_rules:
+                    if sem == "COLOR_1" and not vertex_control:
+                        self.r.error("MESH_ATTRIBUTE_UNKNOWN", pp, "COLOR_1 requires ADM_vertex_control_v1")
+                    elif sem not in attr_rules:
                         self.r.error("MESH_ATTRIBUTE_UNKNOWN", pp, f"unknown attribute semantic '{sem}'")
                 ok_attrs = {}
                 for sem, (cts, tys, norm) in attr_rules.items():
@@ -833,6 +915,15 @@ class AdmValidator(_Base):
                         self.r.error("MESH_ATTRIBUTE_COUNT", f"{pp}.attributes.{sem}",
                                      "attribute count differs from POSITION count")
                         ok_attrs[sem] = None
+                    elif vertex_control and sem in ("COLOR_0", "COLOR_1"):
+                        values = self.acc(ai)
+                        if _np is not None:
+                            invalid = bool(_np.any((values < 0.0) | (values > 1.0)))
+                        else:
+                            invalid = any(x < 0.0 or x > 1.0 for row in values for x in row)
+                        if invalid:
+                            self.r.error("VERTEX_CONTROL_RANGE", f"{pp}.attributes.{sem}",
+                                         "control channels must be in [0,1]")
                 has_j, has_w = "JOINTS_0" in attrs, "WEIGHTS_0" in attrs
                 if has_j != has_w:
                     self.r.error("MESH_SKIN_PAIR", pp, "JOINTS_0 and WEIGHTS_0 must occur together")
@@ -932,6 +1023,9 @@ class AdmValidator(_Base):
                                 self.r.error("MORPH_VERTEX_COUNT", f"{tp}.{sem}", "count differs from POSITION count")
                     if "NORMAL" in t and "NORMAL" not in attrs:
                         self.r.warning("MORPH_NORMAL_WITHOUT_BASE", tp, "NORMAL delta without base NORMAL is ignored")
+            if vertex_control and len(color1_presence) > 1:
+                self.r.error("VERTEX_CONTROL_COLOR1_MIXED", p,
+                             "COLOR_1 must be present on every primitive of a mesh or on none")
             ntargets = ntargets or 0
             self.mesh_targets[mi] = ntargets
             self.mesh_skinned[mi] = bool(skinned)
@@ -1516,7 +1610,7 @@ class AdmValidator(_Base):
         materials = set()
         for i, item in enumerate(self.array("physicalMaterials")):
             p = f"physicalMaterials[{i}]"
-            if not self.keys(item, p, ("id", "friction", "restitution")):
+            if not self.keys(item, p, ("id", "friction", "restitution"), ("profile",)):
                 continue
             ident = item["id"]
             if not _nonblank(ident):
@@ -1528,6 +1622,12 @@ class AdmValidator(_Base):
             for key in ("friction", "restitution"):
                 if not _is_num(item[key]) or not 0 <= item[key] <= 1:
                     self.r.error("PHYSICAL_MATERIAL_RANGE", p + "." + key, "must be finite in [0,1]")
+            if "profile" in item and item["profile"] not in K.PHYSICAL_SURFACE_PROFILES:
+                self.r.error("PHYSICAL_MATERIAL_PROFILE", p + ".profile",
+                             f"unknown registered profile {item['profile']!r}")
+            elif "profile" in item and K.PHYSICAL_SURFACES_EXT not in self.doc.get("extensionsRequired", []):
+                self.r.error("PHYSICAL_SURFACE_REQUIRED", p + ".profile",
+                             f"'{K.PHYSICAL_SURFACES_EXT}' must be listed in extensionsRequired")
         colliders = self.array("colliders")
         for i, collider in enumerate(colliders):
             if isinstance(collider, dict) and "physicalMaterial" in collider:
@@ -1557,6 +1657,44 @@ class AdmValidator(_Base):
                     if item["boneNode"] != node and not self.is_ancestor(item["boneNode"], node):
                         self.r.error("HITBOX_ANCESTRY", p + ".boneNode",
                                      "must be the collider's node or an ancestor")
+
+    def check_physical_surfaces(self):
+        used = self.doc.get("extensionsUsed", [])
+        if K.PHYSICAL_SURFACES_EXT not in used:
+            return
+        physical_ids = {item.get("id") for item in self.array("physicalMaterials")
+                        if isinstance(item, dict) and isinstance(item.get("id"), str)}
+        for mi, mesh in enumerate(self.meshes):
+            if not isinstance(mesh, dict):
+                continue
+            for pi, prim in enumerate(mesh.get("primitives", []) if isinstance(mesh.get("primitives"), list) else []):
+                if not isinstance(prim, dict):
+                    continue
+                ext = (prim.get("extensions") or {}).get(K.PHYSICAL_SURFACES_EXT)
+                if ext is None:
+                    continue
+                path = f"meshes[{mi}].primitives[{pi}].extensions.{K.PHYSICAL_SURFACES_EXT}"
+                if not isinstance(ext, dict) or set(ext) != {"faceMaterials"}:
+                    self.r.error("PHYSICAL_FACE_SCHEMA", path, "must contain only a faceMaterials array")
+                    continue
+                if K.PHYSICAL_SURFACES_EXT not in self.doc.get("extensionsRequired", []):
+                    self.r.error("PHYSICAL_SURFACE_REQUIRED", path,
+                                 f"'{K.PHYSICAL_SURFACES_EXT}' must be listed in extensionsRequired")
+                face_ids = ext["faceMaterials"]
+                indices = prim.get("indices")
+                if not isinstance(face_ids, list) or not _is_int(indices) or indices >= len(self.doc.get("accessors", [])):
+                    self.r.error("PHYSICAL_FACE_SCHEMA", path + ".faceMaterials",
+                                 "must be an array and the primitive must have a valid indices accessor")
+                    continue
+                index_count = self.doc["accessors"][indices].get("count")
+                if not _is_int(index_count) or len(face_ids) != index_count // 3 or index_count % 3:
+                    self.r.error("PHYSICAL_FACE_COUNT", path + ".faceMaterials",
+                                 "must contain exactly one physical material id per triangle")
+                    continue
+                for fi, ident in enumerate(face_ids):
+                    if not isinstance(ident, str) or ident not in physical_ids:
+                        self.r.error("PHYSICAL_FACE_REFERENCE", f"{path}.faceMaterials[{fi}]",
+                                     "must reference an existing physicalMaterials id")
 
     def check_lods(self):
         owner = {}
@@ -2038,6 +2176,95 @@ def validate_adm(data, limits=DEFAULT_LIMITS):
     return _validate(data, K.ADM_MAGIC, AdmValidator, "adm", limits)
 
 
+def validate_adm_resolved(data, asset_path, limits=DEFAULT_LIMITS):
+    """Validate embedded structure, then resolve external images against the ADM file directory."""
+    report = validate_adm(data, limits)
+    if not report.ok:
+        return report
+    doc = report.doc
+    from .external_images import resolve_image_uri, sha256_hex
+
+    image_dims = {}
+    root = Path(asset_path).absolute().parent.resolve(strict=True)
+    for i, image in enumerate(doc.get("images", []) or []):
+        if not isinstance(image, dict):
+            continue
+        image_path = f"images[{i}]"
+        if "uri" in image:
+            try:
+                resolved = resolve_image_uri(root, image["uri"], must_exist=True)
+                size = resolved.stat().st_size
+                if not resolved.is_file():
+                    report.error("IMAGE_EXTERNAL_FILE_TYPE", image_path + ".uri",
+                                 "external image target must be a regular file")
+                    continue
+                if size <= 0 or size > MAX_CHUNK:
+                    report.error("IMAGE_EXTERNAL_SIZE", image_path + ".uri",
+                                 f"external image size must be in [1,{MAX_CHUNK}] bytes")
+                    continue
+                blob = resolved.read_bytes()
+            except FileNotFoundError:
+                report.error("IMAGE_EXTERNAL_MISSING", image_path + ".uri",
+                             f"external image '{image['uri']}' was not found under the asset root")
+                continue
+            except (OSError, ValueError) as exc:
+                report.error("IMAGE_EXTERNAL_PATH", image_path + ".uri", str(exc))
+                continue
+        elif "bufferView" in image and _is_int(image["bufferView"]):
+            try:
+                blob = read_view(doc, report.bin, image["bufferView"])
+            except (AdmFormatError, KeyError, IndexError, TypeError):
+                continue
+        else:
+            continue
+        expected = image.get("sha256")
+        if "uri" in image and expected is not None and sha256_hex(blob) != expected:
+            report.error("IMAGE_EXTERNAL_SHA256", image_path + ".sha256",
+                         f"SHA-256 mismatch for '{image['uri']}'")
+            continue
+        mime = image.get("mimeType")
+        try:
+            if mime in K.GPU_IMAGE_MIMES:
+                info = gputex.parse(blob, mime, strict=True)
+                image_dims[i] = (info["width"], info["height"])
+            elif mime in K.PORTABLE_IMAGE_MIMES:
+                dims = gputex.portable_dims(blob, mime)
+                if dims is None:
+                    raise ValueError("could not read image dimensions")
+                image_dims[i] = dims
+            else:
+                report.error("IMAGE_MIME", image_path + ".mimeType", f"unsupported mimeType {mime!r}")
+        except (gputex.GpuTextureError, ValueError, TypeError) as exc:
+            report.error("IMAGE_DECODE", image_path + ".uri",
+                         f"external image does not match {mime}: {exc}")
+
+    for i, texture in enumerate(doc.get("textures", []) or []):
+        if not isinstance(texture, dict) or "fallbackSource" not in texture:
+            continue
+        primary = image_dims.get(texture.get("source"))
+        fallback = image_dims.get(texture.get("fallbackSource"))
+        if primary and fallback and primary != fallback:
+            report.error("IMAGE_FALLBACK_SIZE", f"textures[{i}].fallbackSource",
+                         f"fallback is {fallback[0]}x{fallback[1]}, primary is {primary[0]}x{primary[1]}")
+    textures = doc.get("textures", []) or []
+    for mi, material in enumerate(doc.get("materials", []) or []):
+        vertex = (material.get("extensions") or {}).get(K.VERTEX_CONTROL_EXT) \
+            if isinstance(material, dict) else None
+        ref = vertex.get("tintPalette") if isinstance(vertex, dict) else None
+        if not isinstance(ref, dict):
+            continue
+        texture_index = ref.get("index")
+        if not _is_int(texture_index) or texture_index >= len(textures):
+            continue
+        texture = textures[texture_index]
+        image_index = texture.get("fallbackSource", texture.get("source")) if isinstance(texture, dict) else None
+        dims = image_dims.get(image_index)
+        if dims and dims[1] != 1:
+            report.error("VERTEX_CONTROL_PALETTE_SIZE", f"materials[{mi}].extensions.{K.VERTEX_CONTROL_EXT}.tintPalette",
+                         "tint palette image must have height 1")
+    return report
+
+
 def validate_anim(data, limits=DEFAULT_LIMITS):
     return _validate(data, K.ANIM_MAGIC, AnimValidator, "adm_anim", limits)
 
@@ -2048,12 +2275,12 @@ def validate_bytes(data, limits=DEFAULT_LIMITS):
     return validate_adm(data, limits)
 
 
-def validate_file(path, limits=DEFAULT_LIMITS):
+def validate_file(path, limits=DEFAULT_LIMITS, *, resolved=False):
     with open(path, "rb") as fh:
         data = fh.read()
     if str(path).lower().endswith(".adm_anim"):
         return validate_anim(data, limits)
-    return validate_adm(data, limits)
+    return validate_adm_resolved(data, path, limits) if resolved else validate_adm(data, limits)
 
 
 def main(argv=None):

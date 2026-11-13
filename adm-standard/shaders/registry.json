@@ -4,7 +4,44 @@
     {
       "id": "adm.pbr.metallic_roughness",
       "version": "1.0.0",
-      "parameters": [],
+      "parameters": [
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
+        }
+      ],
       "contract": "../ADM-1.0-SPEC.md#83-required-core-shader-and-reference-parameter-table"
     },
     {
@@ -19,6 +56,42 @@
           "maximum": 1.0,
           "animatable": true,
           "description": "Blend factor between the base and overlay layer."
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "../ADM-1.0-SPEC.md#84-standard-optional-layered-shader-adm-shader-layered-1"
@@ -26,19 +99,130 @@
     {
       "id": "adm.surface.cutout",
       "version": "1.0.0",
-      "parameters": [],
+      "parameters": [
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
+        }
+      ],
       "contract": "adm.surface.cutout.v1.md"
     },
     {
       "id": "adm.surface.emissive",
       "version": "1.0.0",
-      "parameters": [],
+      "parameters": [
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
+        }
+      ],
       "contract": "adm.surface.emissive.v1.md"
     },
     {
       "id": "adm.surface.decal",
       "version": "1.0.0",
-      "parameters": [],
+      "parameters": [
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
+        }
+      ],
       "contract": "adm.surface.decal.v1.md"
     },
     {
@@ -101,6 +285,42 @@
           "description": "Index of refraction used only by the thin-surface Fresnel term.",
           "minimum": 1.0,
           "maximum": 2.5
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.surface.glass.v1.md"
@@ -136,6 +356,42 @@
           "description": "Bounded back-light transmission weight.",
           "minimum": 0.0,
           "maximum": 1.0
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.surface.foliage.v1.md"
@@ -436,6 +692,42 @@
             1000.0,
             1000.0
           ]
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.terrain.four_layer.v1.md"
@@ -489,6 +781,42 @@
           "description": "Grazing-angle tint weight.",
           "minimum": 0.0,
           "maximum": 1.0
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.vehicle.paint.v1.md"
@@ -530,6 +858,42 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional detail normal map."
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.character.skin.v1.md"
@@ -579,6 +943,42 @@
           "description": "Tangent-oriented specular lobe strength.",
           "minimum": 0.0,
           "maximum": 1.0
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.animal.fur.v1.md"
@@ -620,6 +1020,42 @@
             1.0,
             1.0
           ]
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.animal.feather.v1.md"
@@ -655,6 +1091,42 @@
           "description": "Metallic factor for the scale surface.",
           "minimum": 0.0,
           "maximum": 1.0
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.animal.scales.v1.md"
@@ -695,6 +1167,42 @@
           "default": 0.0,
           "description": "Dirt coverage multiplier.",
           "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
           "maximum": 1.0,
           "animatable": true
         }
@@ -769,6 +1277,42 @@
             1000.0,
             1000.0
           ]
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.building.brick.v1.md"
@@ -809,6 +1353,42 @@
           "default": 0.0,
           "description": "Weathering mask multiplier.",
           "minimum": 0.0,
+          "maximum": 1.0,
+          "animatable": true
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
           "maximum": 1.0,
           "animatable": true
         }
@@ -856,6 +1436,42 @@
           "minimum": 0.0,
           "maximum": 1.0,
           "animatable": true
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.nature.bark.v1.md"
@@ -897,6 +1513,42 @@
           "description": "Object-space triplanar frequency.",
           "minimum": 0.001,
           "maximum": 1000.0
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.nature.rock.v1.md"
@@ -959,6 +1611,42 @@
             10.0
           ],
           "animatable": true
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.nature.water.v1.md"
@@ -1014,6 +1702,42 @@
           "description": "Tangent-oriented specular lobe strength.",
           "minimum": 0.0,
           "maximum": 1.0
+        },
+        {
+          "name": "tintOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Tint palette index offset in palette entries.",
+          "minimum": -1024.0,
+          "maximum": 1024.0,
+          "animatable": true
+        },
+        {
+          "name": "normalMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.G normal-map strength.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "reflectionMultiplier",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Multiplier for COLOR_0.B specular F0.",
+          "minimum": 0.0,
+          "maximum": 4.0,
+          "animatable": true
+        },
+        {
+          "name": "wetnessOffset",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Additive offset for COLOR_0.A wetness.",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "animatable": true
         }
       ],
       "contract": "adm.surface.fabric.v1.md"

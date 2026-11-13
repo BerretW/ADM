@@ -83,6 +83,12 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
     export_colors: BoolProperty(name="Vertex Colors", default=True)
     export_morph_normals: BoolProperty(name="Shape Key Normals", default=True)
     export_materials: BoolProperty(name="Materials", default=True)
+    embed_textures: BoolProperty(name="Embed Textures", default=True,
+                                 description="Store images inside the ADM. When disabled, write safe relative "
+                                             "references and copy images under textures/")
+    vertex_controls: BoolProperty(name="ADM Vertex Controls", default=False,
+                                  description="Interpret color attributes named COLOR_0/COLOR_1 using "
+                                              "ADM_vertex_control_v1 semantics")
     image_format: EnumProperty(name="Images", default="PNG", items=[
         ("PNG", "PNG", "Embed every texture as PNG; JPEG, DDS, KTX2, TGA, EXR… sources are converted. "
                        "Readable by every ADM reader"),
@@ -117,6 +123,8 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
             col.prop(self, p)
         col = lay.column(heading="Material")
         col.prop(self, "export_materials")
+        col.prop(self, "embed_textures")
+        col.prop(self, "vertex_controls")
         col.prop(self, "image_format")
         if self.image_format in ("KTX2", "DDS"):
             sub = col.column()
@@ -128,7 +136,9 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
                              export_normals=self.export_normals, export_tangents=self.export_tangents,
                              export_uv1=self.export_uv1, export_colors=self.export_colors,
                              export_morph_normals=self.export_morph_normals,
-                             export_materials=self.export_materials, image_format=self.image_format,
+                             export_materials=self.export_materials, embed_textures=self.embed_textures,
+                             vertex_controls=self.vertex_controls,
+                             image_format=self.image_format,
                              gpu_compression=self.gpu_compression, gpu_mipmaps=self.gpu_mipmaps)
 
     def _one(self, context, path, root, selected):

@@ -1,14 +1,16 @@
 """Draft 0.4 material fallback and optional semantic-record validation."""
 
 import copy
+import hashlib
 from pathlib import Path
+import tempfile
 import unittest
 
 from adm_blender.core import constants as K
 from adm_blender.core.buffers import BinBuilder
 from adm_blender.core.container import read_container, write_container
 from adm_blender.core.png import encode_png
-from adm_blender.core.validate import validate_adm, validate_anim
+from adm_blender.core.validate import validate_adm, validate_adm_resolved, validate_anim
 
 
 FIXTURES = Path(__file__).resolve().parents[2] / "adm-standard" / "fixtures" / "valid"
@@ -83,6 +85,57 @@ class Draft4Tests(unittest.TestCase):
         self.doc["scenes"][0]["nodes"].append(len(self.doc["nodes"]) - 1)
         self.doc["hitboxes"][0]["boneNode"] = len(self.doc["nodes"]) - 1
         self.assertIn("HITBOX_ANCESTRY", self.codes())
+
+    def test_registered_physical_surface_profiles_and_unknown_profile(self):
+        self.add_metadata()
+        self.doc["extensionsUsed"] = [K.PHYSICAL_SURFACES_EXT]
+        self.doc["extensionsRequired"] = [K.PHYSICAL_SURFACES_EXT]
+        for profile in K.PHYSICAL_SURFACE_PROFILES:
+            with self.subTest(profile=profile):
+                self.doc["physicalMaterials"][0]["profile"] = profile
+                self.assertTrue(self.validate().ok, self.validate().format())
+        self.doc["physicalMaterials"][0]["profile"] = "adm.phys.unknown.v1"
+        self.assertIn("PHYSICAL_MATERIAL_PROFILE", self.codes())
+
+    def test_physical_face_material_ids_are_stable_references(self):
+        self.doc["physicalMaterials"] = [{"id": "wood", "profile": "adm.phys.wood.v1",
+                                          "friction": 0.65, "restitution": 0.15}]
+        prim = self.doc["meshes"][0]["primitives"][0]
+        tri_count = self.doc["accessors"][prim["indices"]]["count"] // 3
+        prim["extensions"] = {K.PHYSICAL_SURFACES_EXT: {"faceMaterials": ["wood"] * tri_count}}
+        self.doc["extensionsUsed"] = [K.PHYSICAL_SURFACES_EXT]
+        self.doc["extensionsRequired"] = [K.PHYSICAL_SURFACES_EXT]
+        self.assertTrue(self.validate().ok, self.validate().format())
+        prim["extensions"][K.PHYSICAL_SURFACES_EXT]["faceMaterials"][0] = "missing"
+        self.assertIn("PHYSICAL_FACE_REFERENCE", self.codes())
+
+    def test_external_image_uri_hash_and_resolved_validation(self):
+        blob = encode_png(2, 1, bytes((255, 0, 0, 255, 0, 255, 0, 255)))
+        digest = hashlib.sha256(blob).hexdigest()
+        self.doc["images"] = [{"uri": "textures/wall.png", "mimeType": "image/png", "sha256": digest}]
+        self.doc["textures"] = [{"source": 0}]
+        self.doc["extensionsUsed"] = [K.EXTERNAL_IMAGES_EXT]
+        self.doc["extensionsRequired"] = [K.EXTERNAL_IMAGES_EXT]
+        data = write_container(K.ADM_MAGIC, self.doc, self.chunks)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "textures").mkdir()
+            (root / "textures" / "wall.png").write_bytes(blob)
+            model_path = root / "model.adm"
+            model_path.write_bytes(data)
+            self.assertTrue(validate_adm_resolved(data, model_path).ok)
+            self.doc["images"][0]["sha256"] = "0" * 64
+            corrupt = write_container(K.ADM_MAGIC, self.doc, self.chunks)
+            self.assertIn("IMAGE_EXTERNAL_SHA256",
+                          {e.code for e in validate_adm_resolved(corrupt, model_path).errors})
+
+    def test_external_image_uri_rejects_traversal_and_needs_extension(self):
+        self.doc["images"] = [{"uri": "../outside.png", "mimeType": "image/png"}]
+        self.assertIn("IMAGE_EXTERNAL_URI", self.codes())
+        self.doc["images"][0]["uri"] = "textures/wall.png"
+        self.doc["extensionsUsed"] = [K.EXTERNAL_IMAGES_EXT]
+        self.doc["extensionsRequired"] = []
+        self.assertIn("IMAGE_EXTERNAL_EXT", self.codes())
 
     def test_animation_accessors_require_anim_chunk(self):
         doc, chunks = read_container((FIXTURES / "shader_parameter_tracks.adm_anim").read_bytes(), K.ANIM_MAGIC)

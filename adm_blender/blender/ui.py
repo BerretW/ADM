@@ -212,7 +212,8 @@ def draw_object_props(layout, context, obj):
 
 def draw_model_metadata(layout, props):
     for collection, index, title, fields in (
-            ("physical_materials", "active_physical_material", "Physical Materials", ("friction", "restitution")),
+            ("physical_materials", "active_physical_material", "Physical Materials",
+             ("profile", "friction", "restitution")),
             ("model_components", "active_model_component", "Model Components", ("role", "object", "bone", "socket")),
             ("hitboxes", "active_hitbox", "Hitboxes", ("collider", "object", "bone", "role"))):
         box = layout.box()
@@ -960,6 +961,13 @@ def _draw_param_row(box, v, prm, typ):
 def draw_material(lay, context, mat):
     from .materials import scene_shader_registry
     p = mat.adm
+    missing_images = mat.get("adm_incomplete_textures", ())
+    if missing_images:
+        warning = lay.box()
+        warning.alert = True
+        warning.label(text="Material is incomplete: external textures are unavailable", icon="ERROR")
+        for uri in missing_images:
+            warning.label(text=str(uri), icon="IMAGE_DATA")
     col = lay.column()
     col.use_property_split = True
     col.use_property_decorate = False
@@ -1072,6 +1080,14 @@ def draw_material(lay, context, mat):
                 vb.label(text="Editing a value enables its Override checkbox", icon="INFO")
                 for v, prm in val:
                     _draw_param_row(vb, v, prm, prm.get("type"))
+
+    controls = lay.box()
+    controls.label(text="ADM Vertex Control", icon="COLOR")
+    controls.label(text="Serialized when Export > Vertex Controls is enabled", icon="INFO")
+    controls.template_ID(p, "vertex_tint_palette", new="image.new", open="image.open")
+    controls.prop(p, "vertex_tint_mode")
+    for field in ("tint_offset", "normal_multiplier", "reflection_multiplier", "wetness_offset"):
+        controls.prop(p, field)
 
     draw_texture_slots(lay, context, mat)
 

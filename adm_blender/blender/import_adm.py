@@ -12,6 +12,7 @@ from mathutils import Matrix, Quaternion, Vector
 
 from ..core import constants as K
 from ..core.buffers import read_accessor_np, read_view
+from ..core.external_images import resolve_image_uri
 from ..core.validate import validate_adm
 from . import convert as cv
 from .colliders import new_collider_object
@@ -105,6 +106,31 @@ class ModelImporter:
         self.materials = []
         for m in d.get("materials", []):
             mat = build_material(m, self.resolve_texture)
+            missing_image_uris = []
+            if "adm_incomplete_textures" in mat:
+                for image_index in mat["adm_incomplete_textures"]:
+                    try:
+                        image = d["images"][int(image_index)]
+                    except (IndexError, TypeError, ValueError):
+                        continue
+                    missing_image_uris.append(image.get("uri", f"image:{image_index}"))
+            vertex_controls = (m.get("extensions") or {}).get(K.VERTEX_CONTROL_EXT)
+            if isinstance(vertex_controls, dict):
+                params = vertex_controls.get("parameters", {})
+                mat.adm.tint_offset = params.get("tintOffset", 0.0)
+                mat.adm.normal_multiplier = params.get("normalMultiplier", 1.0)
+                mat.adm.reflection_multiplier = params.get("reflectionMultiplier", 1.0)
+                mat.adm.wetness_offset = params.get("wetnessOffset", 0.0)
+                mat.adm.vertex_tint_mode = vertex_controls.get("tintMode", "MULTIPLY")
+                if "tintPalette" in vertex_controls:
+                    image, _sampler = self.resolve_texture(vertex_controls["tintPalette"])
+                    mat.adm.vertex_tint_palette = image
+                    if image is None:
+                        index = vertex_controls["tintPalette"]["index"]
+                        uri = d["images"][d["textures"][index]["source"]].get("uri", f"image:{index}")
+                        missing_image_uris.append(uri)
+            if missing_image_uris:
+                mat["adm_incomplete_textures"] = sorted(set(missing_image_uris))
             apply_shader(mat, m, self.context.scene, resolve_image)
             if not has_profile_preview(mat.adm.shader):
                 self.warn(f"SHADER_FALLBACK: material '{mat.name}' uses portable PBR shading; "
@@ -118,24 +144,44 @@ class ModelImporter:
     # ---------------------------------------------------------------------------------------------
     def load_images(self):
         self.images = []
+        asset_root = os.path.dirname(os.path.abspath(self.filepath))
         for i, im in enumerate(self.doc.get("images", [])):
             if im["mimeType"] in K.GPU_IMAGE_MIMES:
                 self.images.append(None)
                 continue
-            blob = read_view(self.doc, self.bin, im["bufferView"])
             ext = ".png" if im["mimeType"] == "image/png" else ".jpg"
             name = _safe(im.get("name"), f"Image_{i}")
             fname = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
             if not fname.lower().endswith(ext):
                 fname += ext
-            path = os.path.join(self._tmpdir, f"{i}_{fname}")
-            with open(path, "wb") as fh:
-                fh.write(blob)
+            if "uri" in im:
+                try:
+                    path = resolve_image_uri(asset_root, im["uri"], must_exist=True)
+                    if "sha256" in im:
+                        from ..core.external_images import sha256_hex
+                        if sha256_hex(path.read_bytes()) != im["sha256"]:
+                            self.warn(f"image {i} '{im['uri']}' SHA-256 mismatch; image not loaded")
+                            self.images.append(None)
+                            continue
+                except (OSError, ValueError) as exc:
+                    self.warn(f"image {i} '{im['uri']}' could not be resolved: {exc}")
+                    self.images.append(None)
+                    continue
+            else:
+                blob = read_view(self.doc, self.bin, im["bufferView"])
+                path = os.path.join(self._tmpdir, f"{i}_{fname}")
+                with open(path, "wb") as fh:
+                    fh.write(blob)
             try:
-                img = bpy.data.images.load(path)
-                img.pack()
+                img = bpy.data.images.load(os.fspath(path), check_existing=True)
+                if "uri" not in im:
+                    img.pack()
+                else:
+                    img["adm_external_uri"] = im["uri"]
+                    img["adm_external_sha256"] = im.get("sha256", "")
                 img.name = name
-                img.filepath_raw = "//" + fname
+                if "uri" not in im:
+                    img.filepath_raw = "//" + fname
             except RuntimeError as exc:
                 self.warn(f"image {i} '{name}' could not be decoded: {exc}")
                 img = None
@@ -151,6 +197,15 @@ class ModelImporter:
             self.warn(f"{code}: texture {ref['index']} uses the embedded PNG/JPEG fallback "
                       f"(the {mime} primary is kept only for GPU runtimes)")
         img = self.images[source]
+        if img is None and "fallbackSource" in tex and source == tex["source"]:
+            fallback = tex["fallbackSource"]
+            if self.images[fallback] is not None:
+                img = self.images[fallback]
+                self.warn(f"EXTERNAL_IMAGE_FALLBACK: texture {ref['index']} uses fallback image {fallback}")
+        if img is None:
+            uri = self.doc["images"][source].get("uri")
+            self.warn(f"EXTERNAL_IMAGE_MISSING: texture {ref['index']} image is unavailable"
+                      + (f" ({uri})" if uri else ""))
         smp = self.doc["samplers"][tex["sampler"]] if "sampler" in tex else None
         return img, smp
 
@@ -552,8 +607,10 @@ class ModelImporter:
     def build_mesh(self, mesh_index, skin_index, collision=False):
         m = self.doc["meshes"][mesh_index]
         prims = m["primitives"]
-        pos, tris, nrm, uv, col, jnt, wgt, mats = [], [], [], [[], []], [], [], [], []
+        pos, tris, nrm, uv, col, col1, jnt, wgt, mats, face_physical = (
+            [], [], [], [[], []], [], [], [], [], [], [])
         deltas = []
+        vertex_control = K.VERTEX_CONTROL_EXT in self.doc.get("extensionsRequired", [])
         ntarg = len(m.get("targetNames", [])) if not collision else 0
         if not collision:
             ntarg = max(ntarg, len(prims[0].get("targets", [])))
@@ -562,7 +619,9 @@ class ModelImporter:
         uv_sets = [all(f"TEXCOORD_{k}" in p["attributes"] for p in prims) for k in (0, 1)]
         if not uv_sets[0]:
             uv_sets[1] = False
-        has_c = all("COLOR_0" in p["attributes"] for p in prims) and not collision
+        has_c = (any("COLOR_0" in p["attributes"] for p in prims) if vertex_control
+                 else all("COLOR_0" in p["attributes"] for p in prims)) and not collision
+        has_c1 = vertex_control and all("COLOR_1" in p["attributes"] for p in prims) and not collision
         has_s = all("JOINTS_0" in p["attributes"] for p in prims) and not collision and skin_index is not None
         if collision:
             uv_sets = [False, False]
@@ -574,13 +633,20 @@ class ModelImporter:
             I = self.acc(p["indices"], np.int64).reshape(-1, 3) + offset
             tris.append(I)
             mats.append(np.full(len(I), p.get("material", -1), dtype=np.int64))
+            physical_ext = (p.get("extensions") or {}).get(K.PHYSICAL_SURFACES_EXT, {})
+            face_physical.extend(physical_ext.get("faceMaterials", [""] * len(I)))
             if has_n:
                 nrm.append(cv.np_vec_from_adm(self.acc(a["NORMAL"])))
             for k in (0, 1):
                 if uv_sets[k]:
                     uv[k].append(cv.np_uv_from_adm(self.acc(a[f"TEXCOORD_{k}"])))
             if has_c:
-                col.append(self.acc(a["COLOR_0"]))
+                if "COLOR_0" in a:
+                    col.append(self.acc(a["COLOR_0"]))
+                else:
+                    col.append(np.tile((0.0, 1.0, 1.0, 0.0), (n, 1)))
+            if has_c1:
+                col1.append(self.acc(a["COLOR_1"]))
             if has_s:
                 jnt.append(self.acc(a["JOINTS_0"], np.int64))
                 wgt.append(self.acc(a["WEIGHTS_0"]))
@@ -593,6 +659,7 @@ class ModelImporter:
         P = np.vstack(pos)
         T = np.vstack(tris)
         MI = np.concatenate(mats)
+        face_physical = np.asarray(face_physical, dtype=object)
         D = [np.vstack([deltas[pi][t] for pi in range(len(prims))]) for t in range(ntarg)]
         Jv = np.vstack(jnt) if has_s else None
         Wv = np.vstack(wgt) if has_s else None
@@ -629,6 +696,7 @@ class ModelImporter:
         TV = TV[good]
         corner = T[good].reshape(-1)
         MI = MI[good]
+        face_physical = face_physical[good]
 
         name = _safe(m.get("name"), f"Mesh_{mesh_index}")
         me = bpy.data.meshes.new(name)
@@ -641,6 +709,10 @@ class ModelImporter:
         me.polygons.add(nt)
         me.polygons.foreach_set("loop_start", np.arange(0, nt * 3, 3, dtype=np.int32))
         me.update(calc_edges=True)
+        if collision and len(face_physical) and any(face_physical):
+            attr = me.attributes.new("adm_physical_material_id", "STRING", "FACE")
+            for poly, ident in zip(attr.data, face_physical):
+                poly.value = ident
 
         # materials
         used = sorted(set(MI.tolist()))
@@ -656,9 +728,12 @@ class ModelImporter:
                 layer = me.uv_layers.new(name=UV_NAMES[k])
                 layer.uv.foreach_set("vector", np.vstack(uv[k])[corner].astype(np.float32).ravel())
         if has_c:
-            ca = me.color_attributes.new("Color", "FLOAT_COLOR", "CORNER")
+            ca = me.color_attributes.new("COLOR_0" if vertex_control else "Color", "FLOAT_COLOR", "CORNER")
             ca.data.foreach_set("color", np.vstack(col)[corner].astype(np.float32).ravel())
             me.color_attributes.active_color = ca
+        if has_c1:
+            ca1 = me.color_attributes.new("COLOR_1", "FLOAT_COLOR", "CORNER")
+            ca1.data.foreach_set("color", np.vstack(col1)[corner].astype(np.float32).ravel())
         invalid = me.validate(verbose=False, clean_customdata=False)
         if invalid:
             self.warn(f"mesh '{name}': geometry was corrected by Blender's mesh validation")
@@ -801,6 +876,7 @@ class ModelImporter:
         for material in d.get("physicalMaterials", []):
             item = self.root.adm.physical_materials.add()
             item.name = material["id"]
+            item.profile = material.get("profile", "UNSPECIFIED")
             item.friction = material["friction"]
             item.restitution = material["restitution"]
         for component in d.get("modelComponents", []):

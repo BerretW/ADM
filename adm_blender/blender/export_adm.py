@@ -51,6 +51,8 @@ class ExportOptions:
         self.export_colors = True
         self.export_morph_normals = True
         self.export_materials = True
+        self.embed_textures = True
+        self.vertex_controls = False
         self.image_format = "PNG"  # PNG | AUTO (keep PNG/JPEG) | KTX2 | DDS
         self.gpu_compression = "AUTO"  # AUTO | BC1 | BC3 | RGBA8 (KTX2/DDS payload)
         self.gpu_mipmaps = True
@@ -153,7 +155,9 @@ class ModelExporter:
         self.skins = []
         self.skin_cache = {}
         self.mat = MaterialExporter(self.b, self.warn, self.opts.image_format,
-                                    gpu_compression=self.opts.gpu_compression, gpu_mipmaps=self.opts.gpu_mipmaps)
+                                    gpu_compression=self.opts.gpu_compression, gpu_mipmaps=self.opts.gpu_mipmaps,
+                                    embed_images=self.opts.embed_textures,
+                                    vertex_controls=self.opts.vertex_controls)
         self.mat.shader_defs = {(d.shader_id.strip(), d.version.strip()): d
                                 for d in context.scene.adm_anim.shaders}
         self.allowed = self._allowed_objects()
@@ -361,6 +365,7 @@ class ModelExporter:
             return None
         tri_loops = _np_get(me.loop_triangles, "loops", ntri, 3, np.int64).reshape(-1)
         tri_mat = _np_get(me.loop_triangles, "material_index", ntri, 1, np.int64)
+        tri_polygons = _np_get(me.loop_triangles, "polygon_index", ntri, 1, np.int64)
         nloops = len(me.loops)
         nverts = len(me.vertices)
         loop_vert = _np_get(me.loops, "vertex_index", nloops, 1, np.int64)
@@ -377,6 +382,12 @@ class ModelExporter:
         for mi in tri_mat:
             prim_mats.append(mat_slots[mi] if 0 <= mi < len(mat_slots) else None)
         prim_mats = np.array([-1 if m is None else m for m in prim_mats], dtype=np.int64)
+        face_physical_ids = None
+        physical_attr = me.attributes.get("adm_physical_material_id") if collision else None
+        if physical_attr is not None:
+            if physical_attr.domain != "FACE" or physical_attr.data_type != "STRING":
+                raise ExportError(f"collider '{obj.name}': adm_physical_material_id must be a FACE string attribute")
+            face_physical_ids = [physical_attr.data[int(poly)].value for poly in tri_polygons]
 
         columns = [loop_vert[tri_loops].astype(np.float64)[:, None]]
         normals = tangents = None
@@ -402,17 +413,29 @@ class ModelExporter:
         for uv in uvs:
             columns.append(uv[tri_loops])
         colors = None
+        colors1 = None
         if not collision and self.opts.export_colors:
-            ca = me.color_attributes.get(obj.data.color_attributes.active_color_name) \
-                if obj.type == "MESH" and obj.data.color_attributes.active_color_name else None
-            if ca is None and me.color_attributes.active_color is not None:
-                ca = me.color_attributes.active_color
+            if self.opts.vertex_controls:
+                ca = me.color_attributes.get("COLOR_0")
+                ca1 = me.color_attributes.get("COLOR_1")
+            else:
+                ca = me.color_attributes.get(obj.data.color_attributes.active_color_name) \
+                    if obj.type == "MESH" and obj.data.color_attributes.active_color_name else None
+                if ca is None and me.color_attributes.active_color is not None:
+                    ca = me.color_attributes.active_color
+                ca1 = None
             if ca is not None:
                 n = nverts if ca.domain == "POINT" else nloops
                 col = _np_get(ca.data, "color", n, 4).astype(np.float64)
                 colors = col[loop_vert] if ca.domain == "POINT" else col
                 colors = np.clip(colors, 0.0, 1.0)
                 columns.append(colors[tri_loops])
+            if ca1 is not None:
+                n = nverts if ca1.domain == "POINT" else nloops
+                col = _np_get(ca1.data, "color", n, 4).astype(np.float64)
+                colors1 = col[loop_vert] if ca1.domain == "POINT" else col
+                colors1 = np.clip(colors1, 0.0, 1.0)
+                columns.append(colors1[tri_loops])
         normal_mapped = any(m >= 0 and "normalTexture" in self.mat.materials[m] for m in set(prim_mats.tolist()))
         want_tangents = normals is not None and uvs and (
             self.opts.export_tangents == "ALWAYS" or (self.opts.export_tangents == "AUTO" and normal_mapped))
@@ -481,6 +504,8 @@ class ModelExporter:
                 attrs["TEXCOORD_%d" % i] = self.b.add_accessor(uv[src_corner], "F32", "VEC2")
             if colors is not None:
                 attrs["COLOR_0"] = self.b.add_accessor(colors[src_corner], "F32", "VEC4")
+            if colors1 is not None:
+                attrs["COLOR_1"] = self.b.add_accessor(colors1[src_corner], "F32", "VEC4")
             if joints is not None:
                 jt = joints[src_vert]
                 attrs["JOINTS_0"] = self.b.add_accessor(jt, "U8" if jt.max() < 256 else "U16", "VEC4")
@@ -489,6 +514,17 @@ class ModelExporter:
             prim = {"attributes": attrs, "indices": self.b.add_accessor(indices, ct, "SCALAR")}
             if m >= 0:
                 prim["material"] = int(m)
+            if face_physical_ids is not None and any(face_physical_ids[i] for i in tri_sel):
+                fallback_id = obj.adm.physical_material.strip()
+                resolved_ids = [face_physical_ids[i] or fallback_id for i in tri_sel]
+                if any(not ident for ident in resolved_ids):
+                    raise ExportError(f"collider '{obj.name}': every face with physical material data must name "
+                                      "a physical material ID or use the collider default")
+                prim.setdefault("extensions", {})[K.PHYSICAL_SURFACES_EXT] = {
+                    "faceMaterials": resolved_ids,
+                }
+                self.mat.extensions_used.add(K.PHYSICAL_SURFACES_EXT)
+                self.mat.extensions_required.add(K.PHYSICAL_SURFACES_EXT)
             if mesh_targets_used:
                 targets = []
                 for kp, kn in zip(key_pos, key_nrm):
@@ -676,8 +712,15 @@ class ModelExporter:
         if self.root is None:
             return [], [], []
         props = self.root.adm
-        physical = [{"id": p.name, "friction": float(p.friction), "restitution": float(p.restitution)}
-                    for p in props.physical_materials]
+        physical = []
+        for item in props.physical_materials:
+            record = {"id": item.name, "friction": float(item.friction),
+                      "restitution": float(item.restitution)}
+            if item.profile != "UNSPECIFIED":
+                record["profile"] = item.profile
+                self.mat.extensions_used.add(K.PHYSICAL_SURFACES_EXT)
+                self.mat.extensions_required.add(K.PHYSICAL_SURFACES_EXT)
+            physical.append(record)
         components = []
         for item in props.model_components:
             record = {"id": item.name, "role": item.role,
@@ -909,6 +952,9 @@ class ModelExporter:
             raise ExportError(str(exc)) from exc
 
     def _export(self):
+        if self.opts.vertex_controls:
+            self.mat.extensions_used.add(K.VERTEX_CONTROL_EXT)
+            self.mat.extensions_required.add(K.VERTEX_CONTROL_EXT)
         with RestPose(self.context):
             self.build_graph()
             self.build_content()
@@ -977,7 +1023,25 @@ class ModelExporter:
 
 def export_model(context, filepath, root=None, options=None):
     exp = ModelExporter(context, root, options)
+    exp.mat.external_root = os.path.dirname(os.path.abspath(filepath))
     data, report = exp.export()
+    if exp.mat.external_files:
+        from ..core.external_images import resolve_image_uri
+        root_dir = exp.mat.external_root
+        try:
+            for uri, blob in exp.mat.external_files.items():
+                target = resolve_image_uri(root_dir, uri)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with open(target, "xb") as fh:
+                        fh.write(blob)
+                except FileExistsError:
+                    if target.read_bytes() != blob:
+                        raise ExportError(f"external texture target already exists with different content: {uri}")
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, ExportError):
+                raise
+            raise ExportError(f"could not write external textures: {exc}") from exc
     with open(filepath, "wb") as fh:
         fh.write(data)
     return exp, report

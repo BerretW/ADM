@@ -24,7 +24,8 @@ ANIM_OPTIONAL_TOP = ("eventsSchema", "chunkDependencies", "streamHints",
                      "extensionsUsed", "extensionsRequired", "extensions", "extras")
 
 ATTRIBUTE_SEMANTICS = (
-    "POSITION", "NORMAL", "TANGENT", "TEXCOORD_0", "TEXCOORD_1", "COLOR_0", "JOINTS_0", "WEIGHTS_0",
+    "POSITION", "NORMAL", "TANGENT", "TEXCOORD_0", "TEXCOORD_1", "COLOR_0", "COLOR_1",
+    "JOINTS_0", "WEIGHTS_0",
 )
 
 # --- humanoid.vrm1 (VRM 1.0 humanoid, snapshot 2026-11-13) ----------------------------------
@@ -101,7 +102,14 @@ SHADER_ROCK = ("adm.nature.rock", "1.0.0")
 SHADER_WATER = ("adm.nature.water", "1.0.0")
 SHADER_FABRIC = ("adm.surface.fabric", "1.0.0")
 LAYERS_EXT = "ADM_material_layers_v1"
-SUPPORTED_EXTENSIONS = (LAYERS_EXT,)
+VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
+EXTERNAL_IMAGES_EXT = "ADM_external_images_v1"
+PHYSICAL_SURFACES_EXT = "ADM_physical_surfaces_v1"
+SUPPORTED_EXTENSIONS = (LAYERS_EXT, VERTEX_CONTROL_EXT, EXTERNAL_IMAGES_EXT, PHYSICAL_SURFACES_EXT)
+PHYSICAL_SURFACE_PROFILES = (
+    "adm.phys.wood.v1", "adm.phys.metal.v1", "adm.phys.stone.v1",
+    "adm.phys.ground.v1", "adm.phys.glass.v1",
+)
 SHADER_PARAM_TYPES = ("F32", "VEC2", "VEC3", "VEC4", "BOOL", "TEXTURE")
 SHADER_NUMERIC_DIMS = {"F32": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
 OFFICIAL_SHADER_KINDS = {
@@ -288,6 +296,7 @@ OFFICIAL_SHADERS = {
         _shader_param("anisotropy", "F32", 0.4, "Tangent-oriented specular lobe strength.", 0.0, 1.0),
     ],
 }
+
 # TEXTURE parameters that carry sRGB-encoded albedo; every other TEXTURE parameter is linear data.
 SHADER_COLOR_TEXTURES = frozenset({"detail_texture", "layer0_texture", "layer1_texture", "layer2_texture",
                                    "layer3_texture"})

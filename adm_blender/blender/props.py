@@ -81,6 +81,11 @@ class ADMLodLevel(PropertyGroup):
 
 class ADMPhysicalMaterial(PropertyGroup):
     name: StringProperty(name="ID", default="surface")
+    profile: EnumProperty(name="Surface Profile", default="UNSPECIFIED", items=[
+        ("UNSPECIFIED", "Unspecified", "Preserve legacy physical material behavior"),
+        *[(p, p.replace("adm.phys.", "").replace(".v1", "").title(), "")
+          for p in K.PHYSICAL_SURFACE_PROFILES],
+    ])
     friction: FloatProperty(name="Friction", default=0.5, min=0.0, max=1.0)
     restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0)
 
@@ -412,6 +417,15 @@ class ADMMaterialProps(PropertyGroup):
     layer_mask_uv: IntProperty(name="Mask UV", min=0, max=1, update=_preview_update)
     layers_required: BoolProperty(name="Require Layered Rendering",
                                   description="List ADM_material_layers_v1 under extensionsRequired")
+    vertex_tint_palette: PointerProperty(name="Tint Palette", type=bpy.types.Image, update=_preview_update)
+    vertex_tint_mode: EnumProperty(name="Tint Mode", default="MULTIPLY", items=[
+        ("MULTIPLY", "Multiply", "Multiply base color and alpha by the palette entry"),
+        ("REPLACE", "Replace", "Replace base RGB and preserve base alpha"),
+    ], update=_preview_update)
+    tint_offset: FloatProperty(name="Tint Offset", default=0.0, min=-1024.0, max=1024.0)
+    normal_multiplier: FloatProperty(name="Normal Multiplier", default=1.0, min=0.0, max=4.0)
+    reflection_multiplier: FloatProperty(name="Reflection Multiplier", default=1.0, min=0.0, max=4.0)
+    wetness_offset: FloatProperty(name="Wetness Offset", default=0.0, min=-1.0, max=1.0)
     params: CollectionProperty(type=ADMShaderParamValue)
     active_param: IntProperty()
 

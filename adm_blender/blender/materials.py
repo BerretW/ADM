@@ -227,15 +227,19 @@ class MaterialExporter:
     AUTO (keep PNG/JPEG source bytes), KTX2 or DDS (GPU primary + mandatory PNG fallback)."""
 
     def __init__(self, builder, warn, image_format="PNG", jpeg_quality=90, gpu_compression="AUTO",
-                 gpu_mipmaps=True):
+                 gpu_mipmaps=True, embed_images=True, vertex_controls=False):
         self.b = builder
         self.warn = warn
         self.image_format = image_format
         self.jpeg_quality = jpeg_quality
         self.gpu_compression = gpu_compression
         self.gpu_mipmaps = gpu_mipmaps
+        self.embed_images = embed_images
+        self.vertex_controls = vertex_controls
         self.materials = []
         self.images = []
+        self.external_files = {}
+        self._external_hash_cache = {}
         self.samplers = []
         self.textures = []
         self._mat_cache = {}
@@ -293,7 +297,38 @@ class MaterialExporter:
         h, w = px.shape[:2]
         return encode_png(w, h, self._to_u8(px).tobytes(), 4), "image/png"
 
-    def _add_blob(self, name, blob, mime):
+    def _add_blob(self, name, blob, mime, source_image=None):
+        if not self.embed_images:
+            from ..core.external_images import normalize_image_uri, sha256_hex
+            digest = sha256_hex(blob)
+            if digest in self._external_hash_cache:
+                return self._external_hash_cache[digest]
+            ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/ktx2": ".ktx2",
+                   "image/vnd-ms.dds": ".dds"}.get(mime)
+            if ext is None:
+                raise TextureExportError(f"image '{name}' has unsupported external MIME type {mime!r}")
+            uri = None
+            if source_image is not None:
+                old_uri = source_image.get("adm_external_uri")
+                if old_uri:
+                    try:
+                        normalize_image_uri(old_uri)
+                        source = source_bytes(source_image)
+                        if source == blob and _portable_mime(source) == mime:
+                            uri = old_uri
+                    except (OSError, ValueError):
+                        uri = None
+            if uri is None:
+                stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", os.path.splitext(os.path.basename(name))[0]).strip("._")
+                stem = stem or "image"
+                uri = f"textures/{stem}-{digest}{ext}"
+            self.external_files[uri] = bytes(blob)
+            self.images.append({"uri": uri, "sha256": digest, "mimeType": mime, "name": name})
+            image_index = len(self.images) - 1
+            self._external_hash_cache[digest] = image_index
+            self.extensions_used.add(K.EXTERNAL_IMAGES_EXT)
+            self.extensions_required.add(K.EXTERNAL_IMAGES_EXT)
+            return image_index
         view = self.b.add_view(blob, align=4, chunk_type="IMAG")
         self.images.append({"bufferView": view, "mimeType": mime, "name": name})
         return len(self.images) - 1
@@ -309,10 +344,11 @@ class MaterialExporter:
             blob, _ = gputex.encode(rgba, gpu_mime, self.gpu_compression, color_role, self.gpu_mipmaps)
             primary = self._add_blob(name, blob, gpu_mime)
             h, w = rgba.shape[:2]
-            entry = (primary, self._add_blob(name, encode_png(w, h, rgba.tobytes(), 4), "image/png"))
+            fallback = self._add_blob(name, encode_png(w, h, rgba.tobytes(), 4), "image/png")
+            entry = (primary, fallback)
         else:
             blob, mime = self._encode_image_bytes(image, color_role) if pixels is None else self._encode_pixels(pixels)
-            entry = (self._add_blob(name, blob, mime), None)
+            entry = (self._add_blob(name, blob, mime, image), None)
         self._img_cache[key] = entry
         return entry
 
@@ -355,6 +391,18 @@ class MaterialExporter:
     def texture_from_image(self, image, color_role):
         entry = self._add_image(self._image_key(image, color_role), image.name, image, color_role)
         return self._texture(entry, None)
+
+    def texture_from_palette(self, image):
+        pixels = self._pixels(image, True)
+        if pixels.shape[0] != 1 or pixels.shape[1] < 1:
+            raise TextureExportError(f"tint palette '{image.name}' must be an RGBA image with height 1")
+        entry = self._add_image(self._image_key(image, True), image.name, image, True, pixels=pixels)
+        sampler = {"magFilter": "NEAREST", "minFilter": "NEAREST"}
+        sampler_key = tuple(sorted(sampler.items()))
+        if sampler_key not in self._sampler_cache:
+            self.samplers.append(sampler)
+            self._sampler_cache[sampler_key] = len(self.samplers) - 1
+        return self._texture(entry, self._sampler_cache[sampler_key])
 
     def texture_from_node(self, tex_node, color_role):
         image = tex_node.image
@@ -405,6 +453,21 @@ class MaterialExporter:
     def export_material(self, mat, uv_names):
         out = self._export_pbr(mat, uv_names)
         self._export_shader(mat, out)
+        if self.vertex_controls:
+            p = mat.adm
+            vc = {"parameters": {
+                "tintOffset": float(p.tint_offset),
+                "normalMultiplier": float(p.normal_multiplier),
+                "reflectionMultiplier": float(p.reflection_multiplier),
+                "wetnessOffset": float(p.wetness_offset),
+            }}
+            if p.vertex_tint_palette is not None:
+                vc["tintPalette"] = {"index": self.texture_from_palette(p.vertex_tint_palette)}
+            if p.vertex_tint_mode != "MULTIPLY":
+                vc["tintMode"] = p.vertex_tint_mode
+            out.setdefault("extensions", {})[K.VERTEX_CONTROL_EXT] = vc
+            self.extensions_used.add(K.VERTEX_CONTROL_EXT)
+            self.extensions_required.add(K.VERTEX_CONTROL_EXT)
         if mat.adm.shader != "CORE":
             defaults = {"baseColorFactor": [1.0, 1.0, 1.0, 1.0], "metallicFactor": 1.0,
                         "roughnessFactor": 1.0, "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE"}
@@ -981,6 +1044,14 @@ def build_material(m, resolve_texture):
     ``resolve_texture(textureRef) -> (bpy.types.Image, sampler_dict)``.
     """
     mat = bpy.data.materials.new(m.get("name", "ADM Material"))
+    missing_textures = []
+
+    def _resolve_texture(ref):
+        image, sampler = resolve_texture(ref)
+        if image is None:
+            missing_textures.append(ref)
+        return image, sampler
+
     nt = mat.node_tree
     nt.nodes.clear()
     out = nt.nodes.new("ShaderNodeOutputMaterial")
@@ -1002,7 +1073,7 @@ def build_material(m, resolve_texture):
 
     y = 300
     if "baseColorTexture" in m:
-        img, smp = resolve_texture(m["baseColorTexture"])
+        img, smp = _resolve_texture(m["baseColorTexture"])
         tn = _tex_node(nt, img, smp, False, -900, y, "Base Color")
         _uv_node(nt, tn, m["baseColorTexture"].get("texCoord", 0), -900, y)
         col = tn.outputs["Color"]
@@ -1037,7 +1108,7 @@ def build_material(m, resolve_texture):
             nt.links.new(a, bsdf.inputs["Alpha"])
         y -= 300
     if "metallicRoughnessTexture" in m:
-        img, smp = resolve_texture(m["metallicRoughnessTexture"])
+        img, smp = _resolve_texture(m["metallicRoughnessTexture"])
         tn = _tex_node(nt, img, smp, True, -900, y, "Metallic Roughness")
         _uv_node(nt, tn, m["metallicRoughnessTexture"].get("texCoord", 0), -900, y)
         sep = nt.nodes.new("ShaderNodeSeparateColor")
@@ -1056,7 +1127,7 @@ def build_material(m, resolve_texture):
             nt.links.new(s, bsdf.inputs[target])
         y -= 300
     if "normalTexture" in m:
-        img, smp = resolve_texture(m["normalTexture"])
+        img, smp = _resolve_texture(m["normalTexture"])
         tn = _tex_node(nt, img, smp, True, -900, y, "Normal")
         tc = m["normalTexture"].get("texCoord", 0)
         _uv_node(nt, tn, tc, -900, y)
@@ -1069,7 +1140,7 @@ def build_material(m, resolve_texture):
         nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
         y -= 300
     if "occlusionTexture" in m:
-        img, smp = resolve_texture(m["occlusionTexture"])
+        img, smp = _resolve_texture(m["occlusionTexture"])
         tn = _tex_node(nt, img, smp, True, -900, y, "Occlusion (ADM)")
         tn.name = OCCLUSION_NODE
         _uv_node(nt, tn, m["occlusionTexture"].get("texCoord", 0), -900, y)
@@ -1081,7 +1152,7 @@ def build_material(m, resolve_texture):
         bsdf.inputs["Emission Strength"].default_value = strength
         bsdf.inputs["Emission Color"].default_value = (ef[0] / strength, ef[1] / strength, ef[2] / strength, 1.0)
     if "emissiveTexture" in m:
-        img, smp = resolve_texture(m["emissiveTexture"])
+        img, smp = _resolve_texture(m["emissiveTexture"])
         tn = _tex_node(nt, img, smp, False, -900, y, "Emissive")
         _uv_node(nt, tn, m["emissiveTexture"].get("texCoord", 0), -900, y)
         col = tn.outputs["Color"]
@@ -1097,6 +1168,10 @@ def build_material(m, resolve_texture):
             col = next(o for o in mix.outputs if o.type == "RGBA")
         nt.links.new(col, bsdf.inputs["Emission Color"])
     apply_alpha_mode_to_material(mat, alpha_mode)
+    if missing_textures:
+        mat["adm_incomplete_textures"] = [
+            str(item.get("index")) for item in missing_textures if isinstance(item, dict)
+        ]
     return mat
 
 
