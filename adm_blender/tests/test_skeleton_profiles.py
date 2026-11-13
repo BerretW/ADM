@@ -333,6 +333,10 @@ class CompatibilityTests(unittest.TestCase):
         self.assertIn("approved explicit mapping", why[0])
         lvl, _ = SK.library_compatibility(self.lib("humanoid.vrm1"), "animal.canine.v1", roles)
         self.assertEqual(lvl, SK.INCOMPATIBLE)
+        # identical topology, different species: still no automatic binding
+        lvl, _ = SK.library_compatibility(self.lib("animal.canine.v1"), "animal.feline.v1",
+                                          set(SP.required_roles("animal.feline.v1")))
+        self.assertEqual(lvl, SK.INCOMPATIBLE)
         lvl, _ = SK.library_compatibility(self.lib("animal.canine.v1"), "animal.canine.v1",
                                           set(SP.required_roles("animal.canine.v1")))
         self.assertEqual(lvl, SK.PROVISIONAL_SEMANTIC)

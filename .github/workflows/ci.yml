@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Test container and semantics
-        run: python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 -v
+        run: python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_skeleton_profiles -v
       - name: Test independent reference validator
         run: python adm-standard/tools/run_tests.py
       - name: Regenerate fixtures without external inputs

@@ -49,6 +49,8 @@ physical materials and bone-linked hitboxes.
   tracks are preserved; exact custom/layered shader rendering is not claimed.
 - Vehicle/weapon profile names remain provisional. Physics, damage and other gameplay behavior
   are outside this asset format.
+- Skeleton profiles: `humanoid.vrm1` is fully supported. Quadruped profiles (`animal.*.v1`) are
+  PROVISIONAL proposals and are not certifiable. See [SPEC_GAPS.md](adm-standard/SPEC_GAPS.md).
 
 See the [draft](adm-standard/ADM-1.0-SPEC.md) and [implementation limits](adm_blender/README.md#draft-04-container-and-fallback)
 before making interoperability or conformance claims.
@@ -61,7 +63,7 @@ Blender supplies its own Python, `bpy` and NumPy for add-on tests.
 Run from the repository root:
 
 ```powershell
-python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 -v
+python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4 -v
 python .\adm-standard\tools\run_tests.py
 ```
 
@@ -70,6 +72,7 @@ Run Blender round trips separately:
 ```powershell
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_fixtures.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_workflow.py
+& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_skeleton_blender.py
 ```
 
 The [CI workflow](.github/workflows/ci.yml) runs core/reference tests and verifies fixture regeneration

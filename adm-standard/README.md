@@ -35,7 +35,7 @@ Uses Python 3.9+ standard library. **Does not test renderer equivalence, ZSTD, s
 
 ## Open issues preventing certification
 
-1. Complete normative animal profiles, plus independent semantic certification fixtures for the newly specified vehicle/weapon profiles.
+1. Complete normative animal profiles (currently PROVISIONAL proposals, see `profiles/animal.quadruped.v1.md`), the open points in `SPEC_GAPS.md`, plus independent semantic certification fixtures for the newly specified vehicle/weapon profiles.
 2. Full shader-registry publication and shader-reference rendering tests.
 3. A frozen supported KTX2/Basis Universal subset with actual fixtures.
 4. Fully independent reader/writer and per-feature semantic conformance fixtures.
@@ -52,3 +52,12 @@ The specification governs the data format; engine scheduling, gameplay behavior,
 - `tools/test_profiles.py` — structural validation and numerical smoke checks (not a full reference renderer/evaluator).
 
 Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_tests.py`.
+
+## Skeleton profile registry (P2)
+
+- `profiles/skeleton-profiles.json`: machine-readable registry of roles, parents, required flags, pose checks, and IK/socket templates, with each profile's `status`.
+- `profiles/humanoid.vrm1.md`: VRM 1.0 humanoid. Role data is normative; the ADM-REF-NORM, IK, socket and facial conventions are PROPOSED. Tests `HUM-001..006`.
+- `profiles/animal.quadruped.v1.md`: generic quadruped, canine, feline and equine. **PROVISIONAL, not registered, not certifiable.** Tests `QDR-001..004`.
+- `SPEC_GAPS.md`: unresolved specification points and the reference toolkit's interim behaviour.
+
+These tests are executed by the reference Blender toolkit (`adm_blender/tests/test_skeleton_profiles.py`, `test_skeleton_blender.py`). An independent second implementation does not exist yet.

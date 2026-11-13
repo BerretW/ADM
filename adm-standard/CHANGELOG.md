@@ -24,3 +24,12 @@
 - Added `component` animation target with rest-relative translation/rotation semantics for mechanical, non-skin nodes.
 - Defined wheel/steering and hinge axes, ordered axle metadata, attachment mount classes/interfaces, and deterministic accessory frame composition.
 - Added profile validation fixtures and executable structural and mathematical smoke tests; profile conformance is not yet independently certified.
+
+## Draft 0.4 revision P2 — skeleton profile registry
+
+- Added the machine-readable skeleton profile registry `profiles/skeleton-profiles.json` (`humanoid.vrm1` NORMATIVE role data from VRM 1.0, `generic.v1` EXACT_ONLY, `animal.*.v1` PROVISIONAL).
+- Added the annex `profiles/humanoid.vrm1.md`: VRM 1.0 roles, required set, parent rules, T pose, conformance tests `HUM-001..006`, and the proposed `ADM-REF-NORM` correction convention, IK and socket templates and facial-profile rules.
+- Added the PROVISIONAL, non-normative annex `profiles/animal.quadruped.v1.md` (generic quadruped, canine, feline, equine) with tests `QDR-001..004`. Quadruped profiles remain unregistered and are never `SEMANTIC`-compatible.
+- §11 schema consistency fix: lists the optional `targetHeight`, `referenceCorrection` and `rigId` members that §11.1/§16 already used. Clarified the VRM +Z vs ADM −Z facing and the mirrored-rig rule.
+- Added `SPEC_GAPS.md`, the register of unresolved points (pose tolerance, correction convention, multi-segment IK, joint limits, retarget maps, …).
+- No binary container change.

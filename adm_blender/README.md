@@ -35,6 +35,39 @@ Vehicle and firearm profiles remain provisional, not certified built-ins.
 **Import and export:** use *File › Import/Export › ADM Model (.adm)* and *ADM Animation Library*.
 Drag & drop of `.adm` files also works.
 
+### ADM Skeleton & Animation panel
+
+The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. It contains:
+
+- **Profile:** choose the skeleton profile.
+  - `humanoid.vrm1`: VRM 1.0 roles.
+  - `generic.v1`: exact rig binding only.
+  - `animal.generic_quadruped.v1`, `animal.canine.v1`, `animal.feline.v1`, `animal.equine.v1`: **PROVISIONAL**, not certifiable.
+  - custom.
+- **Detection:** *Detect Skeleton* auto-maps bones to roles (Mixamo, VRM, Unreal, Blender naming).
+- **Role editor:** fix mappings by hand, one bone per role. Duplicates are rejected.
+- **Missing required roles:** listed per role.
+- **Validate ADM Rig:** each issue shows the code, role, bone and reason. Safe fixes are offered only when the result is unambiguous:
+  - auto-map missing roles;
+  - rotate a +Z-facing (VRM/glTF) rig by 180°;
+  - normalize `referenceCorrection` (ADM-REF-NORM);
+  - clear unknown roles;
+  - normalize IK poles;
+  - limit and normalize skin weights.
+- **IK chains (ADM-IK-1, two-bone):**
+  - create chains from profile templates and edit them;
+  - preview the pose with Blender IK constraints, then remove the preview;
+  - validate pole, length and bone-hierarchy rules.
+
+  Blender IK limits, stretch, rotation targets and other constraints are reported as unsupported and are not exported.
+- **Sockets:** create attachment sockets from profile templates (hands, head, back…).
+- **Skinning check:** unweighted vertices, weights that don't sum to 1, and non-skin bone groups.
+- **Animation libraries:**
+  - import a library and run a compatibility test against the rig (`EXACT`, `SEMANTIC`, `PROVISIONAL_SEMANTIC`, `INCOMPATIBLE`);
+  - no automatic retarget between different profiles (e.g. canine→equine).
+
+Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `referenceCorrection` and `rigId`. It is blocked only by structural errors (missing or duplicate roles, wrong hierarchy). Pose deviations only warn. Open spec questions are listed in [SPEC_GAPS.md](../adm-standard/SPEC_GAPS.md).
+
 ### Material animation
 
 1. In the material panel, set the **Animation ID** (or *Auto*).
@@ -93,10 +126,10 @@ The draft leaves some points open. This add-on resolves them as follows:
 ```
 blender -b --factory-startup --python tests/test_fixtures.py
 blender -b --factory-startup --python tests/test_workflow.py
+blender -b --factory-startup --python tests/test_skeleton_blender.py
 ```
 
-From the workspace root: `python -m unittest discover -s adm_blender\tests -p "test_draft4.py"`
-and `python -m unittest discover -s adm_blender\tests -p "test_container.py"` run without Blender.
+From the workspace root: `python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4` runs without Blender.
 
 **Standalone validator (without Blender):** `python -m adm_blender.core.validate file.adm`
 
