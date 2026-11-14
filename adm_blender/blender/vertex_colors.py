@@ -33,57 +33,59 @@ def _linear_color(value, byte_color):
     return (*rgb, value[3])
 
 
-def ensure_layers(mesh):
-    """Preserve authored linear values; use float corners to avoid gamma/byte index quantization."""
+def ensure_layer(mesh, name):
+    """Create one ADM layer as float corners without changing its authored values."""
+    if name not in DEFAULTS:
+        raise VertexColorError(f"unknown ADM vertex color layer '{name}'")
     validate_layers(mesh)
     active_name = mesh.color_attributes.active_color_name
-    changed = False
+    default = DEFAULTS[name]
+    attr = mesh.attributes.get(name)
     if mesh.is_editmode:
         bm = bmesh.from_edit_mesh(mesh)
-        for name, default in DEFAULTS.items():
-            attr = mesh.attributes.get(name)
-            layer = bm.loops.layers.float_color.get(name)
-            if attr is not None and attr.domain == "CORNER" and attr.data_type == "FLOAT_COLOR":
-                continue
-            values = None
-            if attr is not None:
-                source_layers = bm.verts.layers if attr.domain == "POINT" else bm.loops.layers
-                source_colors = source_layers.color if attr.data_type == "BYTE_COLOR" else source_layers.float_color
-                source = source_colors.get(name)
-                values = [
-                    _linear_color((loop.vert if attr.domain == "POINT" else loop)[source],
-                                  attr.data_type == "BYTE_COLOR")
-                    for face in bm.faces for loop in face.loops
-                ]
-                source_colors.remove(source)
-            layer = bm.loops.layers.float_color.new(name)
-            for i, loop in enumerate(loop for face in bm.faces for loop in face.loops):
-                loop[layer] = default if values is None else values[i]
-            changed = True
-        if changed:
-            bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
+        if attr is not None and attr.domain == "CORNER" and attr.data_type == "FLOAT_COLOR":
+            return False
+        values = None
+        if attr is not None:
+            source_layers = bm.verts.layers if attr.domain == "POINT" else bm.loops.layers
+            source_colors = source_layers.color if attr.data_type == "BYTE_COLOR" else source_layers.float_color
+            source = source_colors.get(name)
+            values = [
+                _linear_color((loop.vert if attr.domain == "POINT" else loop)[source],
+                              attr.data_type == "BYTE_COLOR")
+                for face in bm.faces for loop in face.loops
+            ]
+            source_colors.remove(source)
+        layer = bm.loops.layers.float_color.new(name)
+        for i, loop in enumerate(loop for face in bm.faces for loop in face.loops):
+            loop[layer] = default if values is None else values[i]
+        bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
     else:
-        for name, default in DEFAULTS.items():
-            attr = mesh.color_attributes.get(name)
-            if attr is not None and attr.domain == "CORNER" and attr.data_type == "FLOAT_COLOR":
-                continue
-            values = np.tile(default, (len(mesh.loops), 1)).astype(np.float32)
-            if attr is not None:
-                source = np.empty((len(attr.data), 4), dtype=np.float32)
-                attr.data.foreach_get("color", source.ravel())
-                if attr.domain == "POINT":
-                    indices = np.empty(len(mesh.loops), dtype=np.int32)
-                    mesh.loops.foreach_get("vertex_index", indices)
-                    source = source[indices]
-                values = source
-                mesh.color_attributes.remove(attr)
-            attr = mesh.color_attributes.new(name, "FLOAT_COLOR", "CORNER")
-            attr.data.foreach_set("color", values.ravel())
-            changed = True
-        if changed:
-            mesh.update()
-    if changed and (not active_name or active_name in DEFAULTS):
+        if attr is not None and attr.domain == "CORNER" and attr.data_type == "FLOAT_COLOR":
+            return False
+        values = np.tile(default, (len(mesh.loops), 1)).astype(np.float32)
+        if attr is not None:
+            source = np.empty((len(attr.data), 4), dtype=np.float32)
+            attr.data.foreach_get("color", source.ravel())
+            if attr.domain == "POINT":
+                indices = np.empty(len(mesh.loops), dtype=np.int32)
+                mesh.loops.foreach_get("vertex_index", indices)
+                source = source[indices]
+            values = source
+            mesh.color_attributes.remove(attr)
+        attr = mesh.color_attributes.new(name, "FLOAT_COLOR", "CORNER")
+        attr.data.foreach_set("color", values.ravel())
+        mesh.update()
+    if not active_name or active_name in DEFAULTS:
         mesh.color_attributes.active_color_name = active_name or "COLOR_0"
+    return True
+
+
+def ensure_layers(mesh):
+    """Preserve authored linear values; use float corners to avoid gamma/byte index quantization."""
+    changed = False
+    for name in DEFAULTS:
+        changed = ensure_layer(mesh, name) or changed
     return changed
 
 
@@ -196,43 +198,50 @@ def palette_position(index, size, offset):
     return red
 
 
-def write_colors(mesh, names, values, channel="RGBA", selected=False, material_indices=None):
+def write_colors(mesh, names, values, channel="RGBA", selected=False, material_indices=None,
+                 intensity=1.0, operation="SET"):
     """Write face corners only, including live Edit Mode data."""
+    if not math.isfinite(intensity) or not 0.0 <= intensity <= 1.0:
+        raise VertexColorError("Paint Intensity must be finite and in [0,1]")
+    if operation not in {"SET", "INVERT"}:
+        raise VertexColorError(f"unknown vertex color operation '{operation}'")
     component = None if channel == "RGBA" else "RGBA".index(channel)
+
+    def update(current, name):
+        result = list(current)
+        components = range(4) if component is None else (component,)
+        target = values[name]
+        for i in components:
+            goal = 1.0 - result[i] if operation == "INVERT" else float(target[i])
+            result[i] += (goal - result[i]) * intensity
+        return result
+
     if mesh.is_editmode:
         bm = bmesh.from_edit_mesh(mesh)
         faces = [face for face in bm.faces if (not selected or (face.select and not face.hide))
                  and (material_indices is None or face.material_index in material_indices)]
         if not faces:
             raise VertexColorError("No matching faces; select faces using the active material")
-        ensure_layers(mesh)
+        for name in names:
+            ensure_layer(mesh, name)
         for name in names:
             layer = bm.loops.layers.float_color.get(name)
             for face in faces:
                 for loop in face.loops:
-                    value = list(loop[layer])
-                    if component is None:
-                        value = values[name]
-                    else:
-                        value[component] = values[name][component]
-                    loop[layer] = value
+                    loop[layer] = update(loop[layer], name)
         bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
     else:
         faces = [face for face in mesh.polygons if (not selected or (face.select and not face.hide))
                  and (material_indices is None or face.material_index in material_indices)]
         if not faces:
             raise VertexColorError("No matching faces; select faces using the active material")
-        ensure_layers(mesh)
+        for name in names:
+            ensure_layer(mesh, name)
         for name in names:
             attr = mesh.color_attributes[name]
             for face in faces:
                 for i in face.loop_indices:
-                    value = list(attr.data[i].color)
-                    if component is None:
-                        value = values[name]
-                    else:
-                        value[component] = values[name][component]
-                    attr.data[i].color = value
+                    attr.data[i].color = update(attr.data[i].color, name)
         mesh.update()
     return len(faces)
 
@@ -247,6 +256,9 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
         ("INITIALIZE", "Initialize Layers", "Create missing ADM layers and preserve existing values"),
         ("RESET", "Reset Defaults", "COLOR_0=(0,1,1,0), COLOR_1=(0,0,0,0)"),
         ("APPLY", "Apply Channels", "Write the selected linear control channels"),
+        ("FILL", "Fill", "Set the selected channel(s) to 1"),
+        ("CLEAR", "Clear", "Set the selected channel(s) to 0"),
+        ("INVERT", "Invert", "Invert the selected channel(s)"),
         ("TINT", "Apply Palette to R", "Write the palette position to R; keep G, B and A unchanged"),
         ("ACTIVE", "Make Active", "Activate the selected layer for Blender color painting"),
     ], default="INITIALIZE")
@@ -265,7 +277,8 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
         selected = wm.vertex_color_scope == "SELECTED"
         slots = {i for i, slot in enumerate(obj.material_slots) if mat is not None and slot.material == mat}
         try:
-            if wm.vertex_color_scope == "MATERIAL" and self.action in {"RESET", "APPLY", "TINT"} and not slots:
+            if wm.vertex_color_scope == "MATERIAL" \
+                    and self.action in {"RESET", "APPLY", "FILL", "CLEAR", "INVERT", "TINT"} and not slots:
                 raise VertexColorError("This Material Faces needs an active material")
             validate_layers(obj.data)
             if self.action in {"INITIALIZE", "ACTIVE"}:
@@ -277,14 +290,24 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
                 size = len(palette_colors(mat.adm.vertex_tint_palette))
                 red = palette_position(mat.adm.active_tint_entry, size, mat.adm.tint_offset)
                 count = write_colors(obj.data, ("COLOR_0",), {"COLOR_0": (red, 1.0, 1.0, 0.0)},
-                                     "R", selected, slots)
+                                     "R", selected, slots, wm.vertex_color_intensity)
                 name = "COLOR_0"
             else:
                 names = tuple(DEFAULTS) if self.action == "RESET" else (name,)
-                values = DEFAULTS if self.action == "RESET" else {name: tuple(wm.vertex_color_values)}
-                count = write_colors(obj.data, names, values,
-                                     "RGBA" if self.action == "RESET" else wm.vertex_color_channel,
-                                     selected, slots if wm.vertex_color_scope == "MATERIAL" else None)
+                channel = "RGBA" if self.action == "RESET" else wm.vertex_color_channel
+                intensity = 1.0 if self.action == "RESET" else wm.vertex_color_intensity
+                operation = "INVERT" if self.action == "INVERT" else "SET"
+                if self.action == "RESET":
+                    values = DEFAULTS
+                elif self.action == "FILL":
+                    values = {name: (1.0, 1.0, 1.0, 1.0)}
+                elif self.action in {"CLEAR", "INVERT"}:
+                    values = {name: (0.0, 0.0, 0.0, 0.0)}
+                else:
+                    values = {name: tuple(wm.vertex_color_values)}
+                count = write_colors(
+                    obj.data, names, values, channel, selected,
+                    slots if wm.vertex_color_scope == "MATERIAL" else None, intensity, operation)
             if self.action != "ACTIVE" and mat is not None and not mat.adm.vertex_controls_enabled:
                 mat.adm.vertex_controls_enabled = True
             sync_control_meshes(explicit=(obj,))
@@ -295,6 +318,36 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
         except VertexColorError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class ADM_OT_initialize_shader_masks(bpy.types.Operator):
+    """Create the active ADM shader's COLOR_1 layer with neutral mask values."""
+    bl_idname = "adm.initialize_shader_masks"
+    bl_label = "Initialize Shader Masks"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        mat = obj.active_material if obj is not None and obj.type == "MESH" else None
+        return obj is not None and obj.type == "MESH" and obj.adm.adm_type != "COLLIDER" \
+            and obj.data.is_editable and in_adm_model(obj) and mat is not None \
+            and mat.adm.shader_version == K.SHADER_PROFILE_V2 and mat.adm.shader in K.COLOR1_CONTRACTS
+
+    def execute(self, context):
+        obj = context.object
+        try:
+            validate_layers(obj.data)
+            ensure_layer(obj.data, "COLOR_1")
+            obj.data.color_attributes.active_color_name = "COLOR_1"
+            if obj.active_material is not None:
+                from .materials import refresh_shader_preview
+                refresh_shader_preview(obj.active_material)
+        except VertexColorError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, "COLOR_1 shader masks initialized without changing existing values")
         return {"FINISHED"}
 
 
@@ -316,7 +369,7 @@ class ADM_OT_tint_palette_refresh(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (ADM_OT_vertex_colors, ADM_OT_tint_palette_refresh)
+CLASSES = (ADM_OT_vertex_colors, ADM_OT_initialize_shader_masks, ADM_OT_tint_palette_refresh)
 
 
 def register():

@@ -155,6 +155,29 @@ def build_invalid_fixtures(records, output_root):
            [(1, b"DATA", b"A", True), (2, b"DATA", b"B", True)])
 
 
+def build_semantic_invalid_fixtures(records, output_root):
+    """Create container-valid files that violate the versioned COLOR_1 contract."""
+    magic, source_doc, source_chunks, _source_path = records[("profiles", "shader_masks_v2")]
+    output_dir = output_root / "semantic_invalid"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    missing_required = copy.deepcopy(source_doc)
+    missing_required["extensionsRequired"] = []
+    create(output_dir / "shader_masks_v2_missing_required_extension.adm", magic,
+           missing_required, source_chunks)
+
+    invalid_strength = copy.deepcopy(source_doc)
+    invalid_strength["materials"][0]["shaderParameters"]["color1_r_strength"] = 1.5
+    create(output_dir / "shader_masks_v2_strength_out_of_range.adm", magic,
+           invalid_strength, source_chunks)
+
+    invalid_color = bytearray(source_chunks[0][2])
+    struct.pack_into("<f", invalid_color, 152, 1.25)
+    invalid_chunks = [(source_chunks[0][0], source_chunks[0][1], bytes(invalid_color),
+                       source_chunks[0][3])]
+    create(output_dir / "shader_masks_v2_color_out_of_range.adm", magic, source_doc, invalid_chunks)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=FIXTURE_DIR,
@@ -164,6 +187,7 @@ def main(argv=None):
     output_root.mkdir(parents=True, exist_ok=True)
     records = build_valid_fixtures(FIXTURE_DIR, output_root)
     build_invalid_fixtures(records, output_root)
+    build_semantic_invalid_fixtures(records, output_root)
     copy_expectations(FIXTURE_DIR, output_root)
     print(f"Built fixtures under {output_root}")
 

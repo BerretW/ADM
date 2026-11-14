@@ -569,10 +569,24 @@ class ADM_PT_object(_Side, bpy.types.Panel):
 
 def draw_vertex_colors(layout, context, show_palette_picker=True):
     from .vertex_colors import DEFAULTS, VertexColorError, validate_layers
+    from ..core import constants as K
     obj = context.object
     wm = context.window_manager.adm
-    layout.label(text="R: Tint  G: Normal  B: Reflectivity  A: Wetness")
-    layout.label(text="COLOR_1 is reserved; no shading effect", icon="INFO")
+    mat = obj.active_material
+    if mat is not None:
+        layout.prop(mat.adm, "shader", text="Shader")
+        if mat.adm.shader not in ("CUSTOM", "INTERACTIVE"):
+            layout.prop(mat.adm, "shader_version", text="Profile Version")
+        key = mat.adm.shader_key()
+        layout.label(text=f"Active profile: {key[0]}@{key[1]}", icon="NODE_MATERIAL")
+    if wm.vertex_color_layer == "COLOR_0":
+        layout.label(text="R: Tint  G: Normal  B: Reflectivity  A: Wetness")
+    elif mat is not None and mat.adm.shader_version == K.SHADER_PROFILE_V2 \
+            and mat.adm.shader in K.COLOR1_CONTRACTS:
+        for channel, effect in zip(K.SHADER_MASK_CHANNELS, K.COLOR1_CONTRACTS[mat.adm.shader]):
+            layout.label(text=f"{channel}: {effect['label']}")
+    else:
+        layout.label(text="COLOR_1 is reserved for this shader version", icon="INFO")
     try:
         validate_layers(obj.data)
     except VertexColorError as exc:
@@ -583,21 +597,29 @@ def draw_vertex_colors(layout, context, show_palette_picker=True):
         layout.label(text=f"{name}: {attr.domain} / {attr.data_type}" if attr else f"{name}: missing",
                      icon="CHECKMARK" if attr else "ERROR")
     layout.operator("adm.vertex_colors", text="Initialize Layers", icon="ADD").action = "INITIALIZE"
+    if mat is not None and mat.adm.shader_version == K.SHADER_PROFILE_V2 \
+            and mat.adm.shader in K.COLOR1_CONTRACTS:
+        layout.operator("adm.initialize_shader_masks", icon="ADD")
     layout.prop(wm, "vertex_color_scope")
     layout.operator("adm.vertex_colors", text="Reset Defaults", icon="LOOP_BACK").action = "RESET"
     row = layout.row(align=True)
     row.prop(wm, "vertex_color_layer", text="")
     row.operator("adm.vertex_colors", text="Make Active", icon="COLOR").action = "ACTIVE"
     layout.prop(wm, "vertex_color_channel")
+    layout.prop(wm, "vertex_color_intensity")
     row = layout.row(align=True)
     for i, channel in enumerate("RGBA"):
         sub = row.row()
         sub.enabled = wm.vertex_color_channel in {"RGBA", channel}
         sub.prop(wm, "vertex_color_values", index=i, text=channel)
+    row = layout.row(align=True)
+    row.operator("adm.vertex_colors", text="Fill", icon="ADD").action = "FILL"
+    row.operator("adm.vertex_colors", text="Clear", icon="REMOVE").action = "CLEAR"
+    row.operator("adm.vertex_colors", text="Invert", icon="ARROW_LEFTRIGHT").action = "INVERT"
     layout.operator("adm.vertex_colors", text="Apply Channels", icon="BRUSH_DATA").action = "APPLY"
+    layout.prop(wm, "vertex_color_preview")
     if obj.data.users > 1:
         layout.label(text="Shared mesh: edits affect all its users", icon="ERROR")
-    mat = obj.active_material
     if mat is None:
         layout.label(text="Assign a material to enable vertex-control preview", icon="INFO")
         return
@@ -1111,7 +1133,9 @@ def draw_material(lay, context, mat):
         col.label(text="Mask alpha and two-sided rendering are required", icon="INFO")
     else:
         col.prop(p, "shader")
-    if p.shader == "LAYERED":
+    if p.shader not in ("CUSTOM", "INTERACTIVE"):
+        col.prop(p, "shader_version")
+    if p.shader == "LAYERED" and p.shader_version == "1.0.0":
         col.label(text="Viewport: layered preview (ADM Preview nodes, not exported)", icon="INFO")
     elif p.shader == "EMISSIVE":
         col.label(text="Uses the portable PBR Emissive Factor and Texture", icon="INFO")
@@ -1144,7 +1168,7 @@ def draw_material(lay, context, mat):
         col.label(text="Shader materials need an Animation ID", icon="ERROR")
 
     registry = scene_shader_registry(context.scene)
-    if p.shader == "LAYERED":
+    if p.shader == "LAYERED" and p.shader_version == "1.0.0":
         r = col.row(align=True)
         r.prop(p, "layer_factor")
         r.operator("adm.material_key_param", icon="KEYFRAME", text="").name = "layer_factor"
@@ -1163,7 +1187,8 @@ def draw_material(lay, context, mat):
                 if rec.use_normal_factor:
                     b.prop(rec, "normal_factor")
         box.operator("adm.material_layers_from_pbr", icon="IMPORT")
-    elif p.shader == "CUSTOM" or p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
+    elif p.shader == "CUSTOM" or p.shader_version == K.SHADER_PROFILE_V2 \
+            or p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
         params = registry.get(p.shader_key())
         if params is None:
             if p.shader == "CUSTOM":

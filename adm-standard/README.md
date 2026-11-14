@@ -10,6 +10,10 @@ This kit contains the frozen normative specification for the **native, chunk-str
 - `fixtures/valid/`: binary reference examples and their readable JSON manifests, including the
   two-display `interactive_terminal.adm`.
 - `fixtures/invalid/`: intentionally corrupted/invalid container and interactive-surface files.
+- `fixtures/semantic_invalid/`: container-valid shader-mask assets that violate the required
+  vertex-control extension, strength bounds or normalized channel range.
+- `fixtures/expectations/shader_masks_v2.json`: independent `COLOR_1` vectors and channel maps for
+  the 20 versioned shader profiles.
 - `fixtures/expectations/interactive_terminal.expected.json`: explicit surface, hit-test and runtime
   color/alpha reference values.
 - `tools/container.py`: standalone Python standard-library-only writer, container checker and minimal seek/range reader.
@@ -19,6 +23,8 @@ This kit contains the frozen normative specification for the **native, chunk-str
 - `tools/test_interactive_surfaces.py`: independent fixture and numerical UV/color/alpha checks.
 - `tools/test_independent_conformance.py`: bounded-input, strict-JSON and cross-reader checks for
   published fixtures; it does not certify full semantic conformance.
+- `tools/test_shader_vertex_masks.py`: independent numerical vectors and v2 profile-channel checks;
+  it does not import Blender's implementation.
 - `tools/run_tests.py`: reproducible tests for the supplied files.
 - `TEST-RESULTS.md`: executed tests and known gaps.
 - `CHANGELOG.md`: publication history and final 1.0 release record.
@@ -29,6 +35,7 @@ This kit contains the frozen normative specification for the **native, chunk-str
 python3 tools/run_tests.py
 python3 tools/test_profiles.py
 python3 tools/test_independent_conformance.py
+python3 tools/test_shader_vertex_masks.py
 python3 tools/container.py fixtures/valid/triangle.adm
 ```
 
@@ -39,9 +46,10 @@ python3 tools/container.py fixtures/valid/triangle.adm
 - A file starts with an indexable, noncompressed JSON manifest and a directory of independently accessible chunks.
 - Small viewers can implement basic PBR and skip optional shader technology.
 - Every advanced material contains explicitly serialized portable PBR fallback fields.
-- The machine-readable shader registry contains the Core 20 and the interactive surface profile.
-  Blender renders Core 20 previews (skin, fur and fabric are approximations) and the authored static
-  PBR fallback for interactive surfaces; custom shaders report PBR fallback. See `SPEC_GAPS.md`.
+- The machine-readable shader registry preserves Core 20 `1.0.0` profiles, adds 20 compatible
+  `2.0.0` `COLOR_1` profiles and retains the unchanged interactive surface profile. Blender previews
+  the registered mask operations; skin, fur and fabric remain approximations. Interactive surfaces
+  preview their authored static PBR fallback; custom shaders report PBR fallback. See `SPEC_GAPS.md`.
 - `AMA0` animation libraries store searchable clip descriptions and may animate bones, morph targets, expressions and numeric shader/PBR fields.
 - Humanoid bone roles follow VRM 1.0; ADM-REF-NORM-1 and the ADM-IK-1 two-bone solver are now specified, but independent conformance work remains.
 - Vehicle/weapon roles are defined in the **normative annexes** `profiles/vehicle.car.v1.md` and `profiles/weapon.firearm.v1.md`. Independent profile certification is a separate activity. No gameplay behavior is encoded.
@@ -57,7 +65,8 @@ The specification governs the data format; engine scheduling, gameplay behavior,
 
 - `profiles/vehicle.car.v1.md` — normative role, axle, wheel, steering and hinge contracts.
 - `profiles/weapon.firearm.v1.md` — receiver, muzzle, modular accessory mounts and visual component animation.
-- `fixtures/profiles/*.adm` — structural/metadata example assets; intentionally may contain no renderable mesh.
+- `fixtures/profiles/*.adm` — structural/metadata example assets, including a renderable mesh that
+  samples all five `COLOR_1` mask levels; mechanical examples may contain no renderable mesh.
 - `fixtures/profiles/*.adm_anim` — mechanical component animation examples with real F32 samples.
 - `tools/test_profiles.py` — structural validation and numerical smoke checks (not a full reference renderer/evaluator).
 

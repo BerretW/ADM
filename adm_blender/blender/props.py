@@ -295,7 +295,10 @@ class ADMShaderDef(PropertyGroup):
 
 def _param_owner_refresh(self):
     mat = self.id_data
-    if isinstance(mat, bpy.types.Material) and mat.adm.shader not in ("CORE", "LAYERED", "CUSTOM"):
+    if isinstance(mat, bpy.types.Material) and (
+        mat.adm.shader not in ("CORE", "LAYERED", "CUSTOM")
+        or mat.adm.shader_version == K.SHADER_PROFILE_V2
+    ):
         from .materials import refresh_shader_preview
         refresh_shader_preview(mat)
 
@@ -362,10 +365,22 @@ def _shader_update(self, context):
         sync_official_shader_params(self.id_data)
         if self.shader == "FOLIAGE":
             self.id_data.use_backface_culling = False
-    elif self.shader not in ("CUSTOM", "LAYERED"):
+    elif self.shader not in ("CUSTOM", "LAYERED") or self.shader_version == K.SHADER_PROFILE_V2:
         from .materials import sync_official_shader_params
         sync_official_shader_params(self.id_data)
+    if self.shader == "INTERACTIVE":
+        self.shader_version = "1.0.0"
     from .materials import refresh_shader_preview
+    refresh_shader_preview(self.id_data)
+
+
+def _shader_version_update(self, context):
+    if self.shader == "INTERACTIVE" and self.shader_version != "1.0.0":
+        self.shader_version = "1.0.0"
+        return
+    from .materials import sync_official_shader_params, refresh_shader_preview
+    if self.shader != "CUSTOM":
+        sync_official_shader_params(self.id_data)
     refresh_shader_preview(self.id_data)
 
 
@@ -443,6 +458,10 @@ class ADMMaterialProps(PropertyGroup):
     occlusion_strength: FloatProperty(name="Occlusion Strength", default=1.0, min=0.0, max=1.0)
     shader: EnumProperty(name="Shader", items=SHADER_KINDS, default="CORE", update=_shader_update,
                          description="ADM shader of this material; switching rebuilds the viewport preview")
+    shader_version: EnumProperty(name="Profile Version", items=[
+        ("1.0.0", "1.0.0 (legacy)", "Preserve the original profile behavior"),
+        ("2.0.0", "2.0.0 (COLOR_1)", "Enable this profile's COLOR_1 mask contract"),
+    ], default="1.0.0", update=_shader_version_update)
     custom_shader: StringProperty(name="Custom Shader", description="id@version of a scene shader definition",
                                   update=_custom_shader_update)
     animation_id: StringProperty(name="Animation ID",
@@ -481,7 +500,9 @@ class ADMMaterialProps(PropertyGroup):
         if self.shader == "CUSTOM":
             sid, _, ver = self.custom_shader.partition("@")
             return (sid, ver)
-        return K.OFFICIAL_SHADER_KEYS.get(self.shader, K.SHADER_CORE)
+        shader_id = K.OFFICIAL_SHADER_IDS.get(self.shader, K.SHADER_CORE[0])
+        version = "1.0.0" if self.shader == "INTERACTIVE" else self.shader_version
+        return (shader_id, version)
 
 
 # --- animation ---------------------------------------------------------------------------------------
@@ -568,11 +589,19 @@ class ADMRoleName(PropertyGroup):
     name: StringProperty()
 
 
+def _vertex_color_preview_update(self, context):
+    obj = context.object if context is not None else None
+    mat = obj.active_material if obj is not None and obj.type == "MESH" else None
+    if mat is not None:
+        from .materials import refresh_shader_preview
+        refresh_shader_preview(mat)
+
+
 class ADMWindowProps(PropertyGroup):
     vertex_color_layer: EnumProperty(name="Layer", items=[
         ("COLOR_0", "COLOR_0", "Tint / normal strength / reflectivity / wetness"),
-        ("COLOR_1", "COLOR_1", "Reserved channels; no shading effect in current official profiles"),
-    ])
+        ("COLOR_1", "COLOR_1", "Shader-specific masks for the selected @2.0.0 profile"),
+    ], update=_vertex_color_preview_update)
     vertex_color_scope: EnumProperty(name="Faces", default="ALL", items=[
         ("ALL", "All Faces", "Modify the whole active mesh"),
         ("SELECTED", "Selected Faces", "Modify selected, visible faces, including live Edit Mode selection"),
@@ -582,9 +611,12 @@ class ADMWindowProps(PropertyGroup):
     vertex_color_channel: EnumProperty(name="Channel", items=[
         ("RGBA", "All Channels", "Write all four channels"),
         *[(c, c, f"Write only {c}; preserve the other channels") for c in "RGBA"],
-    ])
+    ], update=_vertex_color_preview_update)
     vertex_color_values: FloatVectorProperty(
         name="Linear Values", size=4, min=0.0, max=1.0, default=(0.0, 1.0, 1.0, 0.0))
+    vertex_color_intensity: FloatProperty(name="Paint Intensity", default=1.0, min=0.0, max=1.0)
+    vertex_color_preview: BoolProperty(name="Preview Mask", default=False,
+                                       update=_vertex_color_preview_update)
     report: CollectionProperty(type=ADMReportItem)
     active_report: IntProperty()
     report_title: StringProperty()

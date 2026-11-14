@@ -416,7 +416,24 @@ def _rock(g):
 def _terrain(g):
     b = g.bsdf()
     mask = g.tex("blend_mask")
-    if mask is not None:
+    if g.a.shader_version == K.SHADER_PROFILE_V2:
+        weights = list(_vertex_color(g, "COLOR_1"))
+        weights = [
+            g.math("MULTIPLY", weights[i], g.num(f"color1_{channel.lower()}_strength"), clamp=True)
+            for i, channel in enumerate(K.SHADER_MASK_CHANNELS)
+        ]
+        if mask is not None:
+            rgb = g.new("ShaderNodeSeparateColor", "Texture Mask RGB")
+            g.link(mask.outputs["Color"], rgb.inputs[0])
+            texels = (rgb.outputs[0], rgb.outputs[1], rgb.outputs[2], mask.outputs["Alpha"])
+            weights = [g.math("MULTIPLY", weights[i], texels[i], clamp=True) for i in range(4)]
+        total = g.math("ADD", g.math("ADD", weights[0], weights[1]),
+                       g.math("ADD", weights[2], weights[3]))
+        safe = g.math("MAXIMUM", total, 1e-8)
+        zero = g.math("LESS_THAN", total, 1e-8)
+        w = [g.math("DIVIDE", c, safe) for c in weights]
+        w[0] = g.math("ADD", w[0], zero)
+    elif mask is not None:
         rgb = g.new("ShaderNodeSeparateColor", "Mask RGB")
         g.link(mask.outputs["Color"], rgb.inputs[0])
         ch = [g.math("MAXIMUM", s, 0.0) for s in (rgb.outputs[0], rgb.outputs[1], rgb.outputs[2],
@@ -586,17 +603,17 @@ def _foliage(g):
     return b
 
 
-def _vertex_color(g):
-    """Return COLOR_0 components, using the extension defaults when no mesh supplies the attribute."""
+def _vertex_color(g, name="COLOR_0"):
+    """Return a vertex color layer, using the profile default when it is absent."""
     has_attribute = any(
         obj.type == "MESH" and g.mat.name in obj.data.materials
-        and obj.data.color_attributes.get("COLOR_0") is not None
+        and obj.data.color_attributes.get(name) is not None
         for obj in bpy.data.objects
     )
     if not has_attribute:
-        return (0.0, 1.0, 1.0, 0.0)
-    node = g.new("ShaderNodeVertexColor", "COLOR_0", layer_name="COLOR_0")
-    separate = g.new("ShaderNodeSeparateColor", "COLOR_0 Channels")
+        return (0.0, 1.0, 1.0, 0.0) if name == "COLOR_0" else (0.0, 0.0, 0.0, 0.0)
+    node = g.new("ShaderNodeVertexColor", name, layer_name=name)
+    separate = g.new("ShaderNodeSeparateColor", f"{name} Channels")
     g.link(node.outputs["Color"], separate.inputs[0])
     return (*tuple(separate.outputs[name] for name in ("Red", "Green", "Blue")), node.outputs["Alpha"])
 
@@ -612,6 +629,79 @@ def _set_input(g, socket, value):
         g.nt.links.new(value, socket)
     else:
         socket.default_value = value
+
+
+def _apply_color1_masks(g, bsdf):
+    effects = K.COLOR1_CONTRACTS.get(g.a.shader)
+    if g.a.shader_version != K.SHADER_PROFILE_V2 or effects is None:
+        return bsdf
+    masks = _vertex_color(g, "COLOR_1")
+    for channel, effect in zip(K.SHADER_MASK_CHANNELS, effects):
+        index = K.SHADER_MASK_CHANNELS.index(channel)
+        mask = g.math(
+            "MULTIPLY", masks[index], g.num(f"color1_{channel.lower()}_strength"), clamp=True)
+        op = effect["op"]
+        if op == "layer":
+            continue
+        if op == "surface":
+            suffix = channel.lower()
+            color = g.vec(f"color1_{suffix}_color")
+            texture = g.tex(f"color1_{suffix}_texture")
+            if texture is not None:
+                color = g.vmath("MULTIPLY", color, texture.outputs["Color"])
+            base_color = _socket_source(g, bsdf.inputs["Base Color"])
+            g.link(g.mix("RGBA", base_color, color, mask), bsdf.inputs["Base Color"])
+            for socket_name, parameter in (
+                ("Metallic", f"color1_{suffix}_metallic"),
+                ("Roughness", f"color1_{suffix}_roughness"),
+            ):
+                current = _socket_source(g, bsdf.inputs[socket_name])
+                g.link(g.mix("FLOAT", current, g.num(parameter), mask), bsdf.inputs[socket_name])
+            if texture is not None:
+                current_alpha = _socket_source(g, bsdf.inputs["Alpha"])
+                overlay_alpha = g.math("MULTIPLY", current_alpha, texture.outputs["Alpha"])
+                g.link(g.mix("FLOAT", current_alpha, overlay_alpha, mask), bsdf.inputs["Alpha"])
+            normal_texture = g.tex(f"color1_{suffix}_normal")
+            if normal_texture is not None:
+                normal = g.normal_from_tex(normal_texture)
+                blended = g.mix("VECTOR", g.shading_normal(bsdf), normal, mask)
+                g.link(g.vmath("NORMALIZE", blended), bsdf.inputs["Normal"])
+        elif op == "factor":
+            socket = bsdf.inputs[effect["target"]]
+            current = _socket_source(g, socket)
+            g.link(g.mix("FLOAT", current, g.num(f"color1_{channel.lower()}_value"), mask), socket)
+        elif op == "multiply":
+            socket = bsdf.inputs[effect["target"]]
+            current = _socket_source(g, socket)
+            multiplier = g.mix("FLOAT", 1.0, g.num(f"color1_{channel.lower()}_value"), mask)
+            g.link(g.math("MULTIPLY", current, multiplier), socket)
+        elif op == "coverage":
+            socket = bsdf.inputs[effect["target"]]
+            current = _socket_source(g, socket)
+            g.link(g.math("MULTIPLY", current, mask), socket)
+        elif op == "color":
+            socket = bsdf.inputs[effect["target"]]
+            current = _socket_source(g, socket)
+            g.link(g.mix("RGBA", current, g.vec(f"color1_{channel.lower()}_color"), mask), socket)
+        elif op == "contrast":
+            socket = bsdf.inputs["Base Color"]
+            current = _socket_source(g, socket)
+            value = g.num(f"color1_{channel.lower()}_value")
+            factors = g.combine((value, value, value))
+            centered = g.vmath("SUBTRACT", current, (0.5, 0.5, 0.5))
+            scaled = g.vmath("MULTIPLY", centered, factors)
+            contrasted = g.vmath("ADD", scaled, (0.5, 0.5, 0.5))
+            contrasted = g.vmath(
+                "MINIMUM", g.vmath("MAXIMUM", contrasted, (0.0, 0.0, 0.0)), (1.0, 1.0, 1.0))
+            g.link(g.mix("RGBA", current, contrasted, mask), socket)
+        elif op == "normal":
+            texture = g.tex(f"color1_{channel.lower()}_normal")
+            if texture is not None:
+                current = g.shading_normal(bsdf)
+                normal = g.normal_from_tex(texture)
+                blended = g.mix("VECTOR", current, normal, mask)
+                g.link(g.vmath("NORMALIZE", blended), bsdf.inputs["Normal"])
+    return bsdf
 
 
 def _copy_principled(g, source, name):
@@ -746,11 +836,30 @@ BUILDERS = {
 
 def build(mat):
     """Build the preview for ``mat``'s official profile; returns the preview output or None."""
-    fn = BUILDERS.get(mat.adm.shader)
-    if mat.node_tree is None or (fn is None and not mat.adm.vertex_controls_enabled):
+    a = mat.adm
+    version2 = a.shader_version == K.SHADER_PROFILE_V2 and a.shader != "INTERACTIVE"
+    window = bpy.context.window_manager.adm if bpy.context.window_manager else None
+    mask_preview = window is not None and window.vertex_color_preview
+    fn = BUILDERS.get(a.shader)
+    if version2 and a.shader in ("LAYERED", "TERRAIN_4"):
+        fn = _terrain
+    if mat.node_tree is None or (fn is None and not a.vertex_controls_enabled and not version2 and not mask_preview):
         return None
     g = _Graph(mat)
+    if mask_preview:
+        layer = window.vertex_color_layer
+        values = _vertex_color(g, layer)
+        if window.vertex_color_channel == "RGBA":
+            color = g.combine(values[:3])
+        else:
+            channel = values["RGBA".index(window.vertex_color_channel)]
+            color = g.combine((channel, channel, channel))
+        emission = g.new("ShaderNodeEmission", "Mask Preview")
+        g.link(color, emission.inputs["Color"])
+        return g.output(emission)
     bsdf = fn(g) if fn is not None else g.bsdf()
+    if version2:
+        bsdf = _apply_color1_masks(g, bsdf)
     bsdf = _apply_vertex_controls(g, bsdf)
     return g.output(bsdf)
 

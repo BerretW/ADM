@@ -87,8 +87,8 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
                                  description="Store images inside the ADM. When disabled, write safe relative "
                                              "references and copy images under textures/")
     vertex_controls: BoolProperty(name="ADM Vertex Controls", default=False,
-                                  description="Use ADM_vertex_control_v1 semantics for COLOR_0; COLOR_1 is "
-                                              "reserved with no shading effect for Core 20 profiles")
+                                  description="Use ADM_vertex_control_v1 semantics for COLOR_0 and COLOR_1; "
+                                              "required to export authored COLOR_1 masks for 2.0.0 profiles")
     image_format: EnumProperty(name="Images", default="PNG", items=[
         ("PNG", "PNG", "Embed every texture as PNG; JPEG, DDS, KTX2, TGA, EXR… sources are converted. "
                        "Readable by every ADM reader"),
@@ -116,8 +116,11 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
                        else context.selected_objects if self.scope == "SELECTED" else context.view_layer.objects)
             self.vertex_controls = any(
                 obj.type == "MESH" and obj.adm.adm_type != "COLLIDER"
-                and any(slot.material is not None and slot.material.adm.vertex_controls_enabled
-                        for slot in obj.material_slots)
+                and (
+                    obj.data.color_attributes.get("COLOR_1") is not None
+                    or any(slot.material is not None and slot.material.adm.vertex_controls_enabled
+                           for slot in obj.material_slots)
+                )
                 for obj in objects
             )
         return super().invoke(context, event)

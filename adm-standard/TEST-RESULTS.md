@@ -5,6 +5,25 @@ They document the bundled reference implementation only; they are not independen
 certification, and publication of ADM 1.0 does not imply that every §25/§30 certification case has
 been executed.
 
+## Blender Tools 1.18.0 / `COLOR_1` v2 — local verification
+
+- CI-equivalent Python suite: **105 passed, 1 skipped**. The Windows symlink-permission test remains
+  skipped by the environment. The standard kit's container, interactive-surface, mechanical-profile,
+  independent-conformance and shader-mask tests all passed; the shader registry check covers 41
+  exact-version profiles.
+- Fixture regeneration and reproducibility: **PASS**. The independent v2 shader vectors cover
+  profile channel maps, overlays, scalar/color/coverage/contrast, normals, four-layer weights and
+  `COLOR_1`-then-`COLOR_0` ordering without importing Blender's implementation.
+- Blender 5.2.3: all ten CI integration scripts passed (`test_shader_preview.py`,
+  `test_shader_profiles.py`, `test_interactive_blender.py`, `test_workflow.py`,
+  `test_component_animation_blender.py`, `test_lod_generator.py`, `test_fixtures.py`,
+  `test_material_slots.py`, `test_texture_formats.py`, and `test_skeleton_blender.py`).
+  The material preview scene was saved as a non-empty 3,345,816-byte `.blend`.
+- `python -m compileall -q adm_blender` and `git diff --check`: **PASS**. Blender emitted
+  dependency-cycle warnings while building the material scene; the test process exited successfully.
+- GitHub Actions was not run against this uncommitted worktree. The CI job pins Blender 5.2.4; local
+  Blender verification used 5.2.3. No remote CI or independent renderer certification is claimed.
+
 ## `ADM-HUMANOID-SOCKETS-1` / Blender Tools 1.14.0 — local verification
 
 - CI Python suite: **95 passed, 1 skipped** (the existing Windows symlink-permission case).

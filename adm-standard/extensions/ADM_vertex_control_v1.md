@@ -1,9 +1,11 @@
 # `ADM_vertex_control_v1`
 
-Version 1.1.0, incorporated by the final ADM 1.0 specification.
+Version 1.2.0, incorporated by the final ADM 1.0 specification.
 
 Version 1.1.0 allows tint palettes 1–5 texels high (1.0.0 required exactly one row). Only the first
 row is read, so every valid 1.0.0 file keeps its meaning; a 1.0.0 reader rejects taller palettes.
+Version 1.2.0 registers `COLOR_1` contracts for new shader profile versions. It does not change any
+`COLOR_0` rule or the reserved `COLOR_1` meaning of a `1.0.0` shader profile.
 
 ## Declaration and compatibility
 
@@ -165,9 +167,11 @@ infer effects from textures, similarly named parameters, or another shader's `CO
 | `adm.nature.water@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
 | `adm.surface.fabric@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
 
-These neutral contracts close the Core 20 channel mapping without inventing behavior from existing
-shader parameters. A profile not listed above has no defined `COLOR_1` behavior; a reader MUST report
-that unsupported behavior rather than guess.
+These neutral contracts preserve the original Core 20 `1.0.0` meanings. The corresponding `2.0.0`
+profiles define active `COLOR_1` masks in
+[ADM_shader_vertex_masks_v2.md](../shaders/ADM_shader_vertex_masks_v2.md). The exact shader ID and
+version select that contract; readers MUST NOT infer effects from another version or profile.
+`adm.surface.interactive@1.0.0` remains unchanged and has no `COLOR_1` behavior.
 
 ## Blender reference implementation status
 
@@ -183,5 +187,7 @@ nodes apply the tint palette, normal-strength, wetness-color, wetness-roughness 
 the preview mixes dielectric and metallic Principled lobes at the material metallic factor: the
 dielectric lobe receives an IOR derived from the exact effective scalar F0, while the metallic lobe
 uses the exact effective RGB F0 as its base color. Blender Cycles bake tests verify both node paths.
-`COLOR_1` remains transport-only, and the bake tests do not establish interoperability with an
-independent renderer. These limitations are not full renderer or extension conformance.
+For registered `2.0.0` profiles, preview nodes evaluate the versioned `COLOR_1` operations and the
+authoring panel exposes shader-aware mask names and channel painting. This Blender implementation
+does not establish interoperability with an independent renderer; portable conformance is defined
+by the shader contracts and independent fixtures, not by Blender node graphs.

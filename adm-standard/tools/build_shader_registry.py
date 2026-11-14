@@ -13,10 +13,11 @@ contracts = {
 }
 for key in K.OFFICIAL_SHADERS:
     if key not in contracts:
-        contracts[key] = f"{key[0]}.v1.md"
+        contracts[key] = "ADM_shader_vertex_masks_v2.md" if key[1] == K.SHADER_PROFILE_V2 \
+            else f"{key[0]}.v1.md"
 
 data = {
-    "registryVersion": "1.0.0",
+    "registryVersion": "1.1.0",
     "shaders": [
         {"id": sid, "version": version, "parameters": K.OFFICIAL_SHADERS[(sid, version)],
          "contract": contracts[(sid, version)]}

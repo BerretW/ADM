@@ -102,6 +102,16 @@ def set_param(mat, name, value):
         v.value_f = value
 
 
+def preview_bsdf(mat, materials):
+    output = next(n for n in mat.node_tree.nodes
+                  if n.type == "OUTPUT_MATERIAL" and n.is_active_output)
+    surface = materials._from(output.inputs["Surface"])
+    if surface is not None and surface.node.type == "BSDF_PRINCIPLED":
+        return surface.node
+    return next((node for node in mat.node_tree.nodes
+                 if node.name == f"{materials.PREVIEW_PREFIX} BSDF"), None)
+
+
 def main():
     adm_blender.register()
     from adm_blender.core import constants as K
@@ -121,7 +131,11 @@ def main():
     tex = image("any_tex", lambda x, y: (0.5, 0.5, 1.0, 1.0))
 
     # 1. every builder with every parameter overridden ------------------------------------------
-    for kind in sorted(SP.BUILDERS):
+    profile_cases = sorted(
+        (key, kind) for key, kind in K.OFFICIAL_SHADER_KINDS.items()
+        if kind in SP.BUILDERS
+    )
+    for key, kind in profile_cases:
         mat = bpy.data.materials.new(f"prev_{kind}")
         plane.data.materials.clear()
         plane.data.materials.append(mat)
@@ -130,7 +144,7 @@ def main():
         fallback.inputs["Base Color"].default_value = (0.3, 0.6, 0.9, 1.0)
         mat.adm.vertex_controls_enabled = True
         mat.adm.shader = kind
-        key = mat.adm.shader_key()
+        mat.adm.shader_version = key[1]
         for prm in K.OFFICIAL_SHADERS[key]:
             if prm["type"] == "TEXTURE":
                 set_param(mat, prm["name"], tex)
@@ -142,7 +156,7 @@ def main():
         out = next((n for n in mat.node_tree.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
         check(out is not None and M.is_preview_node(out), f"{kind}: preview output is active")
         check(M.principled_of(mat) == fallback, f"{kind}: exporter still sees the fallback BSDF")
-        exporter = ModelExporter(bpy.context, root, ExportOptions())
+        exporter = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True))
         _data, report = exporter.export()
         check(report.ok, f"{kind}: export validates")
         if report.ok:
@@ -151,8 +165,68 @@ def main():
             names = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             check(set(m.get("shaderParameters", {})) == names, f"{kind}: all overridden parameters exported")
         mat.adm.vertex_controls_enabled = False
+        mat.adm.shader_version = "1.0.0"
         mat.adm.shader = "CORE"
         check(not any(M.is_preview_node(n) for n in mat.node_tree.nodes), f"{kind}: CORE removes preview nodes")
+
+    # 1b. Versioned COLOR_1 overlays compose before the universal COLOR_0 wetness operation.
+    mat = bpy.data.materials.new("color1_v2_surface")
+    plane.data.materials.clear()
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    mat.adm.shader_version = K.SHADER_PROFILE_V2
+    mat.adm.shader = "CORE"
+    fallback = M.principled_of(mat)
+    fallback.inputs["Base Color"].default_value = (0.2, 0.4, 0.6, 1.0)
+    fallback.inputs["Metallic"].default_value = 0.2
+    fallback.inputs["Roughness"].default_value = 0.7
+    fallback.inputs["Specular IOR Level"].default_value = 0.0
+    color1 = plane.data.color_attributes.get("COLOR_1")
+    if color1 is None:
+        color1 = plane.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+    color1.data.foreach_set("color", np.tile((0.5, 0.0, 0.0, 0.0), len(color1.data)).ravel())
+    set_param(mat, "color1_r_strength", 0.5)
+    set_param(mat, "color1_r_color", (0.8, 0.2, 0.1))
+    set_param(mat, "color1_r_metallic", 0.8)
+    set_param(mat, "color1_r_roughness", 0.9)
+    for channel in ("g", "b", "a"):
+        set_param(mat, f"color1_{channel}_strength", 0.0)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    check(bsdf is not None, "CORE@2.0.0: builds a profile preview")
+    if bsdf is not None:
+        base_color = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+        metallic = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        roughness = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(base_color[8, 8, :3], (0.35, 0.35, 0.475)),
+              f"COLOR_1.R surface overlay blends linear color ({base_color[8, 8, :3]})")
+        check(close(metallic[8, 8, :1], (0.35,)),
+              f"COLOR_1.R surface overlay blends metallic ({metallic[8, 8, 0]:.3f})")
+        check(close(roughness[8, 8, :1], (0.75,)),
+              f"COLOR_1.R surface overlay blends roughness ({roughness[8, 8, 0]:.3f})")
+        mat.adm.vertex_controls_enabled = True
+        color0 = plane.data.color_attributes.get("COLOR_0")
+        color0.data.foreach_set("color", np.tile((0.0, 1.0, 1.0, 0.5), len(color0.data)).ravel())
+        mat.adm.wetness_offset = 0.25
+        M.refresh_shader_preview(mat)
+        bsdf = preview_bsdf(mat, M)
+        color0_after = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+        check(close(color0_after[8, 8, :3], (0.310625, 0.310625, 0.4215625)),
+              f"COLOR_0 wetness follows the COLOR_1 overlay ({color0_after[8, 8, :3]})")
+        mat.adm.vertex_controls_enabled = False
+
+    # The explicit mask-preview mode works even when the profile's effect is disabled.
+    window = bpy.context.window_manager.adm
+    mat.adm.shader_version = "1.0.0"
+    window.vertex_color_layer = "COLOR_1"
+    window.vertex_color_channel = "R"
+    window.vertex_color_preview = True
+    M.refresh_shader_preview(mat)
+    output = next(n for n in mat.node_tree.nodes
+                  if n.type == "OUTPUT_MATERIAL" and n.is_active_output)
+    check(M.is_preview_node(output), "COLOR_1 preview works on a reserved 1.0.0 profile")
+    window.vertex_color_preview = False
+    M.refresh_shader_preview(mat)
 
     # Interactive: the object displays its authored fallback, not invented runtime content.
     mat = bpy.data.materials.new("interactive_static")
@@ -220,6 +294,25 @@ def main():
     check(close(alb[8, 3, :3], (0.1, 0.9, 0.1)), f"TERRAIN_4: one-hot G selects layer 1 ({alb[8, 3, :3]})")
     check(close(alb[8, 12, :3], (0.9, 0.1, 0.1)), f"TERRAIN_4: zero mask falls back to layer 0 ({alb[8, 12, :3]})")
 
+    # 3b. Terrain 2.0.0 uses normalized COLOR_1 weights and the zero-sum layer-0 fallback.
+    mat.adm.shader_version = K.SHADER_PROFILE_V2
+    M.sync_official_shader_params(mat, (K.SHADER_TERRAIN_4[0], K.SHADER_PROFILE_V2))
+    mat.adm.params["blend_mask"].use = False
+    mat.adm.params["blend_mask"].image = None
+    color1 = plane.data.color_attributes.get("COLOR_1")
+    if color1 is None:
+        color1 = plane.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+    color1.data.foreach_set("color", np.tile((0.0, 1.0, 0.0, 0.0), len(color1.data)).ravel())
+    M.refresh_shader_preview(mat)
+    alb = bake(plane, mat, "DIFFUSE")
+    check(close(alb[8, 8, :3], (0.1, 0.9, 0.1)),
+          f"TERRAIN_4@2.0.0: COLOR_1.G selects layer 1 ({alb[8, 8, :3]})")
+    color1.data.foreach_set("color", np.zeros((len(color1.data), 4), dtype=np.float32).ravel())
+    bpy.context.view_layer.update()
+    alb = bake(plane, mat, "DIFFUSE")
+    check(close(alb[8, 8, :3], (0.9, 0.1, 0.1)),
+          f"TERRAIN_4@2.0.0: zero weights fall back to layer 0 ({alb[8, 8, :3]})")
+
     # 4. Vertex controls are evaluated after the profile's material operations ---------------------
     mat = bpy.data.materials.new("vertex_controls")
     plane.data.materials.clear()
@@ -230,7 +323,9 @@ def main():
     fallback.inputs["Roughness"].default_value = 0.6
     fallback.inputs["Specular IOR Level"].default_value = 0.0
     mat.adm.shader = "BRICK"
-    color0 = plane.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
+    color0 = plane.data.color_attributes.get("COLOR_0")
+    if color0 is None:
+        color0 = plane.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
     color0.data.foreach_set("color", np.tile((0.0, 1.0, 1.0, 0.0), len(color0.data)).ravel())
     mat.adm.vertex_controls_enabled = True
     mat.adm.wetness_offset = 1.0

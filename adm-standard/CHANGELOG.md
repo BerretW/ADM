@@ -15,6 +15,19 @@
 - Recorded independent conformance testing, numerical corpus completion and certification as
   separate outstanding implementation activities in `SPEC_GAPS.md`.
 
+## Blender Tools 1.18.0 — `COLOR_1` v2 — 2026-11-14
+
+- Added 20 additive `@2.0.0` mask-enabled shader profiles while preserving every `@1.0.0` profile
+  and the interactive surface contract.
+- Finalized the normative `COLOR_1` operations and profile channel maps, with independent golden
+  vectors and valid/semantic-invalid fixtures.
+- Added Blender mask authoring/preview, version-aware round trips, and export protection against
+  silently dropping or reinterpreting authored v2 masks.
+- Added verified Blender download mirrors to CI and fixed export of `COLOR_1` when vertex controls
+  are disabled.
+- Local Python and Blender reference-implementation test evidence is recorded above; remote CI and
+  independent renderer certification remain outstanding.
+
 ## Blender Tools 1.15.0 — 2026-11-14
 
 - Publishes the frozen ADM 1.0 skeleton registry separately from non-normative animal profile

@@ -49,6 +49,15 @@ class IndependentConformanceTests(unittest.TestCase):
                 with self.assertRaises(reference.AdmError):
                     reference.verify(path)
 
+    def test_shader_mask_negative_fixtures_are_container_valid_but_semantically_invalid(self):
+        fixtures = sorted((FIXTURES / "semantic_invalid").glob("*.adm"))
+        self.assertEqual(len(fixtures), 3)
+        for path in fixtures:
+            with self.subTest(path=path.name):
+                reference.verify(path)
+                report = validate_file(path)
+                self.assertFalse(report.ok, report.format())
+
     def test_file_size_limit_is_checked_before_reading_contents(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "oversized.adm"
