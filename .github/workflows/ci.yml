@@ -39,3 +39,36 @@ jobs:
         run: python adm-standard/tools/build_fixtures.py
       - name: Check fixture reproducibility
         run: git diff --exit-code -- adm-standard/fixtures
+
+  blender:
+    name: Blender 5.2.4 headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BLENDER_VERSION: 5.2.4
+      BLENDER_SHA256: 2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download and verify Blender
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/blender.tar.xz"
+          curl --fail --location --retry 3 \
+            "https://download.blender.org/release/Blender5.2/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            --output "$archive"
+          printf '%s  %s\n' "$BLENDER_SHA256" "$archive" | sha256sum --check --strict
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/blender-${BLENDER_VERSION}-linux-x64" >> "$GITHUB_PATH"
+      - name: Run Blender headless integration tests
+        shell: bash
+        run: |
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_shader_preview.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_workflow.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_fixtures.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_material_slots.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_texture_formats.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_skeleton_blender.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/build_material_test_scene.py -- "$RUNNER_TEMP/ADM_Core20_Material_Test_Scene.blend"
+          test -s "$RUNNER_TEMP/ADM_Core20_Material_Test_Scene.blend"

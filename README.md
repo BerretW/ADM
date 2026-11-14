@@ -50,9 +50,11 @@ sidecars are optional; embedded textures remain the default.
 - All 20 official shader profiles have a Blender viewport preview. Their parameters drive the node tree,
   and the export keeps the portable PBR fallback. Skin, fur and fabric previews are approximations.
   Custom shaders use a reported PBR fallback, and certified renderer conformance is not claimed.
-- `ADM_vertex_control_v1` can transport `COLOR_0`/`COLOR_1`, palette references, and material control
-  values. Those values do not yet drive viewport shading or animation; per-shader `COLOR_1` semantics
-  are incomplete. See the `SPEC_GAP-SHADER-CORE20` entry before relying on them.
+- `ADM_vertex_control_v1` transports `COLOR_0`/`COLOR_1`, palette references, and material control
+  values. `COLOR_0` drives the Blender preview and its four parameters can be animated. For all Core 20
+  profiles, `COLOR_1` is explicitly reserved, has no shading effect, and is preserved for round-trip
+  editing. The F0 graph has Blender bake coverage, but independent-renderer conformance is not claimed.
+  See the `SPEC_GAP-SHADER-CORE20` entry before relying on renderer interoperability.
 - External-image and per-triangle physical-surface round trips have Blender workflow coverage, but
   security-edge cases and independent-reader interoperability remain open.
 - Vehicle/weapon profile names remain provisional. Physics, damage and other gameplay behavior
@@ -84,10 +86,16 @@ Run Blender round trips separately:
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_skeleton_blender.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_material_slots.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_texture_formats.py
+& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\build_material_test_scene.py -- .\dist\ADM_Core20_Material_Test_Scene.blend
 ```
 
+The last command builds a labelled 20-swatch viewport scene from the registered shader profiles,
+with deterministic textures, vertex controls and `COLOR_1` test attributes.
+
 The [CI workflow](.github/workflows/ci.yml) runs core/reference tests and verifies fixture regeneration
-on Windows and Linux. It does not install Blender or certify numerical rendering/IK conformance.
+on Windows and Linux. A separate Ubuntu job downloads Blender 5.2.4, verifies its pinned SHA-256, and
+runs the headless Blender integration scripts. This does not certify independent renderer/IK
+conformance.
 
 ## Publishing
 

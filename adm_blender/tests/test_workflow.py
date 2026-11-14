@@ -65,6 +65,29 @@ def string_attr_value(item):
     return value.decode("utf-8") if isinstance(value, bytes) else value
 
 
+def test_material_interpolation():
+    import numpy as np
+    from bpy_extras import anim_utils
+
+    from adm_blender.blender.import_anim import _fill
+
+    results = {}
+    for mode in ("STEP", "LINEAR", "CUBICSPLINE"):
+        action = bpy.data.actions.new(f"interpolation_{mode}")
+        slot = action.slots.new(id_type="MATERIAL", name=f"interpolation_{mode}")
+        channelbag = anim_utils.action_ensure_channelbag_for_slot(action, slot)
+        curve = channelbag.fcurves.new(data_path="adm.wetness_offset", index=0)
+        tangents = np.array([1.0, 1.0]) if mode == "CUBICSPLINE" else None
+        _fill(curve, np.array([1.0, 25.0]), np.array([0.0, 1.0]), tangents, tangents, mode, 24.0)
+        results[mode] = (curve.evaluate(1.0), curve.evaluate(13.0), curve.evaluate(25.0))
+        bpy.data.actions.remove(action)
+    check(results["STEP"] == (0.0, 0.0, 1.0), f"STEP material interpolation {results['STEP']}")
+    check(all(abs(a - b) < 1e-5 for a, b in zip(results["LINEAR"], (0.0, 0.5, 1.0))),
+          f"LINEAR material interpolation {results['LINEAR']}")
+    check(all(abs(a - b) < 1e-5 for a, b in zip(results["CUBICSPLINE"], (0.0, 0.5, 1.0))),
+          f"CUBICSPLINE material interpolation {results['CUBICSPLINE']}")
+
+
 def build_rig():
     arm_data = bpy.data.armatures.new("Rig")
     arm = bpy.data.objects.new("Rig", arm_data)
@@ -100,6 +123,9 @@ def build_body(arm):
     color0 = body.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
     for color in color0.data:
         color.color = (0.25, 0.75, 0.5, 0.4)
+    color1 = body.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+    for color in color1.data:
+        color.color = (0.1, 0.2, 0.3, 0.4)
     # textured material
     img = bpy.data.images.new("albedo", 8, 8, alpha=True)
     img.pixels = [0.5] * (8 * 8 * 4)
@@ -211,6 +237,7 @@ def main(tmp):
     from adm_blender.blender.export_anim import AnimExporter, channelbag_fcurves
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
     from adm_blender.blender.import_anim import AnimImportOptions, import_library
+    from adm_blender.core.buffers import read_accessor
     from adm_blender.core import constants as K
     from adm_blender.core.validate import material_binding_issues, validate_adm_resolved, validate_file
     spec = importlib.util.spec_from_file_location("adm_reference_container",
@@ -222,6 +249,7 @@ def main(tmp):
     from adm_blender.blender.operators import ensure_role_names
     ensure_role_names()
     sc = bpy.context.scene
+    test_material_interpolation()
 
     print("== authoring")
     arm = build_rig()
@@ -353,8 +381,15 @@ def main(tmp):
                                        "emissiveFactor", "alphaMode")), "explicit non-core PBR fallback")
     check(pm.get("shaderParameters") == {"glossy": True} and pm.get("animationId") == "paint",
           f"paint material {pm}")
-    check(any("COLOR_0" in p["attributes"] for m in doc["meshes"] for p in m["primitives"]),
-          "COLOR_0 exported under the required vertex-control extension")
+    body_primitive = next(p for m in doc["meshes"] for p in m["primitives"]
+                          if "COLOR_0" in p["attributes"])
+    check("COLOR_1" in body_primitive["attributes"],
+          "reserved COLOR_1 exported under the required vertex-control extension")
+    color1_values = read_accessor(rep.doc, rep.bin, body_primitive["attributes"]["COLOR_1"])
+    check(color1_values and all(all(abs(actual - expected) < 1e-6
+                                    for actual, expected in zip(value, (0.1, 0.2, 0.3, 0.4)))
+                                for value in color1_values),
+          "reserved COLOR_1 values exported without alteration")
     check(len(doc.get("colliders", [])) >= 1 or any("collider" in n for n in map(str, doc.get("nodes", []))),
           "collider exported")
     model_path = os.path.join(tmp, "hero.adm")
@@ -501,6 +536,11 @@ def main(tmp):
     if imported_color0 is not None:
         check(all(abs(a - b) < 1e-6 for a, b in zip(imported_color0.data[0].color, (0.25, 0.75, 0.5, 0.4))),
               f"COLOR_0 values round-trip {tuple(imported_color0.data[0].color)}")
+    imported_color1 = body2.data.color_attributes.get("COLOR_1") if body2 is not None else None
+    check(imported_color1 is not None, "reserved COLOR_1 survives model import")
+    if imported_color1 is not None:
+        check(all(abs(a - b) < 1e-6 for a, b in zip(imported_color1.data[0].color, (0.1, 0.2, 0.3, 0.4))),
+              f"reserved COLOR_1 values round-trip {tuple(imported_color1.data[0].color)}")
     skin2 = bpy.data.materials.get("Skin")
     check(skin2 is not None and any(n.name == "ADM Preview COLOR_0" for n in skin2.node_tree.nodes),
           "imported vertex-control preview resolves COLOR_0 after mesh creation")

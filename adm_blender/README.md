@@ -115,9 +115,10 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   running-bond mask (rows, columns, joint width, offset).
 - Skin, Fur and Fabric are Principled BSDF approximations (subsurface, anisotropy), and the panel says so.
 - **ADM Vertex Control** can be enabled per material. It interprets `COLOR_0`, samples the optional
-  one-row tint palette, and previews tint/normal/wetness. The wetness/reflection math is not fully
-  exact for metallic materials in Blender's Principled BSDF. `COLOR_1` values are preserved but do not
-  affect the preview.
+  one-row tint palette, and previews tint/normal/wetness. Dielectric and metallic F0 are represented
+  by separate Principled lobes mixed at the material metallic factor; the effective dielectric F0 is
+  encoded as IOR and metallic F0 as the lobe base color. Cycles tests bake both node outputs.
+  `COLOR_1` is reserved for all Core 20 profiles: its values are preserved but do not affect shading.
 
 ### Material animation
 
@@ -161,8 +162,10 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
 - `ADM_vertex_control_v1` can serialize `COLOR_0`/`COLOR_1`, palette references and material control
   values. Enable **Enable Vertex Controls** on a material to preview and animate the four universal
   controls. The export option must also enable **Vertex Controls** for the model. Tint, normal strength,
-  wetness color and roughness are previewed; metallic reflectivity is approximate, and `COLOR_1`
-  remains transport-only. See `adm-standard/SPEC_GAPS.md`.
+  wetness color, roughness and dielectric/metallic F0 are previewed; `COLOR_1` is reserved and
+  transport-only for Core 20 profiles.
+  The F0 preview has Blender bake coverage but no independent renderer interoperability test. See
+  `adm-standard/SPEC_GAPS.md`.
 - Image export (the **Images** option in File > Export > ADM):
   - **PNG** (default) writes only PNG. JPEG, DDS, KTX2 and other sources are converted, so any
     engine can read the file.

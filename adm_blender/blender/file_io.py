@@ -87,8 +87,8 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
                                  description="Store images inside the ADM. When disabled, write safe relative "
                                              "references and copy images under textures/")
     vertex_controls: BoolProperty(name="ADM Vertex Controls", default=False,
-                                  description="Interpret color attributes named COLOR_0/COLOR_1 using "
-                                              "ADM_vertex_control_v1 semantics")
+                                  description="Use ADM_vertex_control_v1 semantics for COLOR_0; COLOR_1 is "
+                                              "reserved with no shading effect for Core 20 profiles")
     image_format: EnumProperty(name="Images", default="PNG", items=[
         ("PNG", "PNG", "Embed every texture as PNG; JPEG, DDS, KTX2, TGA, EXR… sources are converted. "
                        "Readable by every ADM reader"),

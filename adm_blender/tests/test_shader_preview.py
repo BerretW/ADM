@@ -60,6 +60,36 @@ def bake(obj, mat, kind):
     return px
 
 
+def bake_socket(obj, mat, socket):
+    target = bpy.data.images.new("bake_socket", RES, RES, float_buffer=True)
+    target.colorspace_settings.name = "Non-Color"
+    nodes = mat.node_tree.nodes
+    out = next(n for n in nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output)
+    surface = out.inputs["Surface"]
+    original = [link.from_socket for link in surface.links]
+    for link in list(surface.links):
+        mat.node_tree.links.remove(link)
+    emission = nodes.new("ShaderNodeEmission")
+    mat.node_tree.links.new(socket, emission.inputs["Color"])
+    mat.node_tree.links.new(emission.outputs["Emission"], surface)
+    image_node = nodes.new("ShaderNodeTexImage")
+    image_node.image = target
+    nodes.active = image_node
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.bake(type="EMIT", margin=0)
+    px = np.array(target.pixels[:], dtype=np.float32).reshape(RES, RES, 4)
+    for link in list(surface.links):
+        mat.node_tree.links.remove(link)
+    for source in original:
+        mat.node_tree.links.new(source, surface)
+    nodes.remove(emission)
+    nodes.remove(image_node)
+    bpy.data.images.remove(target)
+    return px
+
+
 def set_param(mat, name, value):
     v = mat.adm.params[name]
     if isinstance(value, bpy.types.Image):
@@ -98,6 +128,7 @@ def main():
         M.convert_to_adm_material(mat)
         fallback = M.principled_of(mat)
         fallback.inputs["Base Color"].default_value = (0.3, 0.6, 0.9, 1.0)
+        mat.adm.vertex_controls_enabled = True
         mat.adm.shader = kind
         key = mat.adm.shader_key()
         for prm in K.OFFICIAL_SHADERS[key]:
@@ -119,6 +150,7 @@ def main():
             check(close(m["baseColorFactor"], (0.3, 0.6, 0.9, 1.0), 1e-5), f"{kind}: fallback base color exported")
             names = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             check(set(m.get("shaderParameters", {})) == names, f"{kind}: all overridden parameters exported")
+        mat.adm.vertex_controls_enabled = False
         mat.adm.shader = "CORE"
         check(not any(M.is_preview_node(n) for n in mat.node_tree.nodes), f"{kind}: CORE removes preview nodes")
 
@@ -215,6 +247,67 @@ def main():
     alb = bake(plane, mat, "DIFFUSE")
     check(close(alb[8, 8, :3], (0.8, 0.0, 0.0)),
           f"COLOR_0 tint index samples the nearest palette entry ({alb[8, 8, :3]})")
+
+    # 5. COLOR_0 produces exact dielectric and metallic F0 in the preview -------------------------
+    f0_mat = bpy.data.materials.new("vertex_f0")
+    plane.data.materials.clear()
+    plane.data.materials.append(f0_mat)
+    M.convert_to_adm_material(f0_mat)
+    fallback = M.principled_of(f0_mat)
+    fallback.inputs["Base Color"].default_value = (0.25, 0.5, 0.75, 1.0)
+    fallback.inputs["Metallic"].default_value = 0.4
+    fallback.inputs["IOR"].default_value = 1.5
+    fallback.inputs["Specular IOR Level"].default_value = 0.5
+    f0_attr = plane.data.color_attributes.get("COLOR_0")
+    if f0_attr is None:
+        f0_attr = plane.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
+    f0_attr.data.foreach_set("color", np.tile((0.0, 1.0, 0.8, 0.0), len(f0_attr.data)).ravel())
+    color1_attr = plane.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+    color1_attr.data.foreach_set("color", np.tile((0.1, 0.2, 0.3, 0.4), len(color1_attr.data)).ravel())
+    f0_mat.adm.vertex_controls_enabled = True
+    f0_mat.adm.reflection_multiplier = 0.5
+    f0_mat.adm.wetness_offset = 0.5
+    SP.build(f0_mat)
+    bpy.context.view_layer.update()
+    dielectric = next(n for n in f0_mat.node_tree.nodes if n.name == "ADM Preview Dielectric F0")
+    metal = next(n for n in f0_mat.node_tree.nodes if n.name == "ADM Preview Metallic F0")
+    metal_f0 = bake_socket(plane, f0_mat, metal.inputs["Base Color"].links[0].from_socket)
+    wetness = 0.5
+    dielectric_base_f0 = ((1.5 - 1.0) / (1.5 + 1.0)) ** 2
+    dielectric_reflectance = dielectric_base_f0 * 0.4
+    dielectric_coat = water_f0 + (1.0 - water_f0) ** 2 * dielectric_reflectance
+    expected_dielectric = dielectric_reflectance + (dielectric_coat - dielectric_reflectance) * wetness
+    metal_base_f0 = (0.25 * 0.4, 0.5 * 0.4, 0.75 * 0.4)
+    expected_metal = tuple(
+        base + (water_f0 + (1.0 - water_f0) ** 2 * base - base) * wetness
+        for base in metal_base_f0
+    )
+    check(close(metal_f0[8, 8, :3], expected_metal),
+          f"COLOR_0 metallic F0 is reflectivity-scaled then water-coated ({metal_f0[8, 8, :3]})")
+    dielectric_ior = bake_socket(plane, f0_mat, dielectric.inputs["IOR"].links[0].from_socket)
+    measured_ior = float(dielectric_ior[8, 8, 0])
+    measured_f0 = ((measured_ior - 1.0) / (measured_ior + 1.0)) ** 2
+    check(abs(measured_f0 - expected_dielectric) < 0.002,
+          f"COLOR_0 dielectric IOR encodes exact effective F0 ({measured_f0:.5f})")
+    diffuse_before = bake(plane, f0_mat, "DIFFUSE")
+    color1_attr.data.foreach_set("color", np.tile((0.9, 0.8, 0.7, 0.6), len(color1_attr.data)).ravel())
+    bpy.context.view_layer.update()
+    diffuse_after = bake(plane, f0_mat, "DIFFUSE")
+    check(np.allclose(diffuse_before, diffuse_after, atol=1e-5, rtol=0.0),
+          "reserved COLOR_1 values do not affect shader output")
+
+    layered_mat = bpy.data.materials.new("vertex_control_layered")
+    plane.data.materials.clear()
+    plane.data.materials.append(layered_mat)
+    M.convert_to_adm_material(layered_mat)
+    layered_mat.adm.shader = "LAYERED"
+    layered_mat.adm.vertex_controls_enabled = True
+    M.refresh_shader_preview(layered_mat)
+    active_output = next(n for n in layered_mat.node_tree.nodes
+                         if n.type == "OUTPUT_MATERIAL" and n.is_active_output)
+    surface = M._from(active_output.inputs["Surface"])
+    check(surface is not None and surface.node.type == "MIX_SHADER",
+          "layered preview wires vertex-controlled F0 output")
 
     adm_blender.unregister()
 
