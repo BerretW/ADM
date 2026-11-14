@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ADM Draft 0.4 byte-accurate container writer/validator (not full semantic compliance)."""
-import hashlib, json, struct, sys, pathlib
+import hashlib, json, math, re, struct, sys, pathlib
 HEADER=struct.Struct('<4sHHIIQQQQIIQ')
 ENTRY=struct.Struct('<Q4sII I QQQ32s')
 assert HEADER.size == 64 and ENTRY.size == 80
@@ -34,6 +34,130 @@ def no_duplicate(pairs):
         if k in d:raise AdmError('ADM_ERR_DUPLICATE_JSON_KEY')
         d[k]=v
     return d
+
+
+def verify_interactive(manifest):
+    """Independently check the interactive fixture's manifest-level binding contract."""
+    name = "ADM_interactive_surfaces_v1"
+    used = manifest.get("extensionsUsed", [])
+    required = manifest.get("extensionsRequired", [])
+    if not isinstance(used, list) or not isinstance(required, list):
+        raise AdmError("ADM_ERR_EXTENSIONS")
+    supported = {"ADM_material_layers_v1", "ADM_vertex_control_v1", "ADM_external_images_v1",
+                 "ADM_physical_surfaces_v1", name}
+    for extension in required:
+        if not isinstance(extension, str) or extension not in used or extension not in supported:
+            raise AdmError("ADM_ERR_UNSUPPORTED_EXTENSION")
+    extensions = manifest.get("extensions", {})
+    if not isinstance(extensions, dict):
+        raise AdmError("ADM_ERR_EXTENSIONS")
+    extension = extensions.get(name)
+    if extension is None and name in used:
+        raise AdmError("ADM_ERR_INTERACTIVE_EXTENSION")
+
+    def item(array, index, error):
+        if not isinstance(array, list) or type(index) is not int or not 0 <= index < len(array):
+            raise AdmError(error)
+        return array[index]
+
+    def number(value):
+        return type(value) is int or (type(value) is float and math.isfinite(value))
+
+    nodes, meshes = manifest.get("nodes", []), manifest.get("meshes", [])
+    materials, accessors = manifest.get("materials", []), manifest.get("accessors", [])
+    occupied, identities = set(), set()
+    if extension is not None:
+        if name not in used or not isinstance(extension, dict) or set(extension) - {"version", "surfaces", "extras",
+                                                                                      "extensions"}:
+            raise AdmError("ADM_ERR_INTERACTIVE_EXTENSION")
+        if extension.get("version") != "1.0.0":
+            raise AdmError("ADM_ERR_INTERACTIVE_VERSION")
+        surfaces = extension.get("surfaces")
+        if not isinstance(surfaces, list) or not surfaces:
+            raise AdmError("ADM_ERR_INTERACTIVE_SURFACES")
+        for surface in surfaces:
+            if not isinstance(surface, dict) or set(surface) - {"surfaceId", "bindings", "aspectRatio", "extras",
+                                                                  "extensions"}:
+                raise AdmError("ADM_ERR_INTERACTIVE_SURFACE")
+            ident, bindings = surface.get("surfaceId"), surface.get("bindings")
+            if not isinstance(ident, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", ident) or ident in identities:
+                raise AdmError("ADM_ERR_INTERACTIVE_ID")
+            identities.add(ident)
+            if "aspectRatio" in surface:
+                ratio = surface["aspectRatio"]
+                if (not number(ratio) or not 0 < ratio <= 1000
+                        or struct.unpack("<f", struct.pack("<f", ratio))[0] <= 0):
+                    raise AdmError("ADM_ERR_INTERACTIVE_ASPECT")
+            if not isinstance(bindings, list) or not bindings:
+                raise AdmError("ADM_ERR_INTERACTIVE_BINDING")
+            for binding in bindings:
+                if not isinstance(binding, dict) or set(binding) - {"node", "primitive", "texCoord", "extras",
+                                                                    "extensions"}:
+                    raise AdmError("ADM_ERR_INTERACTIVE_BINDING")
+                node_index, primitive_index, texcoord = (binding.get(k) for k in ("node", "primitive", "texCoord"))
+                node = item(nodes, node_index, "ADM_ERR_INTERACTIVE_NODE")
+                if not isinstance(node, dict):
+                    raise AdmError("ADM_ERR_INTERACTIVE_NODE")
+                mesh = item(meshes, node.get("mesh"), "ADM_ERR_INTERACTIVE_MESH")
+                if not isinstance(mesh, dict):
+                    raise AdmError("ADM_ERR_INTERACTIVE_MESH")
+                primitive = item(mesh.get("primitives"), primitive_index, "ADM_ERR_INTERACTIVE_PRIMITIVE")
+                if not isinstance(primitive, dict):
+                    raise AdmError("ADM_ERR_INTERACTIVE_PRIMITIVE")
+                if (node_index, primitive_index) in occupied:
+                    raise AdmError("ADM_ERR_INTERACTIVE_BINDING_DUPLICATE")
+                occupied.add((node_index, primitive_index))
+                material = item(materials, primitive.get("material"), "ADM_ERR_INTERACTIVE_MATERIAL")
+                shader = material.get("shader") if isinstance(material, dict) else None
+                if not isinstance(shader, dict) or (shader.get("id"), shader.get("version")) != (
+                        "adm.surface.interactive", "1.0.0"):
+                    raise AdmError("ADM_ERR_INTERACTIVE_MATERIAL")
+                animation_id = material.get("animationId")
+                if not isinstance(animation_id, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", animation_id):
+                    raise AdmError("ADM_ERR_INTERACTIVE_ANIMATION_ID")
+                parameters = material.get("shaderParameters", {})
+                if not isinstance(parameters, dict):
+                    raise AdmError("ADM_ERR_INTERACTIVE_PARAMETER")
+                for key, value in parameters.items():
+                    if key in ("brightness", "emissive_strength"):
+                        if not number(value) or not 0 <= value <= 16:
+                            raise AdmError("ADM_ERR_INTERACTIVE_PARAMETER")
+                    elif key in ("enabled", "unlit"):
+                        if type(value) is not bool:
+                            raise AdmError("ADM_ERR_INTERACTIVE_PARAMETER")
+                    else:
+                        raise AdmError("ADM_ERR_INTERACTIVE_PARAMETER")
+                if type(texcoord) is not int or texcoord not in (0, 1):
+                    raise AdmError("ADM_ERR_INTERACTIVE_UV")
+                attrs = primitive.get("attributes")
+                if not isinstance(attrs, dict):
+                    raise AdmError("ADM_ERR_INTERACTIVE_UV")
+                uv = item(accessors, attrs.get(f"TEXCOORD_{texcoord}"), "ADM_ERR_INTERACTIVE_UV")
+                if not isinstance(uv, dict) or uv.get("componentType") != "F32" or uv.get("type") != "VEC2":
+                    raise AdmError("ADM_ERR_INTERACTIVE_UV")
+    if not isinstance(nodes, list):
+        return
+    for node_index, node in enumerate(nodes):
+        if not isinstance(node, dict) or type(node.get("mesh")) is not int:
+            continue
+        mesh_index = node["mesh"]
+        if not isinstance(meshes, list) or not 0 <= mesh_index < len(meshes) or not isinstance(meshes[mesh_index], dict):
+            continue
+        primitives = meshes[mesh_index].get("primitives")
+        if not isinstance(primitives, list):
+            continue
+        for primitive_index, primitive in enumerate(primitives):
+            if not isinstance(primitive, dict) or type(primitive.get("material")) is not int:
+                continue
+            material_index = primitive["material"]
+            if not isinstance(materials, list) or not 0 <= material_index < len(materials):
+                continue
+            material = materials[material_index]
+            shader = material.get("shader") if isinstance(material, dict) else None
+            if isinstance(shader, dict) and (shader.get("id"), shader.get("version")) == (
+                    "adm.surface.interactive", "1.0.0") and (node_index, primitive_index) not in occupied:
+                raise AdmError("ADM_ERR_INTERACTIVE_BINDING_MISSING")
+
 
 def verify(path, verify_payload=True):
     b=pathlib.Path(path).read_bytes()
@@ -75,10 +199,13 @@ def verify(path, verify_payload=True):
         c=v['chunkId'];start=v['byteOffset'];size=v['byteLength']
         if c not in chunks or not isinstance(start,int) or not isinstance(size,int) or start<0 or size<0 or start+size>chunks[c][1]:raise AdmError('ADM_ERR_BUFFER_VIEW')
     for material in m.get('materials',[]):
+        if not isinstance(material,dict):raise AdmError('ADM_ERR_MATERIAL')
         shader=material.get('shader')
+        if shader is not None and not isinstance(shader,dict):raise AdmError('ADM_ERR_MATERIAL_SHADER')
         if shader is not None and (shader.get('id'),shader.get('version'))!=('adm.pbr.metallic_roughness','1.0.0'):
             if any(key not in material for key in ('baseColorFactor','metallicFactor','roughnessFactor','emissiveFactor','alphaMode')):
                 raise AdmError('ADM_ERR_MISSING_PBR_FALLBACK')
+    if magic==b'ADM0':verify_interactive(m)
     for a in m.get('accessors',[]):
         try:
             bv=m['bufferViews'][a['bufferView']];unit={'F32':4,'U32':4,'U16':2,'U8':1}[a['componentType']];elems={'SCALAR':1,'VEC2':2,'VEC3':3,'VEC4':4,'MAT4':16}[a['type']];offset=a.get('byteOffset',0); count=a['count']

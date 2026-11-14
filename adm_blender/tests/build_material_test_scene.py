@@ -50,7 +50,7 @@ def main(output):
     palette = make_image("Core20_Tint_Palette", (4, 1), lambda x, _y:
                          ((0.8, 0.2, 0.1, 1.0), (0.1, 0.7, 0.2, 1.0),
                           (0.1, 0.3, 0.9, 1.0), (0.8, 0.7, 0.1, 1.0))[x])
-    samples = list(K.OFFICIAL_SHADER_KINDS.items())
+    samples = [(key, kind) for key, kind in K.OFFICIAL_SHADER_KINDS.items() if key != K.SHADER_INTERACTIVE]
     for index, (key, kind) in enumerate(samples):
         x = (index % 5 - 2) * 2.4
         y = (1.5 - index // 5) * 2.4

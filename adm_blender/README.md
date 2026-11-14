@@ -73,11 +73,12 @@ Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `r
 
 ### Material textures (Sollumz-style)
 
-The machine-readable registry contains the 20 requested profile IDs and typed parameter schemas.
+The machine-readable registry contains the original Core 20 profiles plus the interactive surface
+profile, each with a typed parameter schema.
 Blender preserves their IDs, parameter values and portable PBR fallback through import/export.
 Cutout, emissive and decal have profile-specific validation; glass, water and foliage also enforce
-their alpha/two-sided requirements. Every official profile has a viewport node preview (see
-*Shader profile previews* below). Specialist rendering is not claimed as certified.
+their alpha/two-sided requirements. Interactive surfaces show the authored PBR fallback, not a live
+runtime image. Specialist rendering is not claimed as certified.
 
 The material panel (Properties › Material › ADM, and the sidebar Shaders tab) has a **Texture Parameters**
 box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlusion and Emissive.
@@ -120,6 +121,38 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   encoded as IOR and metallic F0 as the lobe base color. Cycles tests bake both node outputs.
   `COLOR_1` is reserved for all Core 20 profiles: its values are preserved but do not affect shading.
 
+### Interactive display surfaces
+
+1. Assign an ADM material with **Shader > Interactive Surface** to the display polygons. A frame or
+   other part may keep its own normal material; the same interactive material may be shared by displays.
+2. Create and unwrap the required UV maps. UV 0 is the render-active Blender UV map; UV 1 is the next
+   exported map. Enable **Second UV Map** during export when a surface uses UV 1.
+3. In Edit Mode select the screen faces, return to Object Mode, and open **N-panel > ADM > Object >
+   Interactive Surface** (also in Object Properties > ADM). Enter a model-wide **Surface ID** such as
+   `main_display`, choose **UV Set**, set an optional width/height **Aspect Ratio** (`0` means
+   unspecified), and click **Assign Selected**. Repeat with another ID for another screen.
+4. **Read Selected Faces** loads an existing assignment into the controls; **Clear** removes it.
+   One ID intentionally shared by several face groups denotes one logical surface. Assignments live
+   on mesh faces: linked objects share them. Make the mesh single-user before assigning different IDs
+   to linked objects. Import separates shared source meshes when their per-node IDs differ.
+5. In Material Properties > ADM, edit the normal PBR fallback and optionally use its Base Color or
+   Emissive texture as a static test image. In **Material Preview** the actual object displays this
+   fallback. The `brightness`, `emissive_strength`, `enabled`, and `unlit` parameters affect engine
+   runtime content, not this static preview; `enabled=false` selects the authored fallback. Brightness
+   and emissive strength can be animated using the ordinary material Animation ID workflow.
+   Explicit fallback UV maps must be exported, and a shared material must use the same UV set index on
+   every mesh. Unsupported transformed texture coordinates are rejected rather than silently changed.
+6. Export and re-import `.adm`. The add-on preserves the IDs, UV bindings, ratio, parameters and
+   fallback. It rejects missing IDs, unavailable UVs or disabled material export instead of guessing.
+   When using ADM vertex controls, enable **ADM Vertex Controls** and **Vertex Colors** during export;
+   disabling those options changes or omits control data, and the exporter warns for affected screens.
+
+The extension is `ADM_interactive_surfaces_v1` version `1.0.0`; its runtime capability is
+`ADM-INTERACTIVE-SURFACES-1`. The engine supplies any camera, UI, render target and interaction.
+Blender's preview is not a camera or live UI implementation. See the
+[surface binding contract](../adm-standard/extensions/ADM_interactive_surfaces_v1.md) and
+[shader contract](../adm-standard/shaders/adm.surface.interactive.v1.md).
+
 ### Material animation
 
 1. In the material panel, set the **Animation ID** (or *Auto*).
@@ -151,8 +184,9 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   `ADM_ERR_UNSUPPORTED_CODEC`. Unused optional chunks need not be decoded.
 - Every non-core material exports explicit `baseColorFactor`, `metallicFactor`, `roughnessFactor`,
   `emissiveFactor` and `alphaMode`. Missing fields are rejected as `ADM_ERR_MISSING_PBR_FALLBACK`.
-- The viewport shows a **layered preview** for `adm.pbr.layered@1.0.0`, a **profile preview** for every
-  other official profile, and **core PBR fallback** for custom shaders (reports `SHADER_FALLBACK`).
+- The viewport shows a **layered preview** for `adm.pbr.layered@1.0.0`, profile previews for the
+  original Core 20 set, and the authored **core PBR fallback** for interactive and custom shaders
+  (unsupported custom shaders report `SHADER_FALLBACK`).
   Shader/layer definitions and their animation data remain editable and exportable; arbitrary custom
   shader rendering and certified layered rendering are not claimed. PBR tracks animate the fallback
   independently of custom shader parameters.
@@ -200,6 +234,7 @@ The draft leaves some points open. This add-on resolves them as follows:
 ```
 blender -b --factory-startup --python tests/test_fixtures.py
 blender -b --factory-startup --python tests/test_workflow.py
+blender -b --factory-startup --python tests/test_interactive_blender.py
 blender -b --factory-startup --python tests/test_skeleton_blender.py
 blender -b --factory-startup --python tests/test_material_slots.py
 blender -b --factory-startup --python tests/test_texture_formats.py

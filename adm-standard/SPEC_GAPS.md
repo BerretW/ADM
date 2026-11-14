@@ -21,6 +21,7 @@ This register records ambiguities discovered while implementing the reference Bl
 | `SPEC_GAP-CUSTOM-PROFILE` | §11 / §28 | Unregistered reverse-DNS versioned IDs are EXACT_ONLY. Semantic use requires a complete published annex and machine-readable registry entry with role, hierarchy, pose, correction, retarget, IK/socket and fixture rules. |
 | `SPEC_GAP-KTX2-SUBSET` | §8.6 | Resolved in P3: optional KTX2/DDS subsets, RGBA8/BC1/BC3, sRGB/UNORM role rules, mips and mandatory same-size PNG/JPEG fallback are specified. Unsupported encodings and layouts are rejected. |
 | `SPEC_GAP-SHADER-CORE20` | Shader registry and renderer | The registry has the registered shader IDs, schemas and contracts. Blender preview graphs apply vertex-control tint, normal strength, wetness color/roughness, and exact dielectric/metallic F0 using separate Principled lobes; Cycles bake tests verify the F0 node outputs. Extension-level animation bindings, Core 20 reserved/no-effect `COLOR_1` contracts, and model/material round-trip tests are present. Not every shader has an independently bake-tested renderer, Skin/Fur/Fabric remain approximations, and independent renderer interoperability is unverified. | Add focused renderer bakes for all relevant profiles and validate with an independent implementation. Do not claim full renderer or extension conformance until these pass. |
+| `SPEC_GAP-INTERACTIVE-BINDING` | Interactive display identity, UV and appearance | `ADM_interactive_surfaces_v1@1.0.0` defines unique surface IDs, node/primitive/UV references, hit coordinates and optional aspect metadata. `adm.surface.interactive@1.0.0` defines runtime color/alpha, lit/unlit, off state and portable fallback. Blender and both manifest validators exercise the data; independent runtime rendering remains unverified. |
 
 ## Deliberately retained: approval and certification blockers
 
@@ -37,3 +38,6 @@ This register records ambiguities discovered while implementing the reference Bl
 - The KTX2 subset has not been checked by the official KTX-Software validator or by GPU upload tests; Blender/OpenImageIO independently reads the emitted DDS subset only.
 - No animal profile may be advertised as normative, and no implementation may claim full ADM 1.0 conformance from the bundled tests alone.
 - The external-image and physical-surface extensions have structural and Blender workflow coverage, including external texture resolution and per-triangle FACE-attribute round-trip. Security-edge fixtures (including symlink escape, failure cleanup, and all external image encodings) and independent-reader interoperability remain release gates.
+- Interactive screens have numerical reference values and Blender metadata round trips, but no second
+  independent runtime renderer or engine-level hit-test certification. Blender previews the authored
+  static fallback only; runtime content and input remain the engine's responsibility.

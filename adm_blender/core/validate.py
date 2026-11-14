@@ -103,7 +103,9 @@ def _is_int(v, lo=0, hi=U32_MAX):
 
 
 def _is_num(v):
-    return type(v) in (int, float) and math.isfinite(v)
+    if type(v) is int:
+        return -sys.float_info.max <= v <= sys.float_info.max
+    return type(v) is float and math.isfinite(v)
 
 
 def _is_vec(v, n):
@@ -344,12 +346,18 @@ class _Base:
                 self.r.error("ACCESSOR_ALIGNMENT", p, f"absolute start not aligned to {csize} bytes")
                 continue
             if ct == "F32" and a["count"]:
-                if _np is not None:
-                    arr = read_accessor_np(self.doc, self.bin, i)
-                    finite = bool(_np.all(_np.isfinite(arr)))
-                else:
-                    flat, _ = read_accessor_flat(self.doc, self.bin, i)
-                    finite = all(math.isfinite(x) for x in flat)
+                try:
+                    if _np is not None:
+                        arr = read_accessor_np(self.doc, self.bin, i)
+                        finite = bool(_np.all(_np.isfinite(arr)))
+                    else:
+                        flat, _ = read_accessor_flat(self.doc, self.bin, i)
+                        finite = all(math.isfinite(x) for x in flat)
+                except AdmFormatError as exc:
+                    if exc.code != "ADM_ERR_NONFINITE":
+                        raise
+                    self.r.error(exc.code, p, exc.message)
+                    continue
                 if not finite:
                     self.r.error("ACCESSOR_NONFINITE", p, "float data contains NaN or Infinity")
                     continue
@@ -433,6 +441,7 @@ class AdmValidator(_Base):
         self.check_attachments()
         self.check_physical_metadata()
         self.check_physical_surfaces()
+        self.check_interactive_surfaces()
         self.check_model_components()
 
     # textures ------------------------------------------------------------------------------------
@@ -1695,6 +1704,107 @@ class AdmValidator(_Base):
                     if not isinstance(ident, str) or ident not in physical_ids:
                         self.r.error("PHYSICAL_FACE_REFERENCE", f"{path}.faceMaterials[{fi}]",
                                      "must reference an existing physicalMaterials id")
+
+    def check_interactive_surfaces(self):
+        used = self.doc.get("extensionsUsed", [])
+        ext = self.doc.get("extensions")
+        ext = ext.get(K.INTERACTIVE_SURFACES_EXT) if isinstance(ext, dict) else None
+        path = f"extensions.{K.INTERACTIVE_SURFACES_EXT}"
+        bound = {}
+        ids = set()
+        if ext is None:
+            if isinstance(used, list) and K.INTERACTIVE_SURFACES_EXT in used:
+                self.r.error("INTERACTIVE_EXTENSION_MISSING", path, "declared extension data is missing")
+        elif self.keys(ext, path, ("version", "surfaces")):
+            if ext["version"] != K.INTERACTIVE_SURFACES_VERSION:
+                self.r.error("INTERACTIVE_EXTENSION_VERSION", path + ".version",
+                             f"must be exactly {K.INTERACTIVE_SURFACES_VERSION!r}")
+            surfaces = ext["surfaces"]
+            if not isinstance(surfaces, list) or not surfaces:
+                self.r.error("INTERACTIVE_SURFACES", path + ".surfaces", "must be a non-empty array")
+                surfaces = []
+            for si, surface in enumerate(surfaces):
+                sp = f"{path}.surfaces[{si}]"
+                if not self.keys(surface, sp, ("surfaceId", "bindings"), ("aspectRatio",)):
+                    continue
+                ident = surface["surfaceId"]
+                if not isinstance(ident, str) or not PARAM_NAME_RE.fullmatch(ident):
+                    self.r.error("INTERACTIVE_SURFACE_ID", sp + ".surfaceId",
+                                 "must match [a-z][a-z0-9_]* and contain at most 64 ASCII characters")
+                elif ident in ids:
+                    self.r.error("INTERACTIVE_SURFACE_ID_DUPLICATE", sp + ".surfaceId",
+                                 f"duplicate surfaceId {ident!r}")
+                else:
+                    ids.add(ident)
+                if "aspectRatio" in surface and not (
+                        _is_num(surface["aspectRatio"]) and 0 < surface["aspectRatio"] <= 1000
+                        and _f32(surface["aspectRatio"]) > 0):
+                    self.r.error("INTERACTIVE_ASPECT_RATIO", sp + ".aspectRatio",
+                                 "must be in (0,1000] and remain positive when rounded to binary32")
+                bindings = surface["bindings"]
+                if not isinstance(bindings, list) or not bindings:
+                    self.r.error("INTERACTIVE_BINDINGS", sp + ".bindings", "must be a non-empty array")
+                    continue
+                for bi, binding in enumerate(bindings):
+                    bp = f"{sp}.bindings[{bi}]"
+                    if not self.keys(binding, bp, ("node", "primitive", "texCoord")):
+                        continue
+                    texcoord = binding["texCoord"]
+                    if type(texcoord) is not int or texcoord not in (0, 1):
+                        self.r.error("INTERACTIVE_TEXCOORD", bp + ".texCoord", "must be 0 or 1")
+                    ni, pi = binding["node"], binding["primitive"]
+                    if not self.index(ni, len(self.nodes), bp + ".node", "nodes"):
+                        continue
+                    node = self.nodes[ni]
+                    if not isinstance(node, dict) or not self.index(
+                            node.get("mesh"), len(self.meshes), bp + ".node", "meshes on the referenced node"):
+                        continue
+                    mesh = self.meshes[node["mesh"]]
+                    prims = mesh.get("primitives") if isinstance(mesh, dict) else None
+                    if not isinstance(prims, list) or not self.index(pi, len(prims), bp + ".primitive",
+                                                                     "mesh primitives"):
+                        continue
+                    prim = prims[pi]
+                    if not isinstance(prim, dict):
+                        self.r.error("INTERACTIVE_PRIMITIVE", bp + ".primitive", "must refer to a primitive object")
+                        continue
+                    pair = (ni, pi)
+                    if pair in bound:
+                        self.r.error("INTERACTIVE_BINDING_DUPLICATE", bp,
+                                     f"node {ni}, primitive {pi} is already bound to {bound[pair]!r}")
+                    else:
+                        bound[pair] = ident
+                    mi = prim.get("material")
+                    if not _is_int(mi) or mi >= len(self.materials) or (
+                            material_shader(self.materials[mi]) != K.SHADER_INTERACTIVE):
+                        self.r.error("INTERACTIVE_MATERIAL", bp,
+                                     "primitive must use adm.surface.interactive@1.0.0")
+                    if type(texcoord) is int and texcoord in (0, 1):
+                        attr = f"TEXCOORD_{texcoord}"
+                        attrs = prim.get("attributes")
+                        if not isinstance(attrs, dict) or attr not in attrs:
+                            self.r.error("INTERACTIVE_UV_MISSING", bp + ".texCoord",
+                                         f"primitive must provide {attr}")
+                        else:
+                            self.use_acc(attrs[attr], bp + ".texCoord", ("F32",), ("VEC2",), False)
+
+        for ni, node in enumerate(self.nodes):
+            if not isinstance(node, dict):
+                continue
+            mi = node.get("mesh")
+            if not _is_int(mi) or mi >= len(self.meshes) or not isinstance(self.meshes[mi], dict):
+                continue
+            prims = self.meshes[mi].get("primitives")
+            if not isinstance(prims, list):
+                continue
+            for pi, prim in enumerate(prims):
+                if not isinstance(prim, dict):
+                    continue
+                mat = prim.get("material")
+                if _is_int(mat) and mat < len(self.materials) and (
+                        material_shader(self.materials[mat]) == K.SHADER_INTERACTIVE) and (ni, pi) not in bound:
+                    self.r.error("INTERACTIVE_BINDING_MISSING", f"nodes[{ni}].mesh",
+                                 f"interactive primitive {pi} has no surface binding")
 
     def check_lods(self):
         owner = {}

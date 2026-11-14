@@ -77,6 +77,23 @@ class ContainerTests(unittest.TestCase):
                 with self.subTest(fixture=str(name)):
                     self.assertEqual(actual[name], expected[name])
 
+    def test_interactive_fixture_is_independent_of_zlib_backend(self):
+        script = FIXTURES.parent / "tools" / "build_interactive_fixture.py"
+        alternate_backend = (
+            "import runpy, sys, zlib\n"
+            "compress = zlib.compress\n"
+            "zlib.compress = lambda data, level=-1: compress(data, 0)\n"
+            "script = sys.argv[1]\n"
+            "sys.path.insert(0, sys.argv[2])\n"
+            "sys.argv = [script, '--check']\n"
+            "runpy.run_path(script, run_name='__main__')\n"
+        )
+        with tempfile.TemporaryDirectory(prefix="adm_fixture_zlib_") as tmp:
+            result = subprocess.run(
+                [sys.executable, "-c", alternate_backend, str(script), str(script.parent)],
+                cwd=tmp, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def assert_code(self, code, function, *args, **kwargs):
         with self.assertRaises(AdmFormatError) as error:
             function(*args, **kwargs)

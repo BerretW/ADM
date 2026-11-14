@@ -67,6 +67,12 @@ class ModelImporter:
             raise ImportError_("file is not a valid ADM 1.0 model", report)
         self.doc, self.bin = report.doc, report.bin
         d = self.doc
+        self.interactive_by_node = defaultdict(dict)
+        interactive = (d.get("extensions") or {}).get(K.INTERACTIVE_SURFACES_EXT, {})
+        for surface in interactive.get("surfaces", []):
+            for binding in surface["bindings"]:
+                self.interactive_by_node[binding["node"]][binding["primitive"]] = (
+                    surface["surfaceId"], binding["texCoord"], surface.get("aspectRatio", 0.0))
         self.nodes = d["nodes"]
         n = len(self.nodes)
         self.parent = [None] * n
@@ -406,9 +412,11 @@ class ModelImporter:
         node = self.nodes[i]
         if "mesh" not in node:
             return None
-        key = (node["mesh"], node.get("skin"))
+        bindings = self.interactive_by_node.get(i, {})
+        signature = tuple((primitive, *value) for primitive, value in sorted(bindings.items()))
+        key = (node["mesh"], node.get("skin"), signature)
         if key not in self.mesh_data:
-            self.mesh_data[key] = self.build_mesh(node["mesh"], node.get("skin"))
+            self.mesh_data[key] = self.build_mesh(node["mesh"], node.get("skin"), interactive_bindings=bindings)
         return self.mesh_data[key]
 
     def _create_node_object(self, i):
@@ -609,11 +617,13 @@ class ModelImporter:
         return max(best, 1e-3)
 
     # ---------------------------------------------------------------------------------------------
-    def build_mesh(self, mesh_index, skin_index, collision=False):
+    def build_mesh(self, mesh_index, skin_index, collision=False, interactive_bindings=None):
         m = self.doc["meshes"][mesh_index]
         prims = m["primitives"]
+        interactive_bindings = interactive_bindings or {}
         pos, tris, nrm, uv, col, col1, jnt, wgt, mats, face_physical = (
             [], [], [], [[], []], [], [], [], [], [], [])
+        face_interactive, vertex_groups = [], []
         deltas = []
         vertex_control = K.VERTEX_CONTROL_EXT in self.doc.get("extensionsRequired", [])
         ntarg = len(m.get("targetNames", [])) if not collision else 0
@@ -621,16 +631,22 @@ class ModelImporter:
             ntarg = max(ntarg, len(prims[0].get("targets", [])))
         offset = 0
         has_n = all("NORMAL" in p["attributes"] for p in prims) and self.opts.import_normals and not collision
-        uv_sets = [all(f"TEXCOORD_{k}" in p["attributes"] for p in prims) for k in (0, 1)]
-        if not uv_sets[0]:
-            uv_sets[1] = False
-        has_c = (any("COLOR_0" in p["attributes"] for p in prims) if vertex_control
+        if interactive_bindings:
+            uv_sets = [any(f"TEXCOORD_{k}" in p["attributes"] for p in prims) for k in (0, 1)]
+            if uv_sets[1] and not uv_sets[0]:
+                uv_sets[0] = True
+                self.warn(f"mesh '{m.get('name', mesh_index)}': Blender needs a placeholder UV 0 to retain UV 1")
+        else:
+            uv_sets = [all(f"TEXCOORD_{k}" in p["attributes"] for p in prims) for k in (0, 1)]
+            if not uv_sets[0]:
+                uv_sets[1] = False
+        has_c = (any("COLOR_0" in p["attributes"] for p in prims) if vertex_control or interactive_bindings
                  else all("COLOR_0" in p["attributes"] for p in prims)) and not collision
         has_c1 = vertex_control and all("COLOR_1" in p["attributes"] for p in prims) and not collision
         has_s = all("JOINTS_0" in p["attributes"] for p in prims) and not collision and skin_index is not None
         if collision:
             uv_sets = [False, False]
-        for p in prims:
+        for pi, p in enumerate(prims):
             a = p["attributes"]
             P = self.acc(a["POSITION"])
             n = len(P)
@@ -638,18 +654,28 @@ class ModelImporter:
             I = self.acc(p["indices"], np.int64).reshape(-1, 3) + offset
             tris.append(I)
             mats.append(np.full(len(I), p.get("material", -1), dtype=np.int64))
+            face_interactive.extend([interactive_bindings.get(pi, ("", 0, 0.0))] * len(I))
+            if interactive_bindings:
+                vertex_groups.append(np.full(n, pi + 1, dtype=np.int64))
             physical_ext = (p.get("extensions") or {}).get(K.PHYSICAL_SURFACES_EXT, {})
             face_physical.extend(physical_ext.get("faceMaterials", [""] * len(I)))
             if has_n:
                 nrm.append(cv.np_vec_from_adm(self.acc(a["NORMAL"])))
             for k in (0, 1):
                 if uv_sets[k]:
-                    uv[k].append(cv.np_uv_from_adm(self.acc(a[f"TEXCOORD_{k}"])))
+                    name = f"TEXCOORD_{k}"
+                    if name in a:
+                        uv[k].append(cv.np_uv_from_adm(self.acc(a[name])))
+                    else:
+                        uv[k].append(np.zeros((n, 2)))
+                        self.warn(f"mesh '{m.get('name', mesh_index)}': Blender filled unused {name} "
+                                  f"on primitive {pi}")
             if has_c:
                 if "COLOR_0" in a:
                     col.append(self.acc(a["COLOR_0"]))
                 else:
-                    col.append(np.tile((0.0, 1.0, 1.0, 0.0), (n, 1)))
+                    default_color = (0.0, 1.0, 1.0, 0.0) if vertex_control else (1.0, 1.0, 1.0, 1.0)
+                    col.append(np.tile(default_color, (n, 1)))
             if has_c1:
                 col1.append(self.acc(a["COLOR_1"]))
             if has_s:
@@ -665,6 +691,9 @@ class ModelImporter:
         T = np.vstack(tris)
         MI = np.concatenate(mats)
         face_physical = np.asarray(face_physical, dtype=object)
+        face_ids = np.asarray([entry[0] for entry in face_interactive], dtype=object)
+        face_uv = np.asarray([entry[1] for entry in face_interactive], dtype=np.int32)
+        face_ratio = np.asarray([entry[2] for entry in face_interactive], dtype=np.float64)
         D = [np.vstack([deltas[pi][t] for pi in range(len(prims))]) for t in range(ntarg)]
         Jv = np.vstack(jnt) if has_s else None
         Wv = np.vstack(wgt) if has_s else None
@@ -676,6 +705,8 @@ class ModelImporter:
         # weld duplicated vertices so the Blender mesh stays connected across seams
         if self.opts.weld:
             parts = [np.round(P, 6)] + [np.round(x, 6) for x in D]
+            if interactive_bindings:
+                parts.append(np.concatenate(vertex_groups).reshape(-1, 1))
             if Jv is not None:
                 parts += [Jv.astype(np.float64), np.round(Wv, 5)]
             _, first, inv = np.unique(np.hstack(parts), axis=0, return_index=True, return_inverse=True)
@@ -696,12 +727,16 @@ class ModelImporter:
         uniq[ufirst] = True
         good &= uniq
         dropped = int(len(TV) - good.sum())
+        if dropped and interactive_bindings and bool(np.any((~good) & (face_ids != ""))):
+            raise ImportError_(f"mesh '{m.get('name', mesh_index)}': Blender cannot preserve a degenerate or "
+                               "duplicate interactive triangle")
         if dropped:
             self.warn(f"mesh '{m.get('name', mesh_index)}': {dropped} degenerate/duplicate triangles not imported")
         TV = TV[good]
         corner = T[good].reshape(-1)
         MI = MI[good]
         face_physical = face_physical[good]
+        face_ids, face_uv, face_ratio = face_ids[good], face_uv[good], face_ratio[good]
 
         name = _safe(m.get("name"), f"Mesh_{mesh_index}")
         me = bpy.data.meshes.new(name)
@@ -718,6 +753,14 @@ class ModelImporter:
             attr = me.attributes.new("adm_physical_material_id", "STRING", "FACE")
             for poly, ident in zip(attr.data, face_physical):
                 poly.value = ident.encode("utf-8")
+        if interactive_bindings:
+            ids = me.attributes.new("adm_interactive_surface_id", "STRING", "FACE")
+            texcoords = me.attributes.new("adm_interactive_texcoord", "INT", "FACE")
+            ratios = me.attributes.new("adm_interactive_aspect_ratio", "FLOAT", "FACE")
+            for poly, ident, texcoord, ratio in zip(range(nt), face_ids, face_uv, face_ratio):
+                ids.data[poly].value = ident.encode("ascii")
+                texcoords.data[poly].value = int(texcoord)
+                ratios.data[poly].value = float(ratio)
 
         # materials
         used = sorted(set(MI.tolist()))
@@ -741,6 +784,8 @@ class ModelImporter:
             ca1.data.foreach_set("color", np.vstack(col1)[corner].astype(np.float32).ravel())
         invalid = me.validate(verbose=False, clean_customdata=False)
         if invalid:
+            if interactive_bindings and len(me.polygons) != nt:
+                raise ImportError_(f"mesh '{name}': Blender changed interactive face topology during import")
             self.warn(f"mesh '{name}': geometry was corrected by Blender's mesh validation")
         if has_n:
             me.shade_smooth()

@@ -3,12 +3,14 @@
 import copy
 import hashlib
 from pathlib import Path
+import struct
 import tempfile
 import unittest
+from unittest import mock
 
 from adm_blender.core import constants as K
 from adm_blender.core.buffers import BinBuilder
-from adm_blender.core.container import read_container, write_container
+from adm_blender.core.container import ChunkCollection, read_container, write_container
 from adm_blender.core.png import encode_png
 from adm_blender.core.validate import validate_adm, validate_adm_resolved, validate_anim
 
@@ -211,6 +213,195 @@ class Draft4Tests(unittest.TestCase):
         changed["images"][1]["bufferView"] = primary
         # A KTX2 range cannot be interpreted as the PNG portable fallback.
         self.assertIn("IMAGE_DECODE", {e.code for e in validate(changed).errors})
+
+
+class InteractiveSurfaceTests(unittest.TestCase):
+    def setUp(self):
+        builder = BinBuilder()
+        positions = builder.add_accessor([(0, 0, 0), (1, 0, 0.1), (1, 1, 0.1), (0, 1, 0)],
+                                        "F32", "VEC3")
+        uv0 = builder.add_accessor([(0, 1), (1, 1), (1, 0), (0, 0)], "F32", "VEC2")
+        uv1 = builder.add_accessor([(1, 1), (0, 1), (0, 0), (1, 0)], "F32", "VEC2")
+        indices = builder.add_accessor([0, 1, 2, 0, 2, 3], "U16", "SCALAR")
+        image = builder.add_view(encode_png(1, 1, b"\x20\x40\x60\xff"), chunk_type="IMAG")
+        self.chunks = builder.bytes()
+        self.doc = {
+            "asset": {}, "scene": 0, "scenes": [{"nodes": [0, 1]}],
+            "nodes": [{"mesh": 0}, {"mesh": 0}],
+            "meshes": [{"primitives": [
+                {"attributes": {"POSITION": positions, "TEXCOORD_0": uv0, "TEXCOORD_1": uv1},
+                "indices": indices, "material": 1},
+                {"attributes": {"POSITION": positions}, "indices": indices, "material": 0},
+            ]}],
+            "materials": [
+                {"baseColorFactor": [0.2, 0.2, 0.2, 1]},
+                {"animationId": "screen_material", "shader": {"id": K.SHADER_INTERACTIVE[0],
+                                                                "version": K.SHADER_INTERACTIVE[1]},
+                "baseColorFactor": [1, 1, 1, 1], "baseColorTexture": {"index": 0},
+                "metallicFactor": 0, "roughnessFactor": 1, "emissiveFactor": [0, 0, 0],
+                "alphaMode": "OPAQUE"},
+            ],
+            "textures": [{"source": 0}], "images": [{"bufferView": image, "mimeType": "image/png"}],
+            "accessors": builder.accessors, "bufferViews": builder.buffer_views,
+            "extensionsUsed": [K.INTERACTIVE_SURFACES_EXT],
+            "extensions": {K.INTERACTIVE_SURFACES_EXT: {
+                "version": K.INTERACTIVE_SURFACES_VERSION,
+                "surfaces": [
+                    {"surfaceId": "left_screen", "aspectRatio": 1.5,
+                    "bindings": [{"node": 0, "primitive": 0, "texCoord": 0}]},
+                    {"surfaceId": "right_screen",
+                    "bindings": [{"node": 1, "primitive": 0, "texCoord": 1}]},
+                ],
+            }},
+        }
+
+    def validate(self, doc=None):
+        return validate_adm(write_container(K.ADM_MAGIC, self.doc if doc is None else doc, self.chunks))
+
+    def codes(self, doc):
+        return {issue.code for issue in self.validate(doc).errors}
+
+    def test_shared_shader_curved_mesh_multiple_surfaces_and_fallback(self):
+        report = self.validate()
+        self.assertTrue(report.ok, report.format())
+        ext = self.doc["extensions"][K.INTERACTIVE_SURFACES_EXT]
+        ext["surfaces"][0]["bindings"].extend(ext["surfaces"][1]["bindings"])
+        ext["surfaces"].pop()
+        report = self.validate()
+        self.assertTrue(report.ok, report.format())
+
+    def test_extension_policy_and_unknown_shader_version_fallback(self):
+        required = copy.deepcopy(self.doc)
+        required["extensionsRequired"] = [K.INTERACTIVE_SURFACES_EXT]
+        self.assertTrue(self.validate(required).ok, self.validate(required).format())
+        optional_unknown = copy.deepcopy(self.doc)
+        optional_unknown["extensionsUsed"].append("Other_v1")
+        optional_unknown["extensions"]["Other_v1"] = {"data": "ignored"}
+        self.assertTrue(self.validate(optional_unknown).ok, self.validate(optional_unknown).format())
+        future = copy.deepcopy(self.doc)
+        future["materials"][1]["shader"]["version"] = "2.0.0"
+        del future["extensions"]
+        del future["extensionsUsed"]
+        report = self.validate(future)
+        self.assertTrue(report.ok, report.format())
+        self.assertIn("SHADER_UNKNOWN_OFFICIAL", {issue.code for issue in report.warnings})
+
+    def test_nonfinite_interactive_uv_has_accessor_diagnostic(self):
+        primitive = self.doc["meshes"][0]["primitives"][0]
+        uv_index = primitive["attributes"]["TEXCOORD_0"]
+        accessor = self.doc["accessors"][uv_index]
+        view = self.doc["bufferViews"][accessor["bufferView"]]
+        for value in (float("nan"), float("inf"), float("-inf")):
+            payloads = {cid: bytes(data) for cid, data in self.chunks.items()}
+            bad_uv = bytearray(payloads[view["chunkId"]])
+            struct.pack_into("<f", bad_uv, view["byteOffset"] + accessor.get("byteOffset", 0), value)
+            payloads[view["chunkId"]] = bytes(bad_uv)
+            chunks = ChunkCollection(payloads, chunk_types={cid: entry.chunk_type
+                                                            for cid, entry in self.chunks.entries.items()})
+            data = write_container(K.ADM_MAGIC, self.doc, chunks)
+            for reader in ("default", "without_numpy"):
+                with self.subTest(value=value, reader=reader):
+                    if reader == "without_numpy":
+                        with mock.patch("adm_blender.core.validate._np", None):
+                            report = validate_adm(data)
+                    else:
+                        report = validate_adm(data)
+                    self.assertTrue(any(issue.code == "ADM_ERR_NONFINITE" and issue.path == f"accessors[{uv_index}]"
+                                        for issue in report.errors), report.format())
+
+    def test_aspect_ratio_remains_positive_in_binary32(self):
+        self.doc["extensions"][K.INTERACTIVE_SURFACES_EXT]["surfaces"][0]["aspectRatio"] = 1e-45
+        report = self.validate()
+        self.assertTrue(report.ok, report.format())
+
+    def test_invalid_surface_bindings_and_shader_data(self):
+        ext = K.INTERACTIVE_SURFACES_EXT
+        cases = (
+            ("duplicate ID", lambda d: d["extensions"][ext]["surfaces"][1].update(surfaceId="left_screen"),
+            "INTERACTIVE_SURFACE_ID_DUPLICATE"),
+            ("invalid ID", lambda d: d["extensions"][ext]["surfaces"][0].update(surfaceId="bad id"),
+            "INTERACTIVE_SURFACE_ID"),
+            ("node", lambda d: d["extensions"][ext]["surfaces"][0]["bindings"][0].update(node=999),
+            "INDEX_RANGE"),
+            ("primitive", lambda d: d["extensions"][ext]["surfaces"][0]["bindings"][0].update(primitive=999),
+            "INDEX_RANGE"),
+            ("UV set", lambda d: d["extensions"][ext]["surfaces"][0]["bindings"][0].update(texCoord=True),
+            "INTERACTIVE_TEXCOORD"),
+            ("missing UV", lambda d: d["meshes"][0]["primitives"][0]["attributes"].pop("TEXCOORD_0"),
+            "INTERACTIVE_UV_MISSING"),
+            ("corrupt UV reference",
+            lambda d: d["meshes"][0]["primitives"][0]["attributes"].update(TEXCOORD_0=999), "INDEX_RANGE"),
+            ("shader version", lambda d: d["materials"][1]["shader"].update(version="2.0.0"),
+            "INTERACTIVE_MATERIAL"),
+            ("invalid SemVer", lambda d: d["materials"][1]["shader"].update(version="1.0"),
+            "SHADER_VERSION"),
+            ("parameter range", lambda d: d["materials"][1].update(shaderParameters={"brightness": -1}),
+            "SHADER_PARAM_VALUE"),
+            ("parameter type", lambda d: d["materials"][1].update(shaderParameters={"unlit": 1}),
+            "SHADER_PARAM_VALUE"),
+            ("missing fallback", lambda d: d["materials"][1].pop("roughnessFactor"),
+            "ADM_ERR_MISSING_PBR_FALLBACK"),
+            ("extension version", lambda d: d["extensions"][ext].update(version="2.0.0"),
+            "INTERACTIVE_EXTENSION_VERSION"),
+            ("aspect ratio", lambda d: d["extensions"][ext]["surfaces"][0].update(aspectRatio=0),
+            "INTERACTIVE_ASPECT_RATIO"),
+            ("aspect ratio underflows binary32",
+            lambda d: d["extensions"][ext]["surfaces"][0].update(aspectRatio=1e-46),
+            "INTERACTIVE_ASPECT_RATIO"),
+            ("huge aspect ratio", lambda d: d["extensions"][ext]["surfaces"][0].update(aspectRatio=10 ** 400),
+            "INTERACTIVE_ASPECT_RATIO"),
+            ("huge brightness", lambda d: d["materials"][1].update(shaderParameters={"brightness": 10 ** 400}),
+            "SHADER_PARAM_VALUE"),
+            ("unbound primitive", lambda d: d["extensions"][ext]["surfaces"].pop(),
+            "INTERACTIVE_BINDING_MISSING"),
+            ("missing extension data", lambda d: d.pop("extensions"), "INTERACTIVE_EXTENSION_MISSING"),
+            ("duplicate binding",
+            lambda d: d["extensions"][ext]["surfaces"][1]["bindings"][0].update(node=0, texCoord=0),
+            "INTERACTIVE_BINDING_DUPLICATE"),
+            ("noninteractive material", lambda d: d["meshes"][0]["primitives"][0].update(material=0),
+            "INTERACTIVE_MATERIAL"),
+            ("unknown required extension",
+            lambda d: (d["extensionsUsed"].append("Other_v1"), d.update(extensionsRequired=["Other_v1"])),
+            "EXTENSION_UNSUPPORTED"),
+        )
+        for label, mutate, code in cases:
+            with self.subTest(case=label):
+                changed = copy.deepcopy(self.doc)
+                mutate(changed)
+                self.assertIn(code, self.codes(changed))
+
+    def test_external_fallback_is_validated_and_resolved(self):
+        blob = encode_png(1, 1, b"\x20\x40\x60\xff")
+        self.doc["images"] = [{"uri": "screen.png", "mimeType": "image/png",
+                              "sha256": hashlib.sha256(blob).hexdigest()}]
+        self.doc["extensionsUsed"].append(K.EXTERNAL_IMAGES_EXT)
+        self.doc["extensionsRequired"] = [K.EXTERNAL_IMAGES_EXT]
+        data = write_container(K.ADM_MAGIC, self.doc, self.chunks)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "screen.png").write_bytes(blob)
+            report = validate_adm_resolved(data, root / "terminal.adm")
+            self.assertTrue(report.ok, report.format())
+
+    def test_published_negative_interactive_fixtures(self):
+        cases = {
+            "duplicate_id": "INTERACTIVE_SURFACE_ID_DUPLICATE",
+            "node": "INDEX_RANGE",
+            "primitive": "INDEX_RANGE",
+            "missing_uv": "INTERACTIVE_UV_MISSING",
+            "uv_set": "INTERACTIVE_TEXCOORD",
+            "shader_version": "INTERACTIVE_MATERIAL",
+            "parameter": "SHADER_PARAM_VALUE",
+            "extension_version": "INTERACTIVE_EXTENSION_VERSION",
+            "required_unknown": "EXTENSION_UNSUPPORTED",
+            "bad_material": "INTERACTIVE_MATERIAL",
+            "missing_fallback": "ADM_ERR_MISSING_PBR_FALLBACK",
+        }
+        for name, code in cases.items():
+            with self.subTest(case=name):
+                path = FIXTURES.parent / "invalid" / f"bad_interactive_{name}.adm"
+                report = validate_adm(path.read_bytes())
+                self.assertIn(code, {issue.code for issue in report.errors}, report.format())
 
 
 if __name__ == "__main__":

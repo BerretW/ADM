@@ -1,0 +1,39 @@
+{
+  "extension": "ADM_interactive_surfaces_v1",
+  "version": "1.0.0",
+  "capability": "ADM-INTERACTIVE-SURFACES-1",
+  "surfaces": {
+    "main_display": {"node": 0, "primitive": 0, "texCoord": 0},
+    "security_monitor_right": {"node": 1, "primitive": 0, "texCoord": 0}
+  },
+  "sharedMesh": 0,
+  "sharedMaterial": 1,
+  "triangleCountPerSurface": 2,
+  "firstTriangleUv": [[0, 0], [1, 0], [1, 1]],
+  "hitTest": {
+    "barycentric": [0.25, 0.25, 0.5],
+    "uv": [0.75, 0.5],
+    "contentSize": [4, 2],
+    "pixel": [3, 1]
+  },
+  "runtime": {
+    "sourceSrgb": [0.5, 0.25, 1.0],
+    "sourceAlpha": 0.5,
+    "brightness": 2.0,
+    "unlitLinearRgb": [0.4280822809644651, 0.10175217634311358, 2.0],
+    "litBaseLinearRgb": [0.3424658247715721, 0.10175217634311358, 1.0],
+    "litEmissiveLinearRgb": [0.21404114048223255, 0.05087608817155679, 1.0],
+    "alpha": 0.4,
+    "vertexAlpha": 4.0,
+    "clampedAlpha": 1.0
+  },
+  "sampling": {
+    "texelsSrgb": [
+      [[0.0, 0.0, 0.0, 1.0], [1.0, 0.5, 0.25, 0.5]],
+      [[0.25, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.25]]
+    ],
+    "uv": [0.5, 0.5],
+    "linearRgba": [0.2627190220428892, 0.05351028512055814, 0.2627190220428892, 0.4375],
+    "bottomLeftRgba": [0.05087608817155679, 0.0, 0.0, 0.0]
+  }
+}
