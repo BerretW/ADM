@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""ADM Draft 0.4 byte-accurate container writer/validator (not full semantic compliance)."""
+"""ADM 1.0 container writer/validator (not full semantic compliance)."""
 import hashlib, json, math, re, struct, sys, pathlib
 HEADER=struct.Struct('<4sHHIIQQQQIIQ')
 ENTRY=struct.Struct('<Q4sII I QQQ32s')
 assert HEADER.size == 64 and ENTRY.size == 80
 LIMIT_MANIFEST=16*1024*1024
 LIMIT_CHUNK=256*1024*1024
+LIMIT_FILE=8*1024*1024*1024
+HASH_BLOCK=1024*1024
 MAX_CHUNKS=65535
 class AdmError(ValueError): pass
 
@@ -34,6 +36,58 @@ def no_duplicate(pairs):
         if k in d:raise AdmError('ADM_ERR_DUPLICATE_JSON_KEY')
         d[k]=v
     return d
+
+
+def _strict_float(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise AdmError("ADM_ERR_NONFINITE")
+    return value
+
+
+def _read_at(stream, offset, length, file_size):
+    if type(offset) is not int or type(length) is not int or offset < 0 or length < 0 or offset + length > file_size:
+        raise AdmError("ADM_ERR_BOUNDS")
+    stream.seek(offset)
+    data = stream.read(length)
+    if len(data) != length:
+        raise AdmError("ADM_ERR_BOUNDS")
+    return data
+
+
+def _zero_region(stream, start, end, file_size):
+    if end < start or end - start > 15:
+        raise AdmError("ADM_ERR_BOUNDS")
+    if any(_read_at(stream, start, end - start, file_size)):
+        raise AdmError("ADM_ERR_PADDING")
+
+
+def _hash_region(stream, offset, length, file_size):
+    digest = hashlib.sha256()
+    cursor, remaining = offset, length
+    while remaining:
+        amount = min(remaining, HASH_BLOCK)
+        digest.update(_read_at(stream, cursor, amount, file_size))
+        cursor += amount
+        remaining -= amount
+    return digest.digest()
+
+
+def _validate_json_tree(value, depth=0, max_depth=64):
+    if depth > max_depth:
+        raise AdmError("ADM_ERR_RESOURCE_LIMIT")
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8", "strict")
+        except UnicodeEncodeError as exc:
+            raise AdmError("ADM_ERR_JSON") from exc
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            _validate_json_tree(key, depth + 1, max_depth)
+            _validate_json_tree(child, depth + 1, max_depth)
+    elif isinstance(value, list):
+        for child in value:
+            _validate_json_tree(child, depth + 1, max_depth)
 
 
 def verify_interactive(manifest):
@@ -159,72 +213,173 @@ def verify_interactive(manifest):
                 raise AdmError("ADM_ERR_INTERACTIVE_BINDING_MISSING")
 
 
-def verify(path, verify_payload=True):
-    b=pathlib.Path(path).read_bytes()
-    if len(b)<64:raise AdmError('ADM_ERR_TRUNCATED_HEADER')
-    magic,maj,minr,hsize,flags,fsize,moff,mlen,doff,n,esize,res=HEADER.unpack_from(b)
-    if magic not in (b'ADM0',b'AMA0') or (maj,minr,hsize,flags,res,moff,esize)!=(1,0,64,0,0,64,80):raise AdmError('ADM_ERR_HEADER')
-    if fsize!=len(b) or not 2<=mlen<=LIMIT_MANIFEST or n>MAX_CHUNKS or doff!=align(64+mlen) or doff+n*80>fsize:raise AdmError('ADM_ERR_BOUNDS')
-    if any(b[64+mlen:doff]):raise AdmError('ADM_ERR_PADDING')
-    try:m=json.loads(b[64:64+mlen].decode('utf8'),object_pairs_hook=no_duplicate,parse_constant=lambda v: (_ for _ in ()).throw(AdmError('ADM_ERR_NONFINITE')))
-    except (UnicodeError,json.JSONDecodeError) as e:raise AdmError('ADM_ERR_JSON') from e
-    if not isinstance(m,dict):raise AdmError('ADM_ERR_MANIFEST')
-    if magic==b'ADM0':
-        for k in ('asset','nodes','scenes','scene','meshes','accessors','bufferViews'):
-            if k not in m:raise AdmError('ADM_ERR_MANIFEST_REQUIRED:'+k)
-    else:
-        for k in ('asset','library','clips','accessors','bufferViews'):
-            if k not in m:raise AdmError('ADM_ERR_MANIFEST_REQUIRED:'+k)
-        for clip in m['clips']:
-            if not str(clip.get('description','')).strip():raise AdmError('ADM_ERR_MISSING_DESCRIPTION')
-    chunks={};last_id=0;prev_end=align(doff+n*80)
-    if any(b[doff+n*80:prev_end]):raise AdmError('ADM_ERR_PADDING')
-    for i in range(n):
-        cid,typ,flags,codec,res,off,stored,raw,sha=ENTRY.unpack_from(b,doff+i*80)
-        if not 0<cid<=4294967295 or cid<=last_id:raise AdmError('ADM_ERR_CHUNK_ID')
-        if flags&~1 or res or not stored or not raw or raw>LIMIT_CHUNK:raise AdmError('ADM_ERR_CHUNK_ENTRY')
-        if off%16 or off<prev_end or off+stored>len(b):raise AdmError('ADM_ERR_CHUNK_BOUNDS')
-        if any(b[prev_end:off]):raise AdmError('ADM_ERR_PADDING')
-        if typ not in (b'GEOM',b'ANIM',b'IMAG',b'DATA') and flags&1:raise AdmError('ADM_ERR_UNSUPPORTED_CHUNK')
-        if codec not in (0,1) and flags&1:raise AdmError('ADM_ERR_UNSUPPORTED_CODEC')
-        if codec==0 and stored!=raw:raise AdmError('ADM_ERR_CHUNK_SIZE')
-        if verify_payload:
-            if codec != 0:raise AdmError('ADM_ERR_UNSUPPORTED_CODEC')
-            if hashlib.sha256(b[off:off+stored]).digest()!=sha:raise AdmError('ADM_ERR_HASH_MISMATCH')
-        chunks[cid]=(typ,raw)
-        last_id=cid;prev_end=align(off+stored)
-    if prev_end!=len(b) or any(b[len(b)-(prev_end-(off+stored)):] if n and prev_end>off+stored else b''):raise AdmError('ADM_ERR_TRAILING_BYTES')
-    for v in m.get('bufferViews',[]):
-        if not isinstance(v,dict) or not all(k in v for k in ('chunkId','byteOffset','byteLength')):raise AdmError('ADM_ERR_BUFFER_VIEW')
-        c=v['chunkId'];start=v['byteOffset'];size=v['byteLength']
-        if c not in chunks or not isinstance(start,int) or not isinstance(size,int) or start<0 or size<0 or start+size>chunks[c][1]:raise AdmError('ADM_ERR_BUFFER_VIEW')
-    for material in m.get('materials',[]):
-        if not isinstance(material,dict):raise AdmError('ADM_ERR_MATERIAL')
-        shader=material.get('shader')
-        if shader is not None and not isinstance(shader,dict):raise AdmError('ADM_ERR_MATERIAL_SHADER')
-        if shader is not None and (shader.get('id'),shader.get('version'))!=('adm.pbr.metallic_roughness','1.0.0'):
-            if any(key not in material for key in ('baseColorFactor','metallicFactor','roughnessFactor','emissiveFactor','alphaMode')):
-                raise AdmError('ADM_ERR_MISSING_PBR_FALLBACK')
-    if magic==b'ADM0':verify_interactive(m)
-    for a in m.get('accessors',[]):
+def verify(path, verify_payload=True, *, max_file_bytes=LIMIT_FILE):
+    """Validate container structure without loading payloads into memory."""
+    file_path = pathlib.Path(path)
+    file_size = file_path.stat().st_size
+    if type(max_file_bytes) is not int or max_file_bytes < 0:
+        raise ValueError("max_file_bytes must be a nonnegative integer")
+    if file_size > max_file_bytes:
+        raise AdmError("ADM_ERR_RESOURCE_LIMIT")
+
+    with file_path.open("rb") as stream:
+        if file_size < HEADER.size:
+            raise AdmError("ADM_ERR_TRUNCATED_HEADER")
+        header = _read_at(stream, 0, HEADER.size, file_size)
+        magic, major, minor, header_size, flags, declared_size, manifest_offset, manifest_size, \
+            directory_offset, chunk_count, entry_size, reserved = HEADER.unpack(header)
+        if magic not in (b"ADM0", b"AMA0") or (
+                major, minor, header_size, flags, reserved, manifest_offset, entry_size
+        ) != (1, 0, 64, 0, 0, 64, ENTRY.size):
+            raise AdmError("ADM_ERR_HEADER")
+        if (declared_size != file_size or not 2 <= manifest_size <= LIMIT_MANIFEST
+                or chunk_count > MAX_CHUNKS or directory_offset != align(64 + manifest_size)
+                or directory_offset + chunk_count * ENTRY.size > file_size):
+            raise AdmError("ADM_ERR_BOUNDS")
+        _zero_region(stream, manifest_offset + manifest_size, directory_offset, file_size)
+        manifest_bytes = _read_at(stream, manifest_offset, manifest_size, file_size)
         try:
-            bv=m['bufferViews'][a['bufferView']];unit={'F32':4,'U32':4,'U16':2,'U8':1}[a['componentType']];elems={'SCALAR':1,'VEC2':2,'VEC3':3,'VEC4':4,'MAT4':16}[a['type']];offset=a.get('byteOffset',0); count=a['count']
-            if not all(isinstance(t,int) and t>=0 for t in (offset,count)) or offset%unit or offset+count*unit*elems>bv['byteLength']:raise ValueError('bounds')
-        except (KeyError,IndexError,ValueError,TypeError):raise AdmError('ADM_ERR_ACCESSOR')
-    graph={}
-    for dep in m.get('chunkDependencies',[]):
-        node=dep['chunkId']; req=dep['requires']
-        if node not in chunks or node in graph or not isinstance(req,list) or len(set(req))!=len(req) or node in req or any(x not in chunks for x in req):raise AdmError('ADM_ERR_DEPENDENCY')
-        graph[node]=req
-    color={}
-    def walk(node):
-        if color.get(node)==1:raise AdmError('ADM_ERR_DEPENDENCY_CYCLE')
-        if color.get(node)==2:return
-        color[node]=1
-        for adj in graph.get(node,[]):walk(adj)
-        color[node]=2
-    for node in graph:walk(node)
-    return {'file':str(path),'kind':magic.decode(),'chunks':n,'manifestBytes':mlen,'bufferViews':len(m.get('bufferViews',[])),'verifiedPayloads':verify_payload}
+            manifest = json.loads(
+                manifest_bytes.decode("utf-8", "strict"),
+                object_pairs_hook=no_duplicate,
+                parse_constant=lambda _value: (_ for _ in ()).throw(AdmError("ADM_ERR_NONFINITE")),
+                parse_float=_strict_float,
+            )
+        except AdmError:
+            raise
+        except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise AdmError("ADM_ERR_JSON") from exc
+        if not isinstance(manifest, dict):
+            raise AdmError("ADM_ERR_MANIFEST")
+        _validate_json_tree(manifest)
+
+        if magic == b"ADM0":
+            required = ("asset", "nodes", "scenes", "scene", "meshes", "accessors", "bufferViews")
+        else:
+            required = ("asset", "library", "clips", "accessors", "bufferViews")
+        for key in required:
+            if key not in manifest:
+                raise AdmError("ADM_ERR_MANIFEST_REQUIRED:" + key)
+        if magic == b"AMA0":
+            if not isinstance(manifest["clips"], list):
+                raise AdmError("ADM_ERR_MANIFEST")
+            for clip in manifest["clips"]:
+                if not isinstance(clip, dict) or not str(clip.get("description", "")).strip():
+                    raise AdmError("ADM_ERR_MISSING_DESCRIPTION")
+
+        directory_size = chunk_count * ENTRY.size
+        directory = _read_at(stream, directory_offset, directory_size, file_size)
+        data_start = align(directory_offset + directory_size)
+        _zero_region(stream, directory_offset + directory_size, data_start, file_size)
+        chunks = {}
+        last_id = 0
+        payload_end = data_start
+        for index in range(chunk_count):
+            cid, chunk_type, entry_flags, codec, entry_reserved, offset, stored, raw, digest = \
+                ENTRY.unpack_from(directory, index * ENTRY.size)
+            if type(cid) is not int or not 0 < cid <= 0xffffffff or cid <= last_id:
+                raise AdmError("ADM_ERR_CHUNK_ID")
+            if (entry_flags & ~1 or entry_reserved or not stored or not raw or raw > LIMIT_CHUNK
+                    or any(byte < 32 or byte > 126 for byte in chunk_type)):
+                raise AdmError("ADM_ERR_CHUNK_ENTRY")
+            if (offset % 16 or offset < align(payload_end) or offset + stored > file_size):
+                raise AdmError("ADM_ERR_CHUNK_BOUNDS")
+            _zero_region(stream, payload_end, offset, file_size)
+            if chunk_type not in (b"GEOM", b"ANIM", b"IMAG", b"DATA") and entry_flags & 1:
+                raise AdmError("ADM_ERR_UNSUPPORTED_CHUNK")
+            if codec not in (0, 1) and entry_flags & 1:
+                raise AdmError("ADM_ERR_UNSUPPORTED_CODEC")
+            if codec == 0 and stored != raw:
+                raise AdmError("ADM_ERR_CHUNK_SIZE")
+            if verify_payload:
+                if codec != 0:
+                    raise AdmError("ADM_ERR_UNSUPPORTED_CODEC")
+                if _hash_region(stream, offset, stored, file_size) != digest:
+                    raise AdmError("ADM_ERR_HASH_MISMATCH")
+            chunks[cid] = (chunk_type, raw)
+            last_id = cid
+            payload_end = offset + stored
+        if file_size != align(payload_end):
+            raise AdmError("ADM_ERR_TRAILING_BYTES")
+        _zero_region(stream, payload_end, file_size, file_size)
+
+        buffer_views = manifest.get("bufferViews", [])
+        if not isinstance(buffer_views, list):
+            raise AdmError("ADM_ERR_BUFFER_VIEW")
+        for view in buffer_views:
+            if not isinstance(view, dict) or not all(k in view for k in ("chunkId", "byteOffset", "byteLength")):
+                raise AdmError("ADM_ERR_BUFFER_VIEW")
+            chunk_id, start, length = (view[k] for k in ("chunkId", "byteOffset", "byteLength"))
+            if (type(chunk_id) is not int or type(start) is not int or type(length) is not int or
+                    chunk_id not in chunks or start < 0 or length < 0 or start + length > chunks[chunk_id][1]):
+                raise AdmError("ADM_ERR_BUFFER_VIEW")
+
+        materials = manifest.get("materials", [])
+        if not isinstance(materials, list):
+            raise AdmError("ADM_ERR_MATERIAL")
+        for material in materials:
+            if not isinstance(material, dict):
+                raise AdmError("ADM_ERR_MATERIAL")
+            shader = material.get("shader")
+            if shader is not None and not isinstance(shader, dict):
+                raise AdmError("ADM_ERR_MATERIAL_SHADER")
+            if shader is not None and (shader.get("id"), shader.get("version")) != (
+                    "adm.pbr.metallic_roughness", "1.0.0"):
+                fallback = ("baseColorFactor", "metallicFactor", "roughnessFactor", "emissiveFactor", "alphaMode")
+                if any(key not in material for key in fallback):
+                    raise AdmError("ADM_ERR_MISSING_PBR_FALLBACK")
+        if magic == b"ADM0":
+            verify_interactive(manifest)
+
+        accessors = manifest.get("accessors", [])
+        if not isinstance(accessors, list):
+            raise AdmError("ADM_ERR_ACCESSOR")
+        for accessor in accessors:
+            try:
+                view = manifest["bufferViews"][accessor["bufferView"]]
+                unit = {"F32": 4, "U32": 4, "U16": 2, "U8": 1}[accessor["componentType"]]
+                elements = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}[accessor["type"]]
+                offset, count = accessor.get("byteOffset", 0), accessor["count"]
+                if (type(offset) is not int or type(count) is not int or offset < 0 or count < 0
+                        or offset % unit or offset + count * unit * elements > view["byteLength"]):
+                    raise ValueError("bounds")
+            except (KeyError, IndexError, ValueError, TypeError):
+                raise AdmError("ADM_ERR_ACCESSOR") from None
+
+        dependencies = manifest.get("chunkDependencies", [])
+        if not isinstance(dependencies, list):
+            raise AdmError("ADM_ERR_DEPENDENCY")
+        graph = {}
+        for dependency in dependencies:
+            if not isinstance(dependency, dict) or not all(k in dependency for k in ("chunkId", "requires")):
+                raise AdmError("ADM_ERR_DEPENDENCY")
+            node, required_chunks = dependency["chunkId"], dependency["requires"]
+            if (type(node) is not int or node not in chunks or node in graph
+                    or not isinstance(required_chunks, list)
+                    or any(type(chunk_id) is not int or chunk_id not in chunks for chunk_id in required_chunks)
+                    or len(set(required_chunks)) != len(required_chunks) or node in required_chunks):
+                raise AdmError("ADM_ERR_DEPENDENCY")
+            graph[node] = required_chunks
+        colors = {}
+        for root in graph:
+            stack = [(root, False)]
+            while stack:
+                node, leaving = stack.pop()
+                if leaving:
+                    colors[node] = 2
+                    continue
+                state = colors.get(node, 0)
+                if state == 1:
+                    raise AdmError("ADM_ERR_DEPENDENCY_CYCLE")
+                if state == 2:
+                    continue
+                colors[node] = 1
+                stack.append((node, True))
+                stack.extend((child, False) for child in reversed(graph.get(node, [])))
+
+    return {"file": str(path), "kind": magic.decode(), "chunks": chunk_count,
+            "manifestBytes": manifest_size, "bufferViews": len(buffer_views),
+            "verifiedPayloads": verify_payload}
 
 if __name__=='__main__':
     status=0
@@ -235,25 +390,94 @@ if __name__=='__main__':
 
 class RangeReader:
     """Minimal demonstrator: header/manifest/directory via seek; demand-load RAW chunks."""
-    def __init__(self,path):
-        self.path=path;self.bytes_read=0
-        with open(path,'rb') as f:
-            def read(n):
-                b=f.read(n);self.bytes_read+=len(b);return b
-            h=read(64)
-            if len(h)!=64:raise AdmError('ADM_ERR_TRUNCATED_HEADER')
-            magic,major,minor,hs,flags,fs,mo,ml,do,n,esz,res=HEADER.unpack(h)
-            if magic not in (b'ADM0',b'AMA0') or (major,minor,hs,flags,mo,esz,res)!=(1,0,64,0,64,80,0) or n>MAX_CHUNKS or ml>LIMIT_MANIFEST or do!=align(64+ml):raise AdmError('ADM_ERR_HEADER')
-            f.seek(mo);self.manifest=json.loads(read(ml))
-            f.seek(do);d=read(n*80)
-            self.chunks={}
-            for i in range(n):
-                cid,typ,ef,codec,rsv,off,stored,raw,sha=ENTRY.unpack_from(d,i*80)
-                self.chunks[cid]=(typ,codec,off,stored,raw,sha)
-    def load(self,cid):
-        typ,codec,off,stored,raw,sha=self.chunks[cid]
-        if codec!=0:raise AdmError('ADM_ERR_UNSUPPORTED_CODEC')
-        with open(self.path,'rb') as f:
-            f.seek(off);data=f.read(stored);self.bytes_read+=len(data)
-        if hashlib.sha256(data).digest()!=sha:raise AdmError('ADM_ERR_HASH_MISMATCH')
+    def __init__(self, path, *, max_file_bytes=LIMIT_FILE):
+        if type(max_file_bytes) is not int or max_file_bytes < 0:
+            raise ValueError("max_file_bytes must be a nonnegative integer")
+        self.path = pathlib.Path(path)
+        self.file_size = self.path.stat().st_size
+        if self.file_size > max_file_bytes:
+            raise AdmError("ADM_ERR_RESOURCE_LIMIT")
+        self.bytes_read = 0
+
+        with self.path.open("rb") as stream:
+            header_bytes = self._read(stream, 0, HEADER.size)
+            if len(header_bytes) != HEADER.size:
+                raise AdmError("ADM_ERR_TRUNCATED_HEADER")
+            magic, major, minor, header_size, flags, declared_size, manifest_offset, manifest_size, \
+                directory_offset, chunk_count, entry_size, reserved = HEADER.unpack(header_bytes)
+            if (magic not in (b"ADM0", b"AMA0")
+                    or (major, minor, header_size, flags, reserved, manifest_offset, entry_size)
+                    != (1, 0, 64, 0, 0, 64, ENTRY.size)
+                    or declared_size != self.file_size
+                    or not 2 <= manifest_size <= LIMIT_MANIFEST
+                    or chunk_count > MAX_CHUNKS
+                    or directory_offset != align(64 + manifest_size)
+                    or directory_offset + chunk_count * ENTRY.size > self.file_size):
+                raise AdmError("ADM_ERR_HEADER")
+
+            manifest_bytes = self._read(stream, manifest_offset, manifest_size)
+            try:
+                self.manifest = json.loads(
+                    manifest_bytes.decode("utf-8", "strict"),
+                    object_pairs_hook=no_duplicate,
+                    parse_constant=lambda _value: (_ for _ in ()).throw(AdmError("ADM_ERR_NONFINITE")),
+                    parse_float=_strict_float,
+                )
+            except AdmError:
+                raise
+            except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+                raise AdmError("ADM_ERR_JSON") from exc
+            if not isinstance(self.manifest, dict):
+                raise AdmError("ADM_ERR_MANIFEST")
+            _validate_json_tree(self.manifest)
+
+            directory_size = chunk_count * ENTRY.size
+            directory = self._read(stream, directory_offset, directory_size)
+            payload_start = align(directory_offset + directory_size)
+            self.chunks = {}
+            last_id = 0
+            payload_end = payload_start
+            for index in range(chunk_count):
+                cid, chunk_type, entry_flags, codec, entry_reserved, offset, stored, raw, digest = \
+                    ENTRY.unpack_from(directory, index * ENTRY.size)
+                if (not 0 < cid <= 0xffffffff or cid <= last_id
+                        or entry_flags & ~1 or entry_reserved
+                        or not stored or stored > LIMIT_CHUNK or not raw or raw > LIMIT_CHUNK
+                        or any(byte < 32 or byte > 126 for byte in chunk_type)
+                        or offset % 16 or offset < align(payload_end)
+                        or offset + stored > self.file_size):
+                    raise AdmError("ADM_ERR_CHUNK_ENTRY")
+                if codec == 0 and stored != raw:
+                    raise AdmError("ADM_ERR_CHUNK_SIZE")
+                if codec not in (0, 1) and entry_flags & 1:
+                    raise AdmError("ADM_ERR_UNSUPPORTED_CODEC")
+                if chunk_type not in (b"GEOM", b"ANIM", b"IMAG", b"DATA") and entry_flags & 1:
+                    raise AdmError("ADM_ERR_UNSUPPORTED_CHUNK")
+                self.chunks[cid] = (chunk_type, codec, offset, stored, raw, digest)
+                last_id = cid
+                payload_end = offset + stored
+            if self.file_size != align(payload_end):
+                raise AdmError("ADM_ERR_TRAILING_BYTES")
+
+    def _read(self, stream, offset, length):
+        if (type(offset) is not int or type(length) is not int or offset < 0 or length < 0
+                or offset + length > self.file_size):
+            raise AdmError("ADM_ERR_BOUNDS")
+        stream.seek(offset)
+        data = stream.read(length)
+        self.bytes_read += len(data)
+        if len(data) != length:
+            raise AdmError("ADM_ERR_BOUNDS")
+        return data
+
+    def load(self, cid):
+        if type(cid) is not int or cid not in self.chunks:
+            raise AdmError("ADM_ERR_CHUNK_ID")
+        _typ, codec, offset, stored, _raw, digest = self.chunks[cid]
+        if codec != 0:
+            raise AdmError("ADM_ERR_UNSUPPORTED_CODEC")
+        with self.path.open("rb") as stream:
+            data = self._read(stream, offset, stored)
+        if hashlib.sha256(data).digest() != digest:
+            raise AdmError("ADM_ERR_HASH_MISMATCH")
         return data

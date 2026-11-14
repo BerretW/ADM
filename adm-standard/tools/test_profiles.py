@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draft 0.4 P1 structural + math smoke tests for vehicle and firearm profiles.
+"""ADM 1.0 structural + math smoke tests for vehicle and firearm profiles.
 Not a complete runtime/animation/LOD conformance suite.
 """
 import json,math,sys,copy

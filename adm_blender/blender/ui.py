@@ -178,6 +178,7 @@ def draw_object_props(layout, context, obj):
     if t == "MODEL":
         layout.prop(p, "copyright")
         layout.prop(p, "default_scene")
+        layout.prop(p, "model_profiles_json", text="Model Profiles")
         draw_model_metadata(layout, p)
     elif t == "COLLIDER":
         box = layout.box()
@@ -261,7 +262,8 @@ def draw_model_metadata(layout, props):
                         box.prop(item, field)
                 else:
                     box.prop(item, field)
-    layout.label(text="Vehicle / weapon profiles remain provisional", icon="INFO")
+    layout.label(text="Known vehicle and firearm profile metadata is validated; assign component roles on nodes.",
+                 icon="INFO")
 
 
 def _role_widget(layout, context, arm, bone, text=None):

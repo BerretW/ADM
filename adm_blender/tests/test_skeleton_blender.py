@@ -623,29 +623,22 @@ def main(tmp):
         sc.frame_set(f)
         pb.rotation_quaternion = Euler((a_, 0, 0)).to_quaternion()
         pb.keyframe_insert("rotation_quaternion")
-    data, rep = AnimExporter(bpy.context, dlib).export()
-    check(rep is not None and rep.ok and rep.doc["library"]["targetProfile"] == "animal.canine.v1",
-          "canine library exported")
-    dog_path = os.path.join(tmp, "canine.adm_anim")
-    with open(dog_path, "wb") as fh:
-        fh.write(data)
-    lvl, reasons, _ = check_library_compat(bpy.context, quads["Dog2"], rep.doc)
+    try:
+        AnimExporter(bpy.context, dlib).export()
+        check(False, "ADM 1.0 exporter must reject a provisional animal profile")
+    except ExportError as exc:
+        check("proposal outside ADM 1.0" in str(exc), "provisional animal library export refused")
+    proposal_doc = {
+        "library": {"targetProfile": "animal.canine.v1", "binding": "SEMANTIC"},
+        "clips": [{"channels": [{"target": {"kind": "bone", "role": "leftHindUpperLeg"}}]}],
+    }
+    lvl, reasons, _ = check_library_compat(bpy.context, quads["Dog2"], proposal_doc)
     check(lvl == SK.PROVISIONAL_SEMANTIC, f"canine -> canine: {lvl}")
-    imp, _s = import_library(bpy.context, dog_path, AnimImportOptions(armature=quads["Dog2"]))
-    check(any(w.startswith("PROVISIONAL") for w in imp.warnings), "provisional import warns")
-    try:
-        import_library(bpy.context, dog_path, AnimImportOptions(armature=quads["Dog2"], allow_provisional=False))
-        check(False, "allow_provisional=False must refuse")
-    except ImportError_:
-        check(True, "allow_provisional=False refuses provisional binding")
-    lvl, reasons, _ = check_library_compat(bpy.context, quads["Horse"], rep.doc)
+    lvl, reasons, _ = check_library_compat(bpy.context, quads["Dog2"], proposal_doc, allow_provisional=False)
+    check(lvl == SK.INCOMPATIBLE, "allow_provisional=False refuses provisional binding")
+    lvl, reasons, _ = check_library_compat(bpy.context, quads["Horse"], proposal_doc)
     check(lvl == SK.INCOMPATIBLE, f"canine -> equine: {lvl} {reasons[:1]}")
-    try:
-        import_library(bpy.context, dog_path, AnimImportOptions(armature=quads["Horse"]))
-        check(False, "canine library must not bind to the equine rig")
-    except ImportError_ as exc:
-        check("INCOMPATIBLE" in str(exc), "canine -> equine import refused")
-    lvl, _r, _ = check_library_compat(bpy.context, armB, rep.doc)
+    lvl, _r, _ = check_library_compat(bpy.context, armB, proposal_doc)
     check(lvl == SK.INCOMPATIBLE, f"canine -> humanoid: {lvl}")
     hum_doc = validate_file(lib_path).doc
     lvl, _r, _ = check_library_compat(bpy.context, dog, hum_doc)

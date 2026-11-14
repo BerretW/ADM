@@ -508,6 +508,8 @@ def main(tmp):
     select(arm, body, active=arm)
     check(bpy.ops.adm.create_model_root(name="Hero") == {"FINISHED"}, "create_model_root")
     root = bpy.data.objects["Hero"]
+    root.adm.model_profiles_json = (
+        '[{"id":"org.example.test-model.v1","schemaVersion":1,"metadata":{"note":"round-trip"}}]')
     check(arm.parent == root and body.parent == arm, "hierarchy")
     select(arm)
     arm.data.adm.export_profile = True
@@ -617,6 +619,7 @@ def main(tmp):
     check(len(face_ids) == 12 and face_ids.count("stone") == 2 and face_ids.count("cloth") == 10,
           f"per-triangle physical surfaces {face_ids}")
     check(doc["modelComponents"][0]["id"] == "back.part", "component exported")
+    check(doc["modelProfiles"][0]["metadata"]["note"] == "round-trip", "model profile metadata exported")
     check(doc["hitboxes"][0]["id"] == "torso", "hitbox exported")
     check(any(d["id"] == "studio.paint" for d in doc.get("shaderDefinitions", [])), "shader definition embedded")
     pm = next(m for m in doc["materials"] if m["name"] == "Paint")
@@ -815,6 +818,7 @@ def main(tmp):
         check(n0 == n1, f"{label} channel count {n0} -> {n1}")
     data, rep = ModelExporter(bpy.context, root2, ExportOptions(vertex_controls=True)).export()
     check(rep.ok, f"re-imported model re-export valid {errs(rep)}")
+    check(rep.doc["modelProfiles"] == doc["modelProfiles"], "model profile metadata round-trip")
     check(rep.doc["physicalMaterials"] == doc["physicalMaterials"], "physical coefficients round-trip")
     check(rep.doc["modelComponents"][0]["socket"] == "prop.socket.back", "component socket round-trip")
     check(rep.doc["hitboxes"][0]["role"] == "torso", "hitbox role round-trip")

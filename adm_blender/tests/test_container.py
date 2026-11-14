@@ -1,4 +1,4 @@
-"""Focused pure-Python Draft 0.4 container and chunk-addressed buffer tests.
+"""Focused pure-Python ADM 1.0 container and chunk-addressed buffer tests.
 
 Run: python -m unittest adm_blender.tests.test_container
 """
@@ -160,8 +160,17 @@ class ContainerTests(unittest.TestCase):
         reference = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(reference)
         class InMemoryPath:
-            def read_bytes(self):
-                return data
+            def stat(self):
+                return type("FileStat", (), {"st_size": len(data)})()
+
+            def open(self, mode):
+                self.assert_mode(mode)
+                return io.BytesIO(data)
+
+            @staticmethod
+            def assert_mode(mode):
+                if mode != "rb":
+                    raise ValueError(f"unsupported mode {mode!r}")
         original = reference.pathlib.Path
         reference.pathlib.Path = lambda _: InMemoryPath()
         try:

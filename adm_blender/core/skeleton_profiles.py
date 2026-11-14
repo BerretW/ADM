@@ -220,7 +220,7 @@ PROFILE_IDS = tuple(_REGISTRY)
 HUMANOID = "humanoid.vrm1"
 GENERIC = "generic.v1"
 QUADRUPED_IDS = tuple(p for p in PROFILE_IDS if _REGISTRY[p]["family"] == "quadruped")
-_CUSTOM_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*\.v[0-9]+$")
+_CUSTOM_ID_RE = re.compile(r"^org(?:\.[a-z][a-z0-9-]*){2,}\.v[1-9][0-9]*$")
 
 
 def get(profile_id):

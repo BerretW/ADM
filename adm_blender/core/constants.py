@@ -1,4 +1,4 @@
-"""Normative constant tables of ADM 1.0 (Draft 0.4)."""
+"""Normative constant tables of ADM 1.0."""
 
 ADM_MAGIC = b"ADM0"
 ANIM_MAGIC = b"AMA0"
@@ -17,6 +17,7 @@ ADM_OPTIONAL_TOP = (
     "attachments", "skeletonProfiles", "facialProfiles", "expressions", "ikChains",
     "componentRoles", "shaderDefinitions", "chunkDependencies", "streamHints",
     "physicalMaterials", "hitboxes", "modelComponents",
+    "modelProfiles",
     "extensionsUsed", "extensionsRequired", "extensions", "extras",
 )
 ANIM_REQUIRED_TOP = ("asset", "library", "clips", "bufferViews", "accessors")

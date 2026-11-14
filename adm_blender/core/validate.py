@@ -437,6 +437,7 @@ class AdmValidator(_Base):
         self.check_expressions()
         self.check_ik()
         self.check_component_roles()
+        self.check_model_profiles()
         self.check_colliders()
         self.check_lods()
         self.check_attachments()
@@ -1261,7 +1262,7 @@ class AdmValidator(_Base):
                              ("referencePose", "targetHeight", "referenceCorrection", "rigId")):
                 continue
             pid = prof["id"]
-            if not isinstance(pid, str) or not (pid in K.BUILTIN_SKELETON_PROFILES or PROFILE_ID_RE.match(pid)):
+            if not isinstance(pid, str) or not (pid in K.BUILTIN_SKELETON_PROFILES or SP.is_custom_id(pid)):
                 self.r.error("PROFILE_ID", p + ".id", f"invalid or unversioned profile id {pid!r}")
             if not self.index(prof["skin"], len(self.skins), p + ".skin", "skins"):
                 continue
@@ -1284,13 +1285,18 @@ class AdmValidator(_Base):
             self.profile_roles[pi] = dict(roles)
             pstatus = SP.status(pid) if isinstance(pid, str) else None
             if pstatus == SP.PROVISIONAL:
-                self.r.warning("PROFILE_PROVISIONAL", p + ".id",
-                               f"'{pid}' is a provisional proposal, not a registered ADM 1.0 profile; "
-                               "SEMANTIC interoperability must not be claimed")
-            elif pstatus is None and isinstance(pid, str) and PROFILE_ID_RE.match(pid):
+                self.r.error("PROFILE_NOT_IN_ADM_1_0", p + ".id",
+                             f"'{pid}' is a non-normative proposal, not an ADM 1.0 skeleton profile")
+            elif pstatus is None and SP.is_custom_id(pid):
                 self.r.warning("PROFILE_UNREGISTERED", p + ".id",
                                f"profile '{pid}' is not in the registry; its role rules cannot be checked")
-            if pstatus in (SP.NORMATIVE, SP.PROVISIONAL):
+            if pstatus == SP.EXACT_ONLY and roles:
+                self.r.error("PROFILE_EXACT_ONLY_ROLES", p + ".roles",
+                             f"'{pid}' is exact-only and MUST NOT define semantic roles")
+            elif pstatus is None and SP.is_custom_id(pid) and roles:
+                self.r.error("PROFILE_CUSTOM_ROLES", p + ".roles",
+                             "unregistered custom profiles are exact-only and MUST NOT define semantic roles")
+            if pstatus == SP.NORMATIVE:
                 defs = SP.roles(pid)
                 ref_name = SP.get(pid)["referencePose"]["name"]
                 for role in roles:
@@ -1550,14 +1556,356 @@ class AdmValidator(_Base):
                 continue
             if not _nonblank(cr["role"]) or not _nonblank(cr["profile"]):
                 self.r.error("COMPONENT_ROLE", p, "role and profile must be nonempty strings")
+            if (isinstance(cr["profile"], str)
+                    and cr["profile"] not in ("vehicle.car.v1", "weapon.firearm.v1")
+                    and not SP.is_custom_id(cr["profile"])):
+                self.r.error("COMPONENT_PROFILE_ID", p + ".profile",
+                             "unregistered component profiles must use org.<reverse-domain>.<profile>.vN")
             self.index(cr["node"], len(self.nodes), p + ".node", "nodes")
+            if not isinstance(cr["role"], str) or not isinstance(cr["profile"], str):
+                continue
             key = (cr["profile"], cr["role"])
             if key in seen:
                 self.r.error("COMPONENT_ROLE_DUPLICATE", p, f"role {cr['role']!r} repeated in profile {cr['profile']!r}")
             seen.add(key)
-            if isinstance(cr["profile"], str) and not cr["profile"].startswith("custom."):
+            if (isinstance(cr["profile"], str)
+                    and cr["profile"] not in ("vehicle.car.v1", "weapon.firearm.v1")
+                    and not SP.is_custom_id(cr["profile"])):
                 self.r.warning("COMPONENT_PROFILE_UNREGISTERED", p,
                                f"profile {cr['profile']!r} is not a published registry profile; non-normative")
+
+    def check_model_profiles(self):
+        profiles = self.array("modelProfiles")
+        known = {"vehicle.car.v1", "weapon.firearm.v1", "weapon.attachment.v1"}
+        records = {}
+        for i, profile in enumerate(profiles):
+            p = f"modelProfiles[{i}]"
+            if not self.keys(profile, p, ("id", "schemaVersion", "metadata")):
+                continue
+            ident = profile["id"]
+            if not isinstance(ident, str) or not _nonblank(ident):
+                self.r.error("MODEL_PROFILE_ID", p + ".id", "must be a nonempty string")
+                continue
+            if ident in records:
+                self.r.error("MODEL_PROFILE_DUPLICATE", p, f"profile {ident!r} is repeated")
+                continue
+            records[ident] = profile
+            if (not _is_int(profile["schemaVersion"], lo=1)
+                    or (ident in known and profile["schemaVersion"] != 1)):
+                self.r.error("MODEL_PROFILE_VERSION", p + ".schemaVersion",
+                             "registered ADM 1.0 model profiles require schemaVersion 1; custom versions must be positive")
+            if not isinstance(profile["metadata"], dict):
+                self.r.error("MODEL_PROFILE_METADATA", p + ".metadata", "must be an object")
+            if ident not in known:
+                if not SP.is_custom_id(ident):
+                    self.r.error("MODEL_PROFILE_ID", p + ".id",
+                                 "unregistered model profiles must use org.<reverse-domain>.<profile>.vN")
+                self.r.warning("MODEL_PROFILE_UNREGISTERED", p + ".id",
+                               f"profile {ident!r} has no ADM 1.0 validation contract")
+
+        component_roles = {}
+        for i, role in enumerate(self.array("componentRoles")):
+            if not isinstance(role, dict) or not isinstance(role.get("profile"), str):
+                continue
+            component_roles.setdefault(role["profile"], []).append(role)
+            if role["profile"] in known and role["profile"] not in records:
+                self.r.error("MODEL_PROFILE_REQUIRED", f"componentRoles[{i}].profile",
+                             f"component roles for {role['profile']!r} require a matching modelProfiles entry")
+
+        for ident, profile in records.items():
+            if ident not in known or not isinstance(profile.get("metadata"), dict):
+                continue
+            p = f"modelProfiles[{ident}]"
+            metadata = profile["metadata"]
+            roles = {}
+            for entry in component_roles.get(ident, []):
+                role = entry.get("role")
+                node = entry.get("node")
+                if isinstance(role, str) and _is_int(node) and 0 <= node < len(self.nodes):
+                    roles[role] = node
+            if len({node for node in roles.values()}) != len(roles):
+                self.r.error("MODEL_PROFILE_ROLE_NODE", p, "each profile role must bind a unique node")
+            for role, node_index in roles.items():
+                node = self.nodes[node_index]
+                if "matrix" in node:
+                    self.r.error("MODEL_PROFILE_NODE_MATRIX", f"nodes[{node_index}]",
+                                 "mechanical profile pivots must use TRS")
+                rotation = node.get("rotation", [0, 0, 0, 1])
+                scale = node.get("scale", [1, 1, 1])
+                if (_is_vec(rotation, 4) and any(abs(a - b) > 1e-7
+                                                 for a, b in zip(rotation, (0, 0, 0, 1)))):
+                    self.r.error("MODEL_PROFILE_NODE_ROTATION", f"nodes[{node_index}]",
+                                 f"role {role!r} pivot must have identity rest rotation")
+                if not (_is_vec(scale, 3) and all(abs(x - 1.0) <= 1e-7 for x in scale)):
+                    self.r.error("MODEL_PROFILE_NODE_SCALE", f"nodes[{node_index}]",
+                                 f"role {role!r} pivot must have unit positive scale")
+                world = self.world[node_index]
+                if world is not None and any(
+                        abs(mat_col3(world, column)[axis] - (1.0 if column == axis else 0.0)) > 1e-5
+                        for column in range(3) for axis in range(3)):
+                    self.r.error("MODEL_PROFILE_NODE_AXES", f"nodes[{node_index}]",
+                                 f"role {role!r} world axes must align with the profile frame")
+                if node_index in getattr(self, "joint_nodes", set()):
+                    self.r.error("MODEL_PROFILE_SKIN_JOINT", f"nodes[{node_index}]",
+                                 "component role nodes must not be skin joints")
+
+            if ident == "vehicle.car.v1":
+                allowed = {"axles", "hinges", "visualOnly", "extensions"}
+                if set(metadata) - allowed:
+                    self.r.error("MODEL_PROFILE_METADATA_FIELD", p,
+                                 f"unknown metadata fields: {sorted(set(metadata) - allowed)}")
+                axles = metadata.get("axles")
+                if not isinstance(axles, list) or len(axles) < 2:
+                    self.r.error("VEHICLE_AXLES", p + ".metadata.axles", "requires at least two axles")
+                    continue
+                chassis = roles.get("chassis")
+                if chassis is None:
+                    self.r.error("VEHICLE_CHASSIS", p, "requires component role 'chassis'")
+                else:
+                    kinematic = ("wheel.", "steering.", "suspension.", "door.")
+                    for role, node_index in roles.items():
+                        if (role != "chassis" and
+                                (role.startswith(kinematic) or role in ("hood", "trunk"))
+                                and not self._is_ancestor(chassis, node_index)):
+                            self.r.error("VEHICLE_CHASSIS_ANCESTOR", f"componentRoles.{role}",
+                                         "chassis must be an ancestor of every kinematic component")
+                expected_hinges = {
+                    role for role in roles
+                    if role.startswith("door.") or role in ("hood", "trunk")
+                }
+                hinges = metadata.get("hinges", [])
+                if not isinstance(hinges, list):
+                    self.r.error("VEHICLE_HINGES", p + ".metadata.hinges", "must be an array")
+                    hinges = []
+                hinge_roles = set()
+                for hi, hinge in enumerate(hinges):
+                    hp = f"{p}.metadata.hinges[{hi}]"
+                    if not self.keys(hinge, hp, ("role", "openAngleRad")):
+                        continue
+                    role = hinge["role"]
+                    angle = hinge["openAngleRad"]
+                    if not isinstance(role, str) or role not in expected_hinges or role in hinge_roles:
+                        self.r.error("VEHICLE_HINGE_ROLE", hp + ".role",
+                                     "must uniquely name a present door, hood or trunk role")
+                    if isinstance(role, str):
+                        hinge_roles.add(role)
+                    if not _is_num(angle) or angle == 0 or abs(angle) > math.pi:
+                        self.r.error("VEHICLE_HINGE_ANGLE", hp + ".openAngleRad",
+                                     "must be finite, nonzero and within [-pi, pi]")
+                if hinge_roles != expected_hinges:
+                    self.r.error("VEHICLE_HINGES", p + ".metadata.hinges",
+                                 "must declare every present hinge role and no absent roles")
+                if "visualOnly" in metadata and not isinstance(metadata["visualOnly"], bool):
+                    self.r.error("VEHICLE_VISUAL_ONLY", p + ".metadata.visualOnly", "must be a boolean")
+                previous_z = None
+                used_wheels = set()
+                for ai, axle in enumerate(axles):
+                    ap = f"{p}.metadata.axles[{ai}]"
+                    if not self.keys(axle, ap, ("index", "wheels"), ("steeringAngleRad", "driven")):
+                        continue
+                    if not _is_int(axle["index"]) or axle["index"] != ai:
+                        self.r.error("VEHICLE_AXLE_INDEX", ap + ".index",
+                                     "axle indexes must be consecutive from zero")
+                    wheels = axle["wheels"]
+                    if not isinstance(wheels, dict) or set(wheels) != {"left", "right"}:
+                        self.r.error("VEHICLE_WHEELS", ap + ".wheels",
+                                     "must define exactly left and right wheels")
+                        continue
+                    wheel_positions = {}
+                    for side in ("left", "right"):
+                        wp = f"{ap}.wheels.{side}"
+                        wheel = wheels[side]
+                        if not self.keys(wheel, wp, ("role", "radius", "width")):
+                            continue
+                        expected = f"wheel.axle{ai}.{side}"
+                        role = wheel["role"]
+                        node_index = roles.get(expected)
+                        if role != expected or node_index is None or role in used_wheels:
+                            self.r.error("VEHICLE_WHEEL_ROLE", wp + ".role",
+                                         f"must uniquely resolve to component role {expected!r}")
+                        used_wheels.add(expected)
+                        for dimension in ("radius", "width"):
+                            if not _is_num(wheel[dimension]) or wheel[dimension] <= 0:
+                                self.r.error("VEHICLE_WHEEL_DIMENSION", wp + "." + dimension,
+                                             "must be finite and greater than zero")
+                        if node_index is not None and self.world[node_index] is not None:
+                            wheel_positions[side] = self._relative_position(chassis, node_index) \
+                                if chassis is not None else mat_translation(self.world[node_index])
+                            if chassis is not None:
+                                ancestor = self.parent[node_index]
+                                found = False
+                                while ancestor is not None:
+                                    if ancestor == chassis:
+                                        found = True
+                                        break
+                                    ancestor = self.parent[ancestor]
+                                if not found:
+                                    self.r.error("VEHICLE_CHASSIS_ANCESTOR", wp,
+                                                 "wheel pivot must descend from the chassis")
+                    if set(wheel_positions) == {"left", "right"}:
+                        left, right = wheel_positions["left"], wheel_positions["right"]
+                        if left[0] >= right[0]:
+                            self.r.error("VEHICLE_WHEEL_SIDE_ORDER", ap,
+                                         "left wheel center must have smaller X than right")
+                        axle_z = (left[2] + right[2]) / 2
+                        if previous_z is not None and axle_z <= previous_z:
+                            self.r.error("VEHICLE_AXLE_ORDER", ap,
+                                         "axle centers must have strictly increasing Z")
+                        previous_z = axle_z
+                    steering_angle = axle.get("steeringAngleRad", 0)
+                    if not _is_num(steering_angle) or not 0 <= steering_angle <= math.pi / 2:
+                        self.r.error("VEHICLE_STEERING_LIMIT", ap + ".steeringAngleRad",
+                                     "must be finite and in [0, pi/2]")
+                    if "driven" in axle and not isinstance(axle["driven"], bool):
+                        self.r.error("VEHICLE_DRIVEN", ap + ".driven", "must be a boolean")
+                    if _is_num(steering_angle) and steering_angle > 0:
+                        for side in ("left", "right"):
+                            steering = roles.get(f"steering.axle{ai}.{side}")
+                            wheel = roles.get(f"wheel.axle{ai}.{side}")
+                            if (steering is None or wheel is None
+                                    or not self._is_ancestor(steering, wheel)):
+                                self.r.error("VEHICLE_STEERING_ROLE", ap,
+                                             "nonzero steering requires matching steering pivots above each wheel")
+                if len(used_wheels) != 2 * len(axles):
+                    self.r.error("VEHICLE_WHEEL_ROLE", p,
+                                 "every axle requires exactly one left and one right wheel role")
+            elif ident == "weapon.firearm.v1":
+                allowed = {"feedType", "mounts", "articulations", "extensions"}
+                if set(metadata) - allowed:
+                    self.r.error("MODEL_PROFILE_METADATA_FIELD", p,
+                                 f"unknown metadata fields: {sorted(set(metadata) - allowed)}")
+                receiver, muzzle = roles.get("weapon.receiver"), roles.get("weapon.muzzle")
+                if receiver is None or muzzle is None:
+                    self.r.error("WEAPON_REQUIRED_ROLES", p,
+                                 "requires weapon.receiver and weapon.muzzle component roles")
+                elif not self._is_ancestor(receiver, muzzle):
+                    self.r.error("WEAPON_RECEIVER_ANCESTOR", p,
+                                 "weapon.receiver must be an ancestor of weapon.muzzle")
+                feed = metadata.get("feedType")
+                if feed not in ("DETACHABLE_MAGAZINE", "INTERNAL", "OTHER", "NONE"):
+                    self.r.error("WEAPON_FEED_TYPE", p + ".metadata.feedType",
+                                 "must be DETACHABLE_MAGAZINE, INTERNAL, OTHER or NONE")
+                attachment_names = {item["name"] for item in self.array("attachments")
+                                    if isinstance(item, dict) and isinstance(item.get("name"), str)}
+                if feed == "DETACHABLE_MAGAZINE" and (
+                        "weapon.magazine" not in roles or "mount.magazine" not in attachment_names):
+                    self.r.error("WEAPON_MAGAZINE_REQUIRED", p,
+                                 "DETACHABLE_MAGAZINE requires weapon.magazine and mount.magazine")
+                sockets = {
+                    "mount.optic.primary": "optic.v1", "mount.muzzle": "muzzle.v1",
+                    "mount.underbarrel": "underbarrel.v1", "mount.side.left": "side.v1",
+                    "mount.side.right": "side.v1", "mount.stock": "stock.v1",
+                    "mount.magazine": "magazine.v1", "mount.handguard": "handguard.v1",
+                    "mount.grip": "grip.v1",
+                }
+                mounts = metadata.get("mounts", [])
+                if not isinstance(mounts, list):
+                    self.r.error("WEAPON_MOUNTS", p + ".metadata.mounts", "must be an array")
+                    mounts = []
+                mount_map = {}
+                for mi, mount in enumerate(mounts):
+                    mp = f"{p}.metadata.mounts[{mi}]"
+                    if not self.keys(mount, mp, ("socket", "class", "interface")):
+                        continue
+                    socket = mount["socket"]
+                    if not isinstance(socket, str):
+                        self.r.error("WEAPON_MOUNT_SOCKET", mp + ".socket", "must be a string")
+                        continue
+                    if socket in mount_map:
+                        self.r.error("WEAPON_MOUNT_DUPLICATE", mp, f"duplicate socket {socket!r}")
+                    mount_map[socket] = mount
+                    if socket not in sockets or mount["class"] != sockets.get(socket):
+                        self.r.error("WEAPON_MOUNT_CLASS", mp,
+                                     "socket and class must match a registered firearm mount")
+                    if not isinstance(mount["interface"], str) or not re.fullmatch(
+                            r"[a-z][a-z0-9_.]*\.v[1-9][0-9]*", mount["interface"]):
+                        self.r.error("WEAPON_MOUNT_INTERFACE", mp + ".interface",
+                                     "must be a versioned lowercase ASCII identifier")
+                present_mounts = attachment_names & set(sockets)
+                if set(mount_map) != present_mounts:
+                    self.r.error("WEAPON_MOUNT_METADATA", p + ".metadata.mounts",
+                                 "must describe exactly the registered firearm mount attachments")
+                articulations = metadata.get("articulations", [])
+                if not isinstance(articulations, list):
+                    self.r.error("WEAPON_ARTICULATIONS", p + ".metadata.articulations", "must be an array")
+                    articulations = []
+                articulation_roles = set()
+                for ai, articulation in enumerate(articulations):
+                    ap = f"{p}.metadata.articulations[{ai}]"
+                    if not isinstance(articulation, dict):
+                        self.r.error("TYPE_OBJECT", ap, "must be an object")
+                        continue
+                    allowed_fields = {
+                        "TRANSLATION": {"role", "allowed", "translationAxis", "translationMin", "translationMax"},
+                        "ROTATION": {"role", "allowed", "rotationAxis", "rotationMinRad", "rotationMaxRad"},
+                        "BOTH": {"role", "allowed", "translationAxis", "translationMin", "translationMax",
+                                 "rotationAxis", "rotationMinRad", "rotationMaxRad"},
+                    }
+                    role = articulation.get("role")
+                    if not isinstance(role, str) or role not in roles or role in articulation_roles:
+                        self.r.error("WEAPON_ARTICULATION_ROLE", ap + ".role",
+                                     "must uniquely reference a present component role")
+                    if isinstance(role, str):
+                        articulation_roles.add(role)
+                    motion = articulation.get("allowed")
+                    if motion not in allowed_fields:
+                        self.r.error("WEAPON_ARTICULATION_ALLOWED", ap + ".allowed",
+                                     "must be TRANSLATION, ROTATION or BOTH")
+                        continue
+                    if set(articulation) - allowed_fields[motion] - {"extensions", "extras"}:
+                        self.r.error("WEAPON_ARTICULATION_FIELD", ap,
+                                     "contains fields not permitted by its allowed motion")
+                    if motion in ("TRANSLATION", "BOTH"):
+                        if articulation.get("translationAxis") not in ("X", "Y", "Z"):
+                            self.r.error("WEAPON_ARTICULATION_AXIS", ap + ".translationAxis",
+                                         "must be X, Y or Z")
+                        low, high = articulation.get("translationMin"), articulation.get("translationMax")
+                        if not (_is_num(low) and _is_num(high) and low <= 0 <= high):
+                            self.r.error("WEAPON_ARTICULATION_RANGE", ap,
+                                         "translation range must be finite and contain zero")
+                    if motion in ("ROTATION", "BOTH"):
+                        if articulation.get("rotationAxis") not in ("X", "Y", "Z"):
+                            self.r.error("WEAPON_ARTICULATION_AXIS", ap + ".rotationAxis",
+                                         "must be X, Y or Z")
+                        low, high = articulation.get("rotationMinRad"), articulation.get("rotationMaxRad")
+                        if not (_is_num(low) and _is_num(high) and low <= 0 <= high):
+                            self.r.error("WEAPON_ARTICULATION_RANGE", ap,
+                                         "rotation range must be finite and contain zero")
+            elif ident == "weapon.attachment.v1":
+                if set(metadata) != {"class", "interface"}:
+                    self.r.error("WEAPON_ATTACHMENT_METADATA", p + ".metadata",
+                                 "requires exactly class and interface")
+                if not _nonblank(metadata.get("class")) or not (
+                        isinstance(metadata.get("interface"), str)
+                        and re.fullmatch(r"[a-z][a-z0-9_.]*\.v[1-9][0-9]*", metadata["interface"])):
+                    self.r.error("WEAPON_ATTACHMENT_METADATA", p + ".metadata",
+                                 "class must be nonempty and interface must be a versioned identifier")
+                if "mount.root" not in {
+                        item["name"] for item in self.array("attachments")
+                        if isinstance(item, dict) and isinstance(item.get("name"), str)
+                }:
+                    self.r.error("WEAPON_ATTACHMENT_SOCKET", p,
+                                 "requires an attachment named mount.root")
+
+    def _is_ancestor(self, ancestor, node):
+        while node is not None:
+            if node == ancestor:
+                return True
+            node = self.parent[node]
+        return False
+
+    def _relative_position(self, ancestor, node):
+        chain = []
+        current = node
+        while current is not None and current != ancestor:
+            chain.append(current)
+            current = self.parent[current]
+        if current != ancestor:
+            return mat_translation(self.world[node])
+        matrix = list(IDENTITY)
+        for index in reversed(chain):
+            matrix = mat_mul(matrix, self.local[index])
+        return mat_translation(matrix)
 
     def check_colliders(self):
         for ci, c in enumerate(self.array("colliders")):
@@ -1980,21 +2328,24 @@ class AnimValidator(_Base):
         if not isinstance(lib["language"], str) or not BCP47_RE.match(lib["language"]):
             self.r.error("LANGUAGE", "library.language", f"invalid BCP-47 tag {lib['language']!r}")
         tp = lib["targetProfile"]
-        if not isinstance(tp, str) or not (tp in K.BUILTIN_SKELETON_PROFILES or tp == K.MODEL_ANY_PROFILE
-                                           or PROFILE_ID_RE.match(tp)):
+        mechanical_profiles = ("vehicle.car.v1", "weapon.firearm.v1")
+        if not isinstance(tp, str) or not (tp in K.BUILTIN_SKELETON_PROFILES
+                                           or tp in mechanical_profiles or tp == K.MODEL_ANY_PROFILE
+                                           or SP.is_custom_id(tp)):
             self.r.error("PROFILE_ID", "library.targetProfile", f"invalid profile id {tp!r}")
         if tp == K.MODEL_ANY_PROFILE and lib["binding"] != "SEMANTIC":
             self.r.error("LIBRARY_MODEL_ANY_BINDING", "library.binding", "model.any.v1 requires SEMANTIC binding")
-        if lib["binding"] == "SEMANTIC" and isinstance(tp, str) and tp != K.MODEL_ANY_PROFILE:
+        if (lib["binding"] == "SEMANTIC" and isinstance(tp, str)
+                and tp != K.MODEL_ANY_PROFILE and tp not in mechanical_profiles):
             st = SP.status(tp)
             if st == SP.EXACT_ONLY:
                 self.r.error("LIBRARY_PROFILE_EXACT_ONLY", "library.targetProfile", f"{tp} supports only EXACT binding")
             elif st == SP.PROVISIONAL:
-                self.r.warning("PROFILE_PROVISIONAL", "library.targetProfile",
-                               f"'{tp}' is a provisional proposal; SEMANTIC interoperability must not be claimed")
+                self.r.error("PROFILE_NOT_IN_ADM_1_0", "library.targetProfile",
+                             f"'{tp}' is a non-normative proposal, not an ADM 1.0 skeleton profile")
             elif st is None:
-                self.r.warning("PROFILE_UNREGISTERED", "library.targetProfile",
-                               f"'{tp}' is not registered; semantic retarget rules are undefined")
+                self.r.error("LIBRARY_PROFILE_EXACT_ONLY", "library.targetProfile",
+                             f"'{tp}' is not registered and therefore supports EXACT binding only")
         if lib["binding"] not in K.BINDINGS:
             self.r.error("LIBRARY_BINDING", "library.binding", f"invalid binding {lib['binding']!r}")
         elif lib["binding"] == "EXACT":
@@ -2029,7 +2380,7 @@ class AnimValidator(_Base):
         tp = self.lib.get("targetProfile")
         if tp == K.MODEL_ANY_PROFILE:
             return set()
-        if SP.status(tp) in (SP.NORMATIVE, SP.PROVISIONAL):
+        if SP.status(tp) == SP.NORMATIVE:
             return SP.semantic_role_names(tp)
         return None  # unknown registry contents
 
@@ -2146,6 +2497,9 @@ class AnimValidator(_Base):
             want = None
             bounds = None
             if kind == "bone":
+                if self.lib.get("targetProfile") in ("vehicle.car.v1", "weapon.firearm.v1"):
+                    self.r.error("CHANNEL_MECHANICAL_BONE", cp + ".target",
+                                 "mechanical profiles use component targets, not bone targets")
                 if model_any:
                     self.r.error("CHANNEL_MODEL_ANY_BONE", cp + ".target", "model.any.v1 libraries forbid bone targets")
                 key_field = "role" if binding == "SEMANTIC" else "nodeName"
@@ -2173,6 +2527,19 @@ class AnimValidator(_Base):
                 else:
                     if path == "translation":
                         root_tracks += 1
+            elif kind == "component":
+                if not self.keys(t, cp + ".target", ("kind", "role")):
+                    continue
+                if binding != "SEMANTIC" or self.lib.get("targetProfile") not in (
+                        "vehicle.car.v1", "weapon.firearm.v1"):
+                    self.r.error("CHANNEL_COMPONENT_PROFILE", cp + ".target",
+                                 "component targets require SEMANTIC vehicle.car.v1 or weapon.firearm.v1")
+                if not _nonblank(t["role"]):
+                    self.r.error("CHANNEL_TARGET", cp + ".target.role", "role must be a nonempty string")
+                if path not in ("translation", "rotation"):
+                    self.r.error("CHANNEL_PATH", cp + ".path",
+                                 "component targets support only translation or rotation")
+                ident = t["role"]
             elif kind in ("morph", "expression"):
                 if not self.keys(t, cp + ".target", ("kind", "name")):
                     continue
@@ -2245,7 +2612,7 @@ class AnimValidator(_Base):
                     want = {"translation": "VEC3", "scale": "VEC3", "rotation": "VEC4", "weight": "SCALAR"}.get(path)
                 if out_type is not None and want is not None and out_type != want:
                     self.r.error("CHANNEL_SAMPLER_TYPE", cp, f"path {path} needs {want} output, sampler has {out_type}")
-                elif info is not None and kind == "bone" and path == "rotation":
+                elif info is not None and kind in ("bone", "component") and path == "rotation":
                     self.check_quaternion_sampler(info, cp)
                 elif info is not None and bounds is not None and out_type == want:
                     self.check_value_bounds(info, bounds[0], bounds[1], cp)

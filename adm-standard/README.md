@@ -17,6 +17,8 @@ This kit contains the frozen normative specification for the **native, chunk-str
 - `tools/build_interactive_fixture.py --check`: rebuilds the interactive fixture from explicit source
   geometry and image data and compares its bytes.
 - `tools/test_interactive_surfaces.py`: independent fixture and numerical UV/color/alpha checks.
+- `tools/test_independent_conformance.py`: bounded-input, strict-JSON and cross-reader checks for
+  published fixtures; it does not certify full semantic conformance.
 - `tools/run_tests.py`: reproducible tests for the supplied files.
 - `TEST-RESULTS.md`: executed tests and known gaps.
 - `CHANGELOG.md`: publication history and final 1.0 release record.
@@ -25,6 +27,8 @@ This kit contains the frozen normative specification for the **native, chunk-str
 
 ```bash
 python3 tools/run_tests.py
+python3 tools/test_profiles.py
+python3 tools/test_independent_conformance.py
 python3 tools/container.py fixtures/valid/triangle.adm
 ```
 

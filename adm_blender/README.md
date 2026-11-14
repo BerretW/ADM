@@ -125,6 +125,11 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
 
 Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `referenceCorrection` and `rigId`. It is blocked only by structural errors (missing or duplicate roles, wrong hierarchy). Pose deviations only warn. Conformance limitations and excluded proposals are listed in [SPEC_GAPS.md](../adm-standard/SPEC_GAPS.md).
 
+The Model Root panel preserves `modelProfiles` as strict JSON, and node properties assign
+`componentRoles`. The core validator checks the registered vehicle and firearm profile metadata and
+their role-frame constraints. The Blender animation authoring/import workflow does not yet author or
+evaluate `target.kind=component` tracks; use a compatible external tool/runtime for those tracks.
+
 The `ADM_humanoid_sockets_v1` extension declares standardized humanoid attachment names and their
 role ancestry; it does not add bones or affect existing animation libraries. A gear/weapon asset can
 provide an ordinary `mount.root` attachment for frame composition. Slot compatibility, inventory,

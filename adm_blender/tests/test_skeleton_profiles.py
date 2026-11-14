@@ -130,6 +130,10 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(SP.status("generic.v1"), SP.EXACT_ONLY)
         self.assertTrue(SP.is_custom_id("org.example.robot.v2"))
         self.assertFalse(SP.is_custom_id("custom"))
+        for invalid in ("animal.canine.v1", "org.example.v1", "org.example.robot.v0",
+                        "Org.example.robot.v1"):
+            with self.subTest(profile_id=invalid):
+                self.assertFalse(SP.is_custom_id(invalid))
 
     def test_published_registry_json_matches_code(self):
         path = STANDARD / "profiles" / "skeleton-profiles.json"

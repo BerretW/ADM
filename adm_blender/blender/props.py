@@ -130,7 +130,10 @@ class ADMObjectProps(PropertyGroup):
     attachment_name: StringProperty(name="Attachment Name",
                                     description="Non-empty: export this node as a named attachment frame")
     component_role: StringProperty(name="Component Role", description="e.g. wheel.axle0.left, door.front.left")
-    component_profile: StringProperty(name="Component Profile", default="custom.vehicle.v1")
+    component_profile: StringProperty(name="Component Profile", default="org.example.custom-vehicle.v1")
+    model_profiles_json: StringProperty(
+        name="Model Profiles JSON", default="[]",
+        description="JSON array of normative model profile records, including required profile metadata")
     interactive_surface_id: StringProperty(
         name="Surface ID", description="Stable model-wide ID, e.g. main_display; assign to selected faces")
     interactive_tex_coord: EnumProperty(
@@ -161,7 +164,7 @@ class ADMBoneProps(PropertyGroup):
     role: StringProperty(name="Role", description="Semantic skeleton role (explicit mapping, never guessed on export)")
     attachment_name: StringProperty(name="Attachment Name")
     component_role: StringProperty(name="Component Role")
-    component_profile: StringProperty(name="Component Profile", default="custom.vehicle.v1")
+    component_profile: StringProperty(name="Component Profile", default="org.example.custom-vehicle.v1")
     use_reference_correction: BoolProperty(name="Reference Correction")
     reference_correction: FloatVectorProperty(name="Correction", size=4, subtype="QUATERNION",
                                               default=(1.0, 0.0, 0.0, 0.0),

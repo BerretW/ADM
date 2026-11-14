@@ -158,9 +158,18 @@ class AnimExporter:
                 raise ExportError(f"library '{lib.lib_id}': {field} is required (write it, it is never generated)")
         if not BCP47_RE.match(lib.language):
             raise ExportError(f"library language '{lib.language}' is not a BCP-47 tag")
+        target_profile = K.MODEL_ANY_PROFILE if model_any else arm.data.adm.profile_id.strip()
+        if not model_any:
+            profile_status = SP.status(target_profile)
+            if profile_status == SP.PROVISIONAL:
+                raise ExportError(f"target profile '{target_profile}' is a proposal outside ADM 1.0")
+            if profile_status is None and not SP.is_custom_id(target_profile):
+                raise ExportError(f"target profile '{target_profile}' is not registered and is not a valid custom id")
+            if lib.binding == "SEMANTIC" and profile_status != SP.NORMATIVE:
+                raise ExportError(f"target profile '{target_profile}' is EXACT_ONLY in ADM 1.0")
         d = {"id": lib.lib_id, "title": lib.title.strip(), "description": lib.description.strip(),
              "language": lib.language,
-             "targetProfile": K.MODEL_ANY_PROFILE if model_any else arm.data.adm.profile_id.strip(),
+             "targetProfile": target_profile,
              "binding": "SEMANTIC" if model_any else lib.binding}
         if not model_any and lib.binding == "EXACT":
             d["rigId"] = compute_rig_id(self.context, arm)

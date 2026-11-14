@@ -18,14 +18,14 @@ from ..core import constants as K
 from ..core import skeleton as SK
 from ..core import skeleton_profiles as SP
 from ..core.buffers import BinBuilder
-from ..core.container import AdmFormatError, write_container
+from ..core.container import AdmFormatError, parse_json_strict, write_container
 from ..core.mathutil import reference_correction_from_nodes
 from ..core.rigid import rig_id_from_document
 from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.15.0 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.16.0 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -930,12 +930,22 @@ class ModelExporter:
             if not sk.export_profile:
                 continue
             pid = sk.profile_id.strip()
+            reg = SP.get(pid)
+            if reg is not None and reg["status"] == SP.PROVISIONAL:
+                raise ExportError(f"armature '{arm.name}': '{pid}' is a non-normative proposal outside ADM 1.0")
+            if reg is None and not SP.is_custom_id(pid):
+                raise ExportError(f"armature '{arm.name}': '{pid}' is not a registered ADM 1.0 or valid custom profile")
             roles = {}
             corr = {}
             for bone in arm.data.bones:
                 r = bone.adm.role.strip()
                 if not r:
                     continue
+                if reg is not None and reg["status"] == SP.EXACT_ONLY:
+                    continue
+                if reg is None:
+                    raise ExportError(f"armature '{arm.name}': unregistered custom profile '{pid}' is EXACT_ONLY "
+                                      "and cannot export semantic roles")
                 if r in roles:
                     raise ExportError(f"armature '{arm.name}': role '{r}' assigned to more than one bone")
                 node = self.bone_node[(arm.name, bone.name)]
@@ -965,8 +975,7 @@ class ModelExporter:
                 missing = [r for r in K.VRM1_REQUIRED if r not in roles]
                 if missing:
                     raise ExportError(f"armature '{arm.name}': missing required humanoid roles: {', '.join(missing)}")
-            reg = SP.get(pid)
-            if reg is not None and reg["status"] in (SP.NORMATIVE, SP.PROVISIONAL):
+            if reg is not None and reg["status"] == SP.NORMATIVE:
                 from .rig import joint_table
                 for issue in SK.analyze_rig(pid, joint_table(arm), [(b.name, b.adm.role.strip())
                                                                      for b in arm.data.bones if b.adm.role.strip()]):
@@ -975,9 +984,10 @@ class ModelExporter:
                         raise ExportError(f"{where}: {issue.message}")
                     if issue.severity != SK.INFO:
                         self.warn(f"{where}: {issue.code}: {issue.message}")
-            elif reg is None:
-                self.warn(f"armature '{arm.name}': skeleton profile '{pid}' is not in the profile registry; "
-                          f"only EXACT (rigId) animation binding is portable")
+            elif reg is not None and reg["status"] == SP.EXACT_ONLY:
+                if any(bone.adm.role.strip() for bone in arm.data.bones):
+                    self.warn(f"armature '{arm.name}': semantic role mappings are omitted for exact-only "
+                              f"profile '{pid}'")
             skin = self.profile_skin(arm)
             if "skeletonProfile" in self.skins[skin]:
                 continue
@@ -1099,6 +1109,15 @@ class ModelExporter:
             self.mat.extensions_used.add(K.HUMANOID_SOCKETS_EXT)
             self.mat.extensions_required.add(K.HUMANOID_SOCKETS_EXT)
         physical, components, hitboxes = self._physical_components()
+        model_profiles = []
+        if self.root is not None:
+            try:
+                wrapper = '{"modelProfiles":' + (self.root.adm.model_profiles_json or "[]") + "}"
+                model_profiles = parse_json_strict(wrapper.encode("utf-8"))["modelProfiles"]
+            except (AdmFormatError, UnicodeError) as exc:
+                raise ExportError(f"Model Profiles must be valid strict JSON: {exc}") from exc
+            if not isinstance(model_profiles, list):
+                raise ExportError("Model Profiles must be a JSON array")
         faces, exprs = self._face_and_expressions()
         iks = self._ik_chains()
         surfaces = self._interactive_surfaces()
@@ -1119,6 +1138,7 @@ class ModelExporter:
                     ("ikChains", iks), ("componentRoles", comp_roles), ("colliders", colliders),
                     ("lodGroups", lods), ("attachments", attachments),
                     ("physicalMaterials", physical), ("modelComponents", components), ("hitboxes", hitboxes),
+                    ("modelProfiles", model_profiles),
                     ("shaderDefinitions", [self.mat.used_definitions[k] for k in sorted(self.mat.used_definitions)]),
                     ("extensionsUsed", sorted(self.mat.extensions_used)),
                     ("extensionsRequired", sorted(self.mat.extensions_required)))

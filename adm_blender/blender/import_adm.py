@@ -1,5 +1,6 @@
 """ADM model (.adm) -> Blender importer."""
 
+import json
 import os
 import re
 import shutil
@@ -100,6 +101,8 @@ class ModelImporter:
         self.root.adm.adm_type = "MODEL"
         self.root.adm.copyright = d["asset"].get("copyright", "")
         self.root.adm.default_scene = d.get("scene", 0)
+        self.root.adm.model_profiles_json = json.dumps(
+            d.get("modelProfiles", []), ensure_ascii=False, indent=2, allow_nan=False)
         self.collection.objects.link(self.root)
 
         self._tmpdir = tempfile.mkdtemp(prefix="adm_import_")

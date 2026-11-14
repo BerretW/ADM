@@ -1,4 +1,4 @@
-"""Draft 0.4 material fallback and optional semantic-record validation."""
+"""ADM 1.0 material fallback and optional semantic-record validation."""
 
 import copy
 import hashlib
@@ -16,6 +16,7 @@ from adm_blender.core.validate import validate_adm, validate_adm_resolved, valid
 
 
 FIXTURES = Path(__file__).resolve().parents[2] / "adm-standard" / "fixtures" / "valid"
+PROFILE_FIXTURES = FIXTURES.parent / "profiles"
 
 
 class Draft4Tests(unittest.TestCase):
@@ -63,6 +64,65 @@ class Draft4Tests(unittest.TestCase):
     def test_core_material_retains_implicit_defaults(self):
         self.doc["materials"] = [{}]
         self.assertTrue(self.validate().ok)
+
+    def test_quadruped_proposals_are_not_valid_adm_profiles(self):
+        self.doc["skins"] = [{"joints": [0]}]
+        self.doc["skeletonProfiles"] = [{"id": "animal.canine.v1", "skin": 0, "roles": {}}]
+        report = self.validate()
+        self.assertIn("PROFILE_NOT_IN_ADM_1_0", {issue.code for issue in report.errors})
+
+        anim_path = FIXTURES / "catalog-only.adm_anim"
+        anim_doc, anim_chunks = read_container(anim_path.read_bytes(), K.ANIM_MAGIC)
+        anim_doc["library"]["targetProfile"] = "animal.canine.v1"
+        report = validate_anim(write_container(K.ANIM_MAGIC, anim_doc, anim_chunks))
+        self.assertIn("PROFILE_ID", {issue.code for issue in report.errors})
+        self.assertIn("PROFILE_NOT_IN_ADM_1_0", {issue.code for issue in report.errors})
+
+    def test_custom_semantic_profiles_are_exact_only(self):
+        anim_path = FIXTURES / "catalog-only.adm_anim"
+        anim_doc, anim_chunks = read_container(anim_path.read_bytes(), K.ANIM_MAGIC)
+        anim_doc["library"]["targetProfile"] = "org.example.robot.v2"
+        report = validate_anim(write_container(K.ANIM_MAGIC, anim_doc, anim_chunks))
+        self.assertIn("LIBRARY_PROFILE_EXACT_ONLY", {issue.code for issue in report.errors})
+
+        anim_doc["library"]["binding"] = "EXACT"
+        anim_doc["library"]["rigId"] = "a" * 64
+        report = validate_anim(write_container(K.ANIM_MAGIC, anim_doc, anim_chunks))
+        self.assertTrue(report.ok, report.format())
+
+    def test_vehicle_model_profile_constraints(self):
+        source = PROFILE_FIXTURES / "vehicle_car_minimal.adm"
+        doc, chunks = read_container(source.read_bytes(), K.ADM_MAGIC)
+        report = validate_adm(write_container(K.ADM_MAGIC, doc, chunks))
+        self.assertTrue(report.ok, report.format())
+
+        doc["modelProfiles"][0]["metadata"]["axles"][0]["wheels"]["left"]["radius"] = 0
+        report = validate_adm(write_container(K.ADM_MAGIC, doc, chunks))
+        self.assertIn("VEHICLE_WHEEL_DIMENSION", {issue.code for issue in report.errors})
+
+    def test_weapon_model_profile_constraints(self):
+        source = PROFILE_FIXTURES / "weapon_firearm_minimal.adm"
+        doc, chunks = read_container(source.read_bytes(), K.ADM_MAGIC)
+        report = validate_adm(write_container(K.ADM_MAGIC, doc, chunks))
+        self.assertTrue(report.ok, report.format())
+
+        doc["modelProfiles"][0]["metadata"]["unsupportedField"] = True
+        report = validate_adm(write_container(K.ADM_MAGIC, doc, chunks))
+        self.assertIn("MODEL_PROFILE_METADATA_FIELD", {issue.code for issue in report.errors})
+
+    def test_component_animation_targets(self):
+        source = PROFILE_FIXTURES / "vehicle_front_wheel_spin.adm_anim"
+        doc, chunks = read_container(source.read_bytes(), K.ANIM_MAGIC)
+        self.assertTrue(validate_anim(write_container(K.ANIM_MAGIC, doc, chunks)).ok)
+
+        doc["clips"][0]["channels"][0]["path"] = "scale"
+        report = validate_anim(write_container(K.ANIM_MAGIC, doc, chunks))
+        self.assertIn("CHANNEL_PATH", {issue.code for issue in report.errors})
+
+    def test_exact_only_profiles_cannot_declare_roles(self):
+        self.doc["skins"] = [{"joints": [0]}]
+        self.doc["skeletonProfiles"] = [{"id": "generic.v1", "skin": 0, "roles": {"hips": 0}}]
+        self.assertIn("PROFILE_EXACT_ONLY_ROLES", self.codes())
 
     def add_metadata(self):
         self.doc["attachments"] = [{"name": "part_socket", "node": 0}]
