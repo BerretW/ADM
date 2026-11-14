@@ -555,8 +555,13 @@ class ADM_OT_convert_materials(bpy.types.Operator):
             mats = {s.material for s in context.active_object.material_slots if s.material}
         n = sum(1 for m in mats if convert_to_adm_material(m))
         if self.vertex_controls:
+            from .vertex_colors import sync_control_meshes
+            targets = set(context.selected_objects)
+            if context.active_object is not None:
+                targets.add(context.active_object)
             for mat in mats:
                 mat.adm.vertex_controls_enabled = True
+            sync_control_meshes(explicit=targets)
         self.report({"INFO"}, f"converted {n} of {len(mats)} material(s) (others were already ADM-ready)")
         return {"FINISHED"}
 

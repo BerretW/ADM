@@ -3,8 +3,9 @@
 ## Blender Tools 1.11.0 — 2026-11-14
 
 - Added `COLOR_0`/`COLOR_1` initialization, selected-face/channel editing and neutral-default reset.
-- Enabled-material assignment and ADM material conversion initialize control layers without
-  changing ordinary objects or unrelated color layers.
+- Enabling vertex controls or converting materials to ADM initializes control layers of the active
+  or selected objects and of ADM model meshes using the material; meshes outside an ADM Model Root
+  and unrelated color layers are never changed automatically.
 - Added one-row tint-palette swatches with offset-aware R-only palette selection.
 - Vertex-control import/export materializes omitted optional channel defaults and preserves authored
   values and palettes. No ADM schema, shader version or capability version changes.

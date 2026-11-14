@@ -363,7 +363,7 @@ def _shader_update(self, context):
 def _vertex_controls_update(self, context):
     if self.vertex_controls_enabled:
         from .vertex_colors import sync_control_meshes
-        sync_control_meshes(self.id_data)
+        sync_control_meshes(self.id_data, explicit=(getattr(context, "object", None),))
     _preview_update(self, context)
 
 

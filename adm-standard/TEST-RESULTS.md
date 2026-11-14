@@ -1,5 +1,24 @@
 # Draft 0.4 executed test report
 
+## Blender 1.11.0 vertex-color authoring — local verification
+
+- Blender 5.2.3 `test_workflow.py`: **PASS**. Checks that meshes outside an ADM Model Root stay
+  untouched even with an enabled material, ADM-model and explicit-conversion initialization, neutral
+  layer initialization, preservation of
+  authored and ordinary colors, live Edit Mode channel/face selection, default reset, material-slot
+  filtering, offset-aware R-only palette selection, invalid palettes, BYTE_COLOR/POINT conversion,
+  missing-attribute import/export defaults, conflicting attribute diagnostics and round-trip values.
+- Blender 5.2.3 `test_shader_preview.py`: **PASS**. Cycles verifies the selected palette entry on
+  actual geometry, wetness, normal strength, dielectric/metallic F0 and ignored reserved `COLOR_1`.
+- Blender 5.2.3 `test_interactive_blender.py`, `test_material_slots.py` and `test_fixtures.py`: **PASS**.
+- `adm_tools-1.11.0.zip`: **PASS** for CRC, manifest version, byte identity with source and a real
+  installation into an isolated temporary extension repository. All 22 shader entries, layer
+  initialization, tint selection, reset and export worked from the installed package. No user
+  preferences were saved; the temporary repository was removed.
+- `git diff --check`: **PASS**. Blender still emits the previously reported dependency-cycle
+  warnings. No schema or capability versions changed; these are reference implementation tests,
+  not independent renderer certification.
+
 ## P13 interactive surfaces — local verification
 
 - CI-equivalent Python unittest command (`test_container`, `test_draft4`, `test_skeleton_profiles`,

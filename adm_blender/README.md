@@ -43,10 +43,11 @@ Exporting a mesh in Edit Mode uses its current edits and UVs without leaving Edi
 **ADM > Object > Vertex Colors** (also in the material's **ADM Vertex Control** box) manages
 the actual Blender color attributes, not a separate color system.
 
-- Enabling **Enable Vertex Controls** on a material initializes meshes using it. Assigning that
-  enabled material to a new mesh also initializes its layers on the next UI tick.
-  **Convert Materials To ADM** enables this by default; its redo option can disable initialization.
-  Ordinary meshes and ordinary ADM imports without vertex controls are not changed.
+- Enabling **Enable Vertex Controls** on a material initializes the active object and meshes
+  inside an ADM Model Root that use it. A new mesh added to an ADM model with that enabled material
+  is initialized on the next UI tick. **Convert Materials To ADM** initializes the selected objects
+  by default; its redo option can disable initialization. Meshes outside an ADM model are never
+  changed automatically, and ordinary ADM imports without vertex controls are not changed.
 - **Initialize Layers** creates missing `COLOR_0` and `COLOR_1` without overwriting authored values.
   Control attributes use **FLOAT_COLOR / CORNER**: existing POINT or BYTE_COLOR controls are
   converted with their linear values preserved. Unrelated color attributes are left alone.

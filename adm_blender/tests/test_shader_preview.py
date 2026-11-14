@@ -253,7 +253,11 @@ def main():
                                  0.2 * 0.925 * (1.0 - half_wet_f0))),
           f"vertex-control wetness driver updates live ({alb[8, 8, :3]})")
     mat.adm.wetness_offset = 0.0
+    # Creating COLOR_1 can invalidate the previously held RNA attribute reference.
+    color0 = plane.data.color_attributes["COLOR_0"]
     color0.data.foreach_set("color", np.tile((0.75, 1.0, 1.0, 0.0), len(color0.data)).ravel())
+    check(close(plane.data.color_attributes["COLOR_0"].data[0].color, (0.75, 1.0, 1.0, 0.0)),
+          "tint editing writes the actual COLOR_0 after layer initialization")
     palette = bpy.data.images.new("palette", 2, 1, alpha=True, float_buffer=True)
     palette.pixels.foreach_set((0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0))
     palette.update()
@@ -277,7 +281,9 @@ def main():
     if f0_attr is None:
         f0_attr = plane.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
     f0_attr.data.foreach_set("color", np.tile((0.0, 1.0, 0.8, 0.0), len(f0_attr.data)).ravel())
-    color1_attr = plane.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+    color1_attr = plane.data.color_attributes.get("COLOR_1")
+    if color1_attr is None:
+        color1_attr = plane.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
     color1_attr.data.foreach_set("color", np.tile((0.1, 0.2, 0.3, 0.4), len(color1_attr.data)).ravel())
     f0_mat.adm.vertex_controls_enabled = True
     f0_mat.adm.reflection_multiplier = 0.5

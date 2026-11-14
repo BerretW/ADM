@@ -85,19 +85,39 @@ def ensure_layers(mesh):
     return changed
 
 
-def sync_control_meshes(material=None):
+def in_adm_model(obj):
+    while obj is not None:
+        if obj.adm.adm_type == "MODEL":
+            return True
+        obj = obj.parent
+    return False
+
+
+def sync_control_meshes(material=None, explicit=()):
+    """Initialize control layers of ADM model meshes using enabled materials.
+
+    Objects outside an ADM Model Root are only touched when passed in ``explicit``
+    by a user action (enabling vertex controls or converting them to ADM).
+    """
     changed_materials = set()
+    changed_meshes = set()
     seen = set()
+    explicit = {obj for obj in explicit if obj is not None}
     for obj in bpy.data.objects:
         if obj.type != "MESH" or obj.adm.adm_type == "COLLIDER" or not obj.data.is_editable:
             continue
+        if obj not in explicit and not in_adm_model(obj):
+            continue
         mats = {slot.material for slot in obj.material_slots
                 if slot.material is not None and slot.material.adm.vertex_controls_enabled}
-        if not mats or (material is not None and material not in mats) or obj.data in seen:
+        if not mats:
             continue
-        seen.add(obj.data)
         try:
-            if ensure_layers(obj.data):
+            if obj.data not in seen:
+                seen.add(obj.data)
+                if ensure_layers(obj.data):
+                    changed_meshes.add(obj.data)
+            if obj.data in changed_meshes:
                 changed_materials.update(mats)
             changed_materials.update(
                 mat for mat in mats if mat.node_tree is not None
@@ -108,7 +128,8 @@ def sync_control_meshes(material=None):
             print(f"ADM Vertex Colors: {exc}")
     from .materials import refresh_shader_preview
     for mat in changed_materials:
-        refresh_shader_preview(mat)
+        if mat != material:
+            refresh_shader_preview(mat)
     return None
 
 
@@ -170,13 +191,13 @@ def palette_position(index, size, offset):
     return red
 
 
-def write_colors(mesh, names, values, channel="RGBA", selected=False, material_index=None):
+def write_colors(mesh, names, values, channel="RGBA", selected=False, material_indices=None):
     """Write face corners only, including live Edit Mode data."""
     component = None if channel == "RGBA" else "RGBA".index(channel)
     if mesh.is_editmode:
         bm = bmesh.from_edit_mesh(mesh)
         faces = [face for face in bm.faces if (not selected or (face.select and not face.hide))
-                 and (material_index is None or face.material_index == material_index)]
+                 and (material_indices is None or face.material_index in material_indices)]
         if not faces:
             raise VertexColorError("No matching faces; select faces using the active material")
         ensure_layers(mesh)
@@ -193,7 +214,7 @@ def write_colors(mesh, names, values, channel="RGBA", selected=False, material_i
         bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
     else:
         faces = [face for face in mesh.polygons if (not selected or (face.select and not face.hide))
-                 and (material_index is None or face.material_index == material_index)]
+                 and (material_indices is None or face.material_index in material_indices)]
         if not faces:
             raise VertexColorError("No matching faces; select faces using the active material")
         ensure_layers(mesh)
@@ -246,8 +267,9 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
                     raise VertexColorError("Enable ADM Vertex Controls on the active material")
                 size = len(palette_colors(mat.adm.vertex_tint_palette))
                 red = palette_position(mat.adm.active_tint_entry, size, mat.adm.tint_offset)
+                slots = {i for i, slot in enumerate(obj.material_slots) if slot.material == mat}
                 count = write_colors(obj.data, ("COLOR_0",), {"COLOR_0": (red, 1.0, 1.0, 0.0)},
-                                     "R", wm.vertex_color_scope == "SELECTED", obj.active_material_index)
+                                     "R", wm.vertex_color_scope == "SELECTED", slots)
                 name = "COLOR_0"
             else:
                 names = tuple(DEFAULTS) if self.action == "RESET" else (name,)
@@ -257,7 +279,7 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
                                      wm.vertex_color_scope == "SELECTED")
             if self.action != "ACTIVE" and mat is not None and not mat.adm.vertex_controls_enabled:
                 mat.adm.vertex_controls_enabled = True
-            sync_control_meshes()
+            sync_control_meshes(explicit=(obj,))
             obj.data.color_attributes.active_color_name = name
             if obj.data.users > 1:
                 self.report({"WARNING"}, "Changes affect every object sharing this mesh")

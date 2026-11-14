@@ -123,9 +123,30 @@ def test_vertex_color_authoring(tmp):
     mat.adm.vertex_controls_enabled = True
     mesh.materials.append(mat)
     bpy.context.view_layer.update()
-    check(bpy.app.timers.is_registered(sync_control_meshes),
-          "assigning an enabled material queues initialization for a new mesh")
     sync_control_meshes()
+    check(not mesh.color_attributes,
+          "meshes outside an ADM model stay untouched even with an enabled material")
+    loose_mesh = bpy.data.meshes.new("LooseMesh")
+    loose_mesh.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0)], [], [(0, 1, 2)])
+    loose_mesh.materials.append(mat)
+    loose = bpy.data.objects.new("LooseObject", loose_mesh)
+    bpy.context.scene.collection.objects.link(loose)
+    root = bpy.data.objects.new("VertexColorRoot", None)
+    root.adm.adm_type = "MODEL"
+    bpy.context.scene.collection.objects.link(root)
+    obj.parent = root
+    bpy.context.view_layer.update()
+    check(bpy.app.timers.is_registered(sync_control_meshes),
+          "adding a mesh to an ADM model queues initialization")
+    sync_control_meshes()
+    check(not loose_mesh.color_attributes, "unrelated non-ADM meshes sharing the material stay untouched")
+    select(loose)
+    bpy.ops.adm.convert_materials()
+    check(all(close(layer_values(loose_mesh, name), default) for name, default in DEFAULTS.items()),
+          "explicit conversion to ADM initializes the selected mesh")
+    select(obj)
+    bpy.data.objects.remove(loose)
+    bpy.data.meshes.remove(loose_mesh)
     check(all(close(layer_values(mesh, name), default) for name, default in DEFAULTS.items()),
           "new control mesh gets exact neutral defaults, including dry alpha")
     check(any(node.bl_idname == "ShaderNodeVertexColor" and node.layer_name == "COLOR_0"
@@ -186,6 +207,17 @@ def test_vertex_color_authoring(tmp):
     after = layer_values(mesh, "COLOR_0")
     check(close(after[:4, 0], 0.5625) and close(after[:4, 1:], before[:4, 1:])
           and close(after[4:], before[4:]), "palette stores the offset-aware index only in active-material R")
+    mesh.materials.append(mat)
+    mesh.polygons[1].material_index = 2
+    wm.vertex_color_scope = "ALL"
+    mat.adm.active_tint_entry = 1
+    bpy.ops.adm.vertex_colors(action="TINT")
+    check(close(layer_values(mesh, "COLOR_0")[:, 0], 0.3125)
+          and close(layer_values(mesh, "COLOR_0")[:, 1:], after[:, 1:]),
+          "palette matches all slots using the active material, not just one slot index")
+    mesh.polygons[1].material_index = 1
+    mat.adm.active_tint_entry = 2
+    mesh.color_attributes["COLOR_0"].data.foreach_set("color", after.ravel())
     try:
         palette_position(0, 4, 2.0)
     except VertexColorError:
