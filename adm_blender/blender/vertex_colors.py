@@ -34,6 +34,7 @@ def _linear_color(value, byte_color):
 def ensure_layers(mesh):
     """Preserve authored linear values; use float corners to avoid gamma/byte index quantization."""
     validate_layers(mesh)
+    active_name = mesh.color_attributes.active_color_name
     changed = False
     if mesh.is_editmode:
         bm = bmesh.from_edit_mesh(mesh)
@@ -79,6 +80,8 @@ def ensure_layers(mesh):
             changed = True
         if changed:
             mesh.update()
+    if changed and (not active_name or active_name in DEFAULTS):
+        mesh.color_attributes.active_color_name = active_name or "COLOR_0"
     return changed
 
 
@@ -113,6 +116,17 @@ def sync_control_meshes(material=None):
 def _queue_sync(_scene, _depsgraph=None):
     if not bpy.app.timers.is_registered(sync_control_meshes):
         bpy.app.timers.register(sync_control_meshes, first_interval=0.1)
+
+
+@persistent
+def _load_post(_dummy):
+    for mat in bpy.data.materials:
+        if mat.adm.vertex_tint_palette is not None:
+            try:
+                refresh_palette(mat)
+            except VertexColorError as exc:
+                print(f"ADM Tint Palette: {exc}")
+    _queue_sync(None)
 
 
 def palette_colors(image):
@@ -243,6 +257,7 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
                                      wm.vertex_color_scope == "SELECTED")
             if self.action != "ACTIVE" and mat is not None and not mat.adm.vertex_controls_enabled:
                 mat.adm.vertex_controls_enabled = True
+            sync_control_meshes()
             obj.data.color_attributes.active_color_name = name
             if obj.data.users > 1:
                 self.report({"WARNING"}, "Changes affect every object sharing this mesh")
@@ -276,12 +291,12 @@ CLASSES = (ADM_OT_vertex_colors, ADM_OT_tint_palette_refresh)
 
 def register():
     bpy.app.handlers.depsgraph_update_post.append(_queue_sync)
-    bpy.app.handlers.load_post.append(_queue_sync)
+    bpy.app.handlers.load_post.append(_load_post)
     _queue_sync(None)
 
 
 def unregister():
     bpy.app.handlers.depsgraph_update_post.remove(_queue_sync)
-    bpy.app.handlers.load_post.remove(_queue_sync)
+    bpy.app.handlers.load_post.remove(_load_post)
     if bpy.app.timers.is_registered(sync_control_meshes):
         bpy.app.timers.unregister(sync_control_meshes)

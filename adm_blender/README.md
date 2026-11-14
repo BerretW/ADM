@@ -38,6 +38,37 @@ Vehicle and firearm profiles remain provisional, not certified built-ins.
 Drag & drop of `.adm` files also works.
 Exporting a mesh in Edit Mode uses its current edits and UVs without leaving Edit Mode.
 
+### Vertex color layers and tint swatches
+
+**ADM > Object > Vertex Colors** (also in the material's **ADM Vertex Control** box) manages
+the actual Blender color attributes, not a separate color system.
+
+- Enabling **Enable Vertex Controls** on a material initializes meshes using it. Assigning that
+  enabled material to a new mesh also initializes its layers on the next UI tick.
+  **Convert Materials To ADM** enables this by default; its redo option can disable initialization.
+  Ordinary meshes and ordinary ADM imports without vertex controls are not changed.
+- **Initialize Layers** creates missing `COLOR_0` and `COLOR_1` without overwriting authored values.
+  Control attributes use **FLOAT_COLOR / CORNER**: existing POINT or BYTE_COLOR controls are
+  converted with their linear values preserved. Unrelated color attributes are left alone.
+- **Reset Defaults** writes `COLOR_0=(0,1,1,0)` and `COLOR_1=(0,0,0,0)`. These mean tint entry 0,
+  full normal strength, full base reflectivity and a dry surface. `COLOR_1` is reserved and has no
+  shading effect for current official profiles, including Interactive Surface.
+- Choose **All Faces** or **Selected Faces**, then edit one R/G/B/A channel or all four and click
+  **Apply Channels**. Edit Mode uses its live face selection without switching modes. A single-channel
+  write preserves the other channels. **Make Active** selects the layer for Blender vertex painting.
+- Choose a one-row RGBA **Tint Palette** image on the active material, select its swatch and click
+  **Apply Palette to R**. Only matching faces using that material are affected. R stores the normalized
+  palette position, **not the swatch's RGB or an integer index**. The position accounts for the current
+  `tintOffset`; unreachable entries produce an error instead of selecting a different color.
+  G/B/A remain unchanged. **Refresh Palette** reloads swatches after image edits.
+- Layer edits affect all objects sharing the mesh datablock. Use Blender's single-user mesh command
+  first if you need independent colors. Reset/apply actions support Undo.
+- With **ADM Vertex Controls** enabled for export, both layers are serialized, using their exact
+  standard defaults if missing on the evaluated mesh; exporting never modifies the source mesh.
+  Import preserves explicit values and initializes omitted optional controls to their standard defaults.
+  The export dialog preselects vertex controls when its scope contains enabled materials unless an
+  explicit setting/preset overrides it. Scripted exports must pass `vertex_controls=True`.
+
 ### ADM Skeleton & Animation panel
 
 The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. It contains:
