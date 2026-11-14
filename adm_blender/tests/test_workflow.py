@@ -186,9 +186,9 @@ def test_vertex_color_authoring(tmp):
           and close(layer_values(mesh, "COLOR_0")[4:], (0.2, 0.7, 0.4, 0.5)),
           "single-channel writes preserve R, B and A")
 
-    palette = bpy.data.images.new("FourTintEntries", 4, 1, alpha=True, float_buffer=True)
-    palette.pixels.foreach_set((0.1, 0.2, 0.3, 1, 0.3, 0.2, 0.1, 1,
-                               0.2, 0.8, 0.4, 1, 0.8, 0.2, 0.4, 1))
+    palette = bpy.data.images.new("FourTintEntries", 4, 3, alpha=True, float_buffer=True)
+    palette.pixels.foreach_set((0.9, 0.9, 0.9, 1) * 8 + (0.1, 0.2, 0.3, 1, 0.3, 0.2, 0.1, 1,
+                                                           0.2, 0.8, 0.4, 1, 0.8, 0.2, 0.4, 1))
     palette.update()
     mat.adm.vertex_tint_palette = palette
     check(len(mat.adm.tint_palette_entries) == 4
@@ -224,13 +224,18 @@ def test_vertex_color_authoring(tmp):
         check(True, "unreachable palette entry is rejected instead of choosing another color")
     else:
         check(False, "unreachable palette entry is rejected instead of choosing another color")
-    bad_palette = bpy.data.images.new("NotARow", 2, 2, alpha=True)
+    tall = bpy.data.images.new("TallPalette", 2, 5, alpha=True, float_buffer=True)
+    tall.pixels.foreach_set((0.9, 0.9, 0.9, 1.0) * 8 + (0.1, 0.2, 0.3, 1.0, 0.4, 0.5, 0.6, 1.0))
+    tall.update()
+    check(close(palette_colors(tall), ((0.1, 0.2, 0.3, 1.0), (0.4, 0.5, 0.6, 1.0))),
+          "5 px high palette reads only its first (top) row")
+    bad_palette = bpy.data.images.new("TooTall", 2, 6, alpha=True)
     try:
         palette_colors(bad_palette)
     except VertexColorError:
-        check(True, "invalid palette dimensions are rejected")
+        check(True, "palettes higher than 5 px are rejected")
     else:
-        check(False, "invalid palette dimensions are rejected")
+        check(False, "palettes higher than 5 px are rejected")
 
     options = ExportOptions(selected_only=True, vertex_controls=True)
     data, report = ModelExporter(bpy.context, None, options).export()
@@ -248,8 +253,10 @@ def test_vertex_color_authoring(tmp):
     check(values and close(values, (0.5625, 0.7, 1.0, 0.0)),
           "export/import/re-export preserves tint index and the other control channels")
     imported_mat = next(m for m in importer.materials if m.adm.vertex_tint_palette is not None)
-    check(imported_mat.adm.vertex_tint_palette.size[:] == (4, 1)
-          and len(imported_mat.adm.tint_palette_entries) == 4, "import rebuilds the tint palette swatches")
+    check(imported_mat.adm.vertex_tint_palette.size[:] == (4, 3)
+          and len(imported_mat.adm.tint_palette_entries) == 4
+          and np.allclose(imported_mat.adm.tint_palette_entries[2].color, (0.2, 0.8, 0.4, 1), atol=0.01),
+          "import rebuilds the top-row swatches of a multi-row tint palette")
     doc, chunks = read_container(data, K.ADM_MAGIC)
     for primitive in doc["meshes"][0]["primitives"]:
         for name in DEFAULTS:

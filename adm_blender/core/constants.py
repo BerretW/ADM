@@ -104,6 +104,7 @@ SHADER_FABRIC = ("adm.surface.fabric", "1.0.0")
 SHADER_INTERACTIVE = ("adm.surface.interactive", "1.0.0")
 LAYERS_EXT = "ADM_material_layers_v1"
 VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
+TINT_PALETTE_MAX_HEIGHT = 5
 VERTEX_CONTROL_PARAMS = {
     "tintOffset": {"type": "F32", "minimum": -1024.0, "maximum": 1024.0, "animatable": True},
     "normalMultiplier": {"type": "F32", "minimum": 0.0, "maximum": 4.0, "animatable": True},

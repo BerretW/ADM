@@ -214,6 +214,31 @@ class Draft4Tests(unittest.TestCase):
         # A KTX2 range cannot be interpreted as the PNG portable fallback.
         self.assertIn("IMAGE_DECODE", {e.code for e in validate(changed).errors})
 
+    def test_tint_palette_height_one_to_five(self):
+        for height, ok in ((1, True), (5, True), (6, False)):
+            with self.subTest(height=height):
+                builder = BinBuilder()
+                positions = builder.add_accessor([(0, 0, 0), (1, 0, 0), (0, 1, 0)], "F32", "VEC3")
+                indices = builder.add_accessor([0, 1, 2], "U16", "SCALAR")
+                image = builder.add_view(encode_png(2, height, b"\x80\x40\x20\xff" * 2 * height),
+                                         chunk_type="IMAG")
+                doc = {
+                    "asset": {}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+                    "meshes": [{"primitives": [{"attributes": {"POSITION": positions},
+                                                "indices": indices, "material": 0}]}],
+                    "materials": [{"extensions": {K.VERTEX_CONTROL_EXT: {"tintPalette": {"index": 0}}}}],
+                    "samplers": [{"magFilter": "NEAREST", "minFilter": "NEAREST"}],
+                    "textures": [{"source": 0, "sampler": 0}],
+                    "images": [{"bufferView": image, "mimeType": "image/png"}],
+                    "accessors": builder.accessors, "bufferViews": builder.buffer_views,
+                    "extensionsUsed": [K.VERTEX_CONTROL_EXT], "extensionsRequired": [K.VERTEX_CONTROL_EXT],
+                }
+                report = validate_adm(write_container(K.ADM_MAGIC, doc, builder.bytes()))
+                if ok:
+                    self.assertTrue(report.ok, report.format())
+                else:
+                    self.assertIn("VERTEX_CONTROL_PALETTE_SIZE", {e.code for e in report.errors})
+
 
 class InteractiveSurfaceTests(unittest.TestCase):
     def setUp(self):

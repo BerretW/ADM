@@ -1,5 +1,19 @@
 # Draft 0.4 executed test report
 
+## Blender 1.12.0 / `ADM_vertex_control_v1` 1.1.0 multi-row tint palettes — local verification
+
+- Python unittest suite: **PASS**, 94 tests (1 skip). `test_tint_palette_height_one_to_five` accepts
+  heights 1 and 5 and rejects 6 with `VERTEX_CONTROL_PALETTE_SIZE`. Reference validators, shader
+  registry and fixture reproducibility checks: **PASS**.
+- Blender 5.2.3 `test_workflow.py`: **PASS**. A 4×3 palette yields top-row swatches, exports as valid
+  ADM and re-imports with the same top-row swatches; 5 px palettes read only the top row; 6 px
+  palettes are rejected.
+- Blender 5.2.3 `test_shader_preview.py`: **PASS**. Cycles bake of a 2×3 palette samples only the
+  top row. `test_interactive_blender.py`, `test_material_slots.py`, `test_fixtures.py`: **PASS**.
+- `adm_tools-1.12.0.zip`: **PASS** for CRC, manifest version, byte identity with source and an
+  installation into an isolated temporary Blender user directory (22 shader entries, top-row
+  swatches, 6 px palette rejected). The temporary directory was removed.
+
 ## Blender 1.11.0 vertex-color authoring — local verification
 
 - Blender 5.2.3 `test_workflow.py`: **PASS**. Checks that meshes outside an ADM Model Root stay

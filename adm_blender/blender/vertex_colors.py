@@ -9,6 +9,8 @@ from bpy.app.handlers import persistent
 from bpy.props import EnumProperty
 from mathutils import Color
 
+from ..core import constants as K
+
 DEFAULTS = {"COLOR_0": (0.0, 1.0, 1.0, 0.0), "COLOR_1": (0.0, 0.0, 0.0, 0.0)}
 
 
@@ -151,18 +153,21 @@ def _load_post(_dummy):
 
 
 def palette_colors(image):
+    """Linear RGBA swatches of the palette's first (top) row; other rows are ignored."""
     if image is None:
         raise VertexColorError("Choose a Tint Palette image on the active material")
     width, height = image.size
-    if height != 1 or width < 1 or image.channels != 4:
-        raise VertexColorError(f"'{image.name}': tint palette must be a readable one-row RGBA image")
-    pixels = np.empty(width * 4, dtype=np.float32)
+    if not 1 <= height <= K.TINT_PALETTE_MAX_HEIGHT or width < 1 or image.channels != 4:
+        raise VertexColorError(f"'{image.name}': tint palette must be a readable RGBA image "
+                               f"1-{K.TINT_PALETTE_MAX_HEIGHT} pixels high")
+    pixels = np.empty(width * height * 4, dtype=np.float32)
     if len(image.pixels) != len(pixels):
         raise VertexColorError(f"'{image.name}': tint palette has no readable RGBA pixels")
     image.pixels.foreach_get(pixels)
-    if not np.isfinite(pixels).all():
+    # Blender stores rows bottom-up, so the first (top) image row is the last one here.
+    colors = pixels.reshape(height, width, 4)[height - 1]
+    if not np.isfinite(colors).all():
         raise VertexColorError(f"'{image.name}': tint palette contains non-finite colors")
-    colors = pixels.reshape(-1, 4)
     # Blender byte image pixels are encoded; float image pixels are already linear unless marked sRGB.
     if not image.is_float or image.colorspace_settings.name == "sRGB":
         colors = np.array([_linear_color(color, True) for color in colors], dtype=np.float32)

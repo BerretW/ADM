@@ -661,14 +661,16 @@ def _apply_vertex_controls(g, bsdf):
     palette_alpha = 1.0
     palette_rgb = None
     palette = a.vertex_tint_palette
-    if palette is not None and palette.size[0] > 0:
+    if palette is not None and palette.size[0] > 0 and palette.size[1] > 0:
         count = int(palette.size[0])
+        # Only the top image row is the palette; Blender texture V grows upwards.
+        first_row_v = 1.0 - 0.5 / int(palette.size[1])
         position = g.math("MULTIPLY_ADD", red, float(count), tint_offset)
         index = g.math("FLOOR", g.math("MINIMUM", g.math("MAXIMUM", position, 0.0), float(count - 1)))
         u = g.math("DIVIDE", g.math("ADD", index, 0.5), float(count))
         sample = g.new("ShaderNodeTexImage", "Tint Palette", interpolation="Closest", extension="CLIP")
         sample.image = palette
-        g.link(g.combine((u, 0.5, 0.0)), sample.inputs["Vector"])
+        g.link(g.combine((u, first_row_v, 0.0)), sample.inputs["Vector"])
         palette_parts = g.new("ShaderNodeSeparateColor", "Palette Channels")
         g.link(sample.outputs["Color"], palette_parts.inputs[0])
         palette_rgb = tuple(palette_parts.outputs[name] for name in ("Red", "Green", "Blue"))

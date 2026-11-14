@@ -57,7 +57,8 @@ the actual Blender color attributes, not a separate color system.
 - Choose **All Faces** or **Selected Faces**, then edit one R/G/B/A channel or all four and click
   **Apply Channels**. Edit Mode uses its live face selection without switching modes. A single-channel
   write preserves the other channels. **Make Active** selects the layer for Blender vertex painting.
-- Choose a one-row RGBA **Tint Palette** image on the active material, select its swatch and click
+- Choose an RGBA **Tint Palette** image 1–5 px high on the active material (only its **top row** is
+  the palette; lower rows are ignored), select its swatch and click
   **Apply Palette to R**. Only matching faces using that material are affected. R stores the normalized
   palette position, **not the swatch's RGB or an integer index**. The position accounts for the current
   `tintOffset`; unreachable entries produce an error instead of selecting a different color.
@@ -148,7 +149,7 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   running-bond mask (rows, columns, joint width, offset).
 - Skin, Fur and Fabric are Principled BSDF approximations (subsurface, anisotropy), and the panel says so.
 - **ADM Vertex Control** can be enabled per material. It interprets `COLOR_0`, samples the optional
-  one-row tint palette, and previews tint/normal/wetness. Dielectric and metallic F0 are represented
+  top row of the 1–5 px high tint palette, and previews tint/normal/wetness. Dielectric and metallic F0 are represented
   by separate Principled lobes mixed at the material metallic factor; the effective dielectric F0 is
   encoded as IOR and metallic F0 as the lobe base color. Cycles tests bake both node outputs.
   `COLOR_1` is reserved for all Core 20 profiles: its values are preserved but do not affect shading.

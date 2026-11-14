@@ -801,9 +801,10 @@ class AdmValidator(_Base):
                                                  "tint palettes require NEAREST minification and magnification")
                             source = texture.get("fallbackSource", texture.get("source"))
                             dims = self.image_dimensions.get(source)
-                            if dims and dims[1] != 1:
+                            if dims and not 1 <= dims[1] <= K.TINT_PALETTE_MAX_HEIGHT:
                                 self.r.error("VERTEX_CONTROL_PALETTE_SIZE", vp + ".tintPalette",
-                                             "tint palette image must have height 1")
+                                             f"tint palette image height must be 1-{K.TINT_PALETTE_MAX_HEIGHT}, "
+                                             f"got {dims[1]}")
 
     # materials -----------------------------------------------------------------------------------
     def check_materials(self):
@@ -2387,9 +2388,9 @@ def validate_adm_resolved(data, asset_path, limits=DEFAULT_LIMITS):
         texture = textures[texture_index]
         image_index = texture.get("fallbackSource", texture.get("source")) if isinstance(texture, dict) else None
         dims = image_dims.get(image_index)
-        if dims and dims[1] != 1:
+        if dims and not 1 <= dims[1] <= K.TINT_PALETTE_MAX_HEIGHT:
             report.error("VERTEX_CONTROL_PALETTE_SIZE", f"materials[{mi}].extensions.{K.VERTEX_CONTROL_EXT}.tintPalette",
-                         "tint palette image must have height 1")
+                         f"tint palette image height must be 1-{K.TINT_PALETTE_MAX_HEIGHT}, got {dims[1]}")
     return report
 
 

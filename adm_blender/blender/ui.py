@@ -595,11 +595,13 @@ def draw_vertex_colors(layout, context, show_palette_picker=True):
         layout.template_ID(mat.adm, "vertex_tint_palette", new="image.new", open="image.open")
     palette = mat.adm.vertex_tint_palette
     if palette is None:
-        layout.label(text="Choose a one-row Tint Palette image for swatches", icon="INFO")
+        layout.label(text="Choose a Tint Palette image (1-5 px high) for swatches", icon="INFO")
         return
-    if palette.size[1] != 1 or palette.size[0] < 1 or palette.channels != 4:
-        layout.label(text="Tint Palette must be a one-row RGBA image", icon="ERROR")
+    if not 1 <= palette.size[1] <= 5 or palette.size[0] < 1 or palette.channels != 4:
+        layout.label(text="Tint Palette must be an RGBA image 1-5 px high", icon="ERROR")
         return
+    if palette.size[1] > 1:
+        layout.label(text="Only the top row is used as the palette", icon="INFO")
     layout.operator("adm.tint_palette_refresh", icon="FILE_REFRESH")
     if len(mat.adm.tint_palette_entries) != palette.size[0]:
         layout.label(text="Refresh Palette to load its current swatches", icon="INFO")

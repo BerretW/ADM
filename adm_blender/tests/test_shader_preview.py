@@ -266,6 +266,15 @@ def main():
     alb = bake(plane, mat, "DIFFUSE")
     check(close(alb[8, 8, :3], (0.8, 0.0, 0.0)),
           f"COLOR_0 tint index samples the nearest palette entry ({alb[8, 8, :3]})")
+    # A 2x3 palette: only the top row (last in Blender's bottom-up pixels) is the palette.
+    tall = bpy.data.images.new("tall_palette", 2, 3, alpha=True, float_buffer=True)
+    tall.pixels.foreach_set((0.0, 1.0, 0.0, 1.0) * 4 + (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0))
+    tall.update()
+    mat.adm.vertex_tint_palette = tall
+    bpy.context.view_layer.update()
+    alb = bake(plane, mat, "DIFFUSE")
+    check(close(alb[8, 8, :3], (0.0, 0.0, 0.2)),
+          f"a multi-row palette samples only its top row ({alb[8, 8, :3]})")
 
     # 5. COLOR_0 produces exact dielectric and metallic F0 in the preview -------------------------
     f0_mat = bpy.data.materials.new("vertex_f0")

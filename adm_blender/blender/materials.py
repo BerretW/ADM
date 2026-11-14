@@ -395,8 +395,9 @@ class MaterialExporter:
 
     def texture_from_palette(self, image):
         pixels = self._pixels(image, True)
-        if pixels.shape[0] != 1 or pixels.shape[1] < 1:
-            raise TextureExportError(f"tint palette '{image.name}' must be an RGBA image with height 1")
+        if not 1 <= pixels.shape[0] <= K.TINT_PALETTE_MAX_HEIGHT or pixels.shape[1] < 1:
+            raise TextureExportError(f"tint palette '{image.name}' must be an RGBA image "
+                                     f"1-{K.TINT_PALETTE_MAX_HEIGHT} pixels high")
         entry = self._add_image(self._image_key(image, True), image.name, image, True, pixels=pixels)
         sampler = {"magFilter": "NEAREST", "minFilter": "NEAREST"}
         sampler_key = tuple(sorted(sampler.items()))

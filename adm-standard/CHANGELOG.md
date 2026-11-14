@@ -1,5 +1,12 @@
 # Changelog
 
+## Blender Tools 1.12.0 / `ADM_vertex_control_v1` 1.1.0 — 2026-11-14
+
+- Tint palettes may be 1–5 texels high. Only the first (top) row is the palette; other rows are
+  ignored and never sampled. Taller palettes are rejected (`VERTEX_CONTROL_PALETTE_SIZE`).
+- Every valid 1.0.0 asset keeps its exact meaning. A 1.0.0 reader rejects palettes taller than one row.
+- Blender swatches, preview sampling, export and the validator follow the new rule.
+
 ## Blender Tools 1.11.0 — 2026-11-14
 
 - Added `COLOR_0`/`COLOR_1` initialization, selected-face/channel editing and neutral-default reset.

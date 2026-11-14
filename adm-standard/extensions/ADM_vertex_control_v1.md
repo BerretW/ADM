@@ -1,6 +1,9 @@
 # `ADM_vertex_control_v1`
 
-Version 1.0.0, incorporated by ADM Draft 0.4 P10.
+Version 1.1.0, incorporated by ADM Draft 0.4 P10.
+
+Version 1.1.0 allows tint palettes 1–5 texels high (1.0.0 required exactly one row). Only the first
+row is read, so every valid 1.0.0 file keeps its meaning; a 1.0.0 reader rejects taller palettes.
 
 ## Declaration and compatibility
 
@@ -73,8 +76,11 @@ declare this extension as required if it contains one of these targets. `animati
 when a channel actually targets the material; the mere availability of animatable parameters does
 not require an ID.
 
-`tintPalette` is optional and MUST reference a texture whose resolved image is a one-row RGBA image
-with at least one texel. `tintMode` is `MULTIPLY` or `REPLACE` and defaults to `MULTIPLY`. Palette
+`tintPalette` is optional and MUST reference a texture whose resolved image is an RGBA image `N`
+texels wide (`N >= 1`) and 1 to 5 texels high. Only the **first row** — the top row, i.e. the first
+row stored in the image file, at texture coordinate `v = 0.5 / height` — defines the palette; other
+rows carry no ADM meaning, MUST be ignored by readers and MUST NOT be sampled. Readers MUST reject a
+palette higher than 5 texels. `tintMode` is `MULTIPLY` or `REPLACE` and defaults to `MULTIPLY`. Palette
 RGB is sRGB-encoded in the image and is decoded to linear RGB before use. Alpha is linear. Palette
 entries are unassociated (straight-alpha) colors. The red control channel selects a discrete texel:
 
@@ -84,7 +90,8 @@ index = clamp(floor(position), 0, N - 1)
 palette = decode_sRGB(texel[index].rgb), texel[index].a
 ```
 
-The sample is at the selected texel center with nearest filtering; interpolation between entries is
+The sample is at the center of the selected texel in the first row with nearest filtering;
+interpolation between entries or rows is
 forbidden. `MULTIPLY` multiplies base RGB and alpha by palette RGBA. `REPLACE` replaces base RGB with
 palette RGB and leaves base alpha unchanged. The palette operation occurs after the base-color factor
 and texture, and before wetness.
