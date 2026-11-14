@@ -88,6 +88,231 @@ def test_material_interpolation():
           f"CUBICSPLINE material interpolation {results['CUBICSPLINE']}")
 
 
+def test_vertex_color_authoring(tmp):
+    import numpy as np
+    from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
+    from adm_blender.blender.import_adm import ImportOptions, ModelImporter
+    from adm_blender.blender.vertex_colors import (
+        DEFAULTS, VertexColorError, ensure_layers, palette_colors, palette_position, sync_control_meshes)
+    from adm_blender.core import constants as K
+    from adm_blender.core.buffers import read_accessor
+    from adm_blender.core.container import read_container, write_container
+
+    def close(actual, expected):
+        return np.allclose(actual, expected, atol=1e-6)
+
+    def layer_values(mesh, name):
+        values = np.empty((len(mesh.color_attributes[name].data), 4), dtype=np.float32)
+        mesh.color_attributes[name].data.foreach_get("color", values.ravel())
+        return values
+
+    print("== vertex color authoring")
+    mesh = bpy.data.meshes.new("ControlMesh")
+    mesh.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                      (2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)], [],
+                     [(0, 1, 2, 3), (4, 5, 6, 7)])
+    mesh.uv_layers.new(name="UVMap")
+    obj = bpy.data.objects.new("ControlObject", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    select(obj)
+    bpy.context.view_layer.update()
+    sync_control_meshes()
+    check(not mesh.color_attributes, "ordinary new meshes remain untouched")
+    mat = bpy.data.materials.new("TintControls")
+    mat.use_nodes = True
+    mat.adm.vertex_controls_enabled = True
+    mesh.materials.append(mat)
+    bpy.context.view_layer.update()
+    sync_control_meshes()
+    check(not mesh.color_attributes,
+          "meshes outside an ADM model stay untouched even with an enabled material")
+    loose_mesh = bpy.data.meshes.new("LooseMesh")
+    loose_mesh.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0)], [], [(0, 1, 2)])
+    loose_mesh.materials.append(mat)
+    loose = bpy.data.objects.new("LooseObject", loose_mesh)
+    bpy.context.scene.collection.objects.link(loose)
+    root = bpy.data.objects.new("VertexColorRoot", None)
+    root.adm.adm_type = "MODEL"
+    bpy.context.scene.collection.objects.link(root)
+    obj.parent = root
+    bpy.context.view_layer.update()
+    check(bpy.app.timers.is_registered(sync_control_meshes),
+          "adding a mesh to an ADM model queues initialization")
+    sync_control_meshes()
+    check(not loose_mesh.color_attributes, "unrelated non-ADM meshes sharing the material stay untouched")
+    select(loose)
+    bpy.ops.adm.convert_materials()
+    check(all(close(layer_values(loose_mesh, name), default) for name, default in DEFAULTS.items()),
+          "explicit conversion to ADM initializes the selected mesh")
+    select(obj)
+    bpy.data.objects.remove(loose)
+    bpy.data.meshes.remove(loose_mesh)
+    check(all(close(layer_values(mesh, name), default) for name, default in DEFAULTS.items()),
+          "new control mesh gets exact neutral defaults, including dry alpha")
+    check(any(node.bl_idname == "ShaderNodeVertexColor" and node.layer_name == "COLOR_0"
+              for node in mat.node_tree.nodes), "new mesh preview samples its actual color attribute")
+    authored = (0.2, 0.3, 0.4, 0.5)
+    for name in DEFAULTS:
+        mesh.color_attributes[name].data.foreach_set("color", np.tile(authored, (8, 1)).ravel())
+    ensure_layers(mesh)
+    check(all(close(layer_values(mesh, name), authored) for name in DEFAULTS),
+          "repeated initialization preserves both authored layers")
+    wm = bpy.context.window_manager.adm
+    wm.vertex_color_scope = "SELECTED"
+    wm.vertex_color_channel = "G"
+    wm.vertex_color_values = (0.9, 0.7, 0.8, 0.1)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm = bmesh.from_edit_mesh(mesh)
+    bm.faces.ensure_lookup_table()
+    for face in bm.faces:
+        face.select_set(face.index == 0)
+    bmesh.update_edit_mesh(mesh)
+    check(bpy.ops.adm.vertex_colors(action="APPLY") == {"FINISHED"},
+          "channel editing works with live Edit Mode face selection")
+    layer = bm.loops.layers.float_color["COLOR_0"]
+    check(all(close(loop[layer], (0.2, 0.7, 0.4, 0.5)) for loop in bm.faces[0].loops)
+          and all(close(loop[layer], authored) for loop in bm.faces[1].loops),
+          "live Edit Mode writes only the chosen channel on selected corners")
+    check(obj.mode == "EDIT", "channel editing preserves Edit Mode")
+    check(bpy.ops.adm.vertex_colors(action="RESET") == {"FINISHED"}, "reset selected control faces")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    check(all(close(layer_values(mesh, name)[:4], default)
+              and close(layer_values(mesh, name)[4:], authored) for name, default in DEFAULTS.items()),
+          "reset affects only selected corners and restores both exact defaults")
+    wm.vertex_color_scope = "ALL"
+    wm.vertex_color_channel = "G"
+    check(bpy.ops.adm.vertex_colors(action="APPLY") == {"FINISHED"}, "apply one channel in Object Mode")
+    check(close(layer_values(mesh, "COLOR_0")[:4], (0, 0.7, 1, 0))
+          and close(layer_values(mesh, "COLOR_0")[4:], (0.2, 0.7, 0.4, 0.5)),
+          "single-channel writes preserve R, B and A")
+
+    palette = bpy.data.images.new("FourTintEntries", 4, 1, alpha=True, float_buffer=True)
+    palette.pixels.foreach_set((0.1, 0.2, 0.3, 1, 0.3, 0.2, 0.1, 1,
+                               0.2, 0.8, 0.4, 1, 0.8, 0.2, 0.4, 1))
+    palette.update()
+    mat.adm.vertex_tint_palette = palette
+    check(len(mat.adm.tint_palette_entries) == 4
+          and close(mat.adm.tint_palette_entries[2].color, (0.2, 0.8, 0.4, 1)),
+          "palette picker shows the actual authored float swatches")
+    mat.adm.active_tint_entry = 2
+    mat.adm.tint_offset = 0.25
+    other = bpy.data.materials.new("OtherMaterial")
+    mesh.materials.append(other)
+    mesh.polygons[1].material_index = 1
+    before = layer_values(mesh, "COLOR_0").copy()
+    bpy.ops.object.mode_set(mode="EDIT")
+    wm.vertex_color_scope = "SELECTED"
+    check(bpy.ops.adm.vertex_colors(action="TINT") == {"FINISHED"}, "apply selected palette swatch")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    after = layer_values(mesh, "COLOR_0")
+    check(close(after[:4, 0], 0.5625) and close(after[:4, 1:], before[:4, 1:])
+          and close(after[4:], before[4:]), "palette stores the offset-aware index only in active-material R")
+    mesh.materials.append(mat)
+    mesh.polygons[1].material_index = 2
+    wm.vertex_color_scope = "ALL"
+    mat.adm.active_tint_entry = 1
+    bpy.ops.adm.vertex_colors(action="TINT")
+    check(close(layer_values(mesh, "COLOR_0")[:, 0], 0.3125)
+          and close(layer_values(mesh, "COLOR_0")[:, 1:], after[:, 1:]),
+          "palette matches all slots using the active material, not just one slot index")
+    mesh.polygons[1].material_index = 1
+    mat.adm.active_tint_entry = 2
+    mesh.color_attributes["COLOR_0"].data.foreach_set("color", after.ravel())
+    try:
+        palette_position(0, 4, 2.0)
+    except VertexColorError:
+        check(True, "unreachable palette entry is rejected instead of choosing another color")
+    else:
+        check(False, "unreachable palette entry is rejected instead of choosing another color")
+    bad_palette = bpy.data.images.new("NotARow", 2, 2, alpha=True)
+    try:
+        palette_colors(bad_palette)
+    except VertexColorError:
+        check(True, "invalid palette dimensions are rejected")
+    else:
+        check(False, "invalid palette dimensions are rejected")
+
+    options = ExportOptions(selected_only=True, vertex_controls=True)
+    data, report = ModelExporter(bpy.context, None, options).export()
+    check(report.ok, "authored vertex controls and palette export as a valid ADM")
+    path = os.path.join(tmp, "vertex_controls.adm")
+    with open(path, "wb") as stream:
+        stream.write(data)
+    importer = ModelImporter(bpy.context, path, ImportOptions(weld=False))
+    root = importer.run()
+    _, roundtrip = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True)).export()
+    palette_primitive = next(p for m in roundtrip.doc["meshes"] for p in m["primitives"]
+                             if "tintPalette" in roundtrip.doc["materials"][p["material"]]
+                             .get("extensions", {}).get(K.VERTEX_CONTROL_EXT, {}))
+    values = read_accessor(roundtrip.doc, roundtrip.bin, palette_primitive["attributes"]["COLOR_0"])
+    check(values and close(values, (0.5625, 0.7, 1.0, 0.0)),
+          "export/import/re-export preserves tint index and the other control channels")
+    imported_mat = next(m for m in importer.materials if m.adm.vertex_tint_palette is not None)
+    check(imported_mat.adm.vertex_tint_palette.size[:] == (4, 1)
+          and len(imported_mat.adm.tint_palette_entries) == 4, "import rebuilds the tint palette swatches")
+    doc, chunks = read_container(data, K.ADM_MAGIC)
+    for primitive in doc["meshes"][0]["primitives"]:
+        for name in DEFAULTS:
+            primitive["attributes"].pop(name)
+    with open(path, "wb") as stream:
+        stream.write(write_container(K.ADM_MAGIC, doc, chunks))
+    root_missing = ModelImporter(bpy.context, path, ImportOptions()).run()
+    imported_mesh = next(child.data for child in root_missing.children if child.type == "MESH")
+    check(all(close(layer_values(imported_mesh, name), default) for name, default in DEFAULTS.items()),
+          "import of omitted optional controls materializes the specified defaults")
+
+    select(obj)
+    for name in DEFAULTS:
+        mesh.color_attributes.remove(mesh.color_attributes[name])
+    _, defaults_export = ModelExporter(bpy.context, None, options).export()
+    check(all(close(read_accessor(defaults_export.doc, defaults_export.bin, p["attributes"][name]), default)
+              for p in defaults_export.doc["meshes"][0]["primitives"] for name, default in DEFAULTS.items()),
+          "export writes exact defaults even if a source mesh has no control layers")
+    check(not mesh.color_attributes, "export default initialization does not modify the source mesh")
+    invalid = mesh.attributes.new("COLOR_0", "INT", "POINT")
+    try:
+        ModelExporter(bpy.context, None, options).export()
+    except ExportError as exc:
+        check("COLOR_0 must be" in str(exc), "export diagnoses a conflicting non-color attribute")
+    else:
+        check(False, "export diagnoses a conflicting non-color attribute")
+    mesh.attributes.remove(invalid)
+    ordinary_data, _ = ModelExporter(bpy.context, None, ExportOptions(selected_only=True)).export()
+    with open(path, "wb") as stream:
+        stream.write(ordinary_data)
+    ordinary_root = ModelImporter(bpy.context, path, ImportOptions()).run()
+    check(all(not child.data.color_attributes for child in ordinary_root.children if child.type == "MESH"),
+          "ordinary ADM import without controls does not add control layers")
+    select(obj)
+
+    for edit in (False, True):
+        for name in DEFAULTS:
+            attr = mesh.color_attributes.get(name)
+            if attr is not None:
+                mesh.color_attributes.remove(attr)
+        attr = mesh.color_attributes.new("COLOR_0", "BYTE_COLOR", "POINT")
+        for value in attr.data:
+            value.color = authored
+        expected = np.array([value.color[:] for value in attr.data])
+        if edit:
+            bpy.ops.object.mode_set(mode="EDIT")
+        ensure_layers(mesh)
+        if edit:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        check(mesh.color_attributes["COLOR_0"].domain == "CORNER"
+              and mesh.color_attributes["COLOR_0"].data_type == "FLOAT_COLOR"
+              and close(layer_values(mesh, "COLOR_0"), expected),
+              f"BYTE_COLOR/POINT conversion preserves linear values in {'Edit' if edit else 'Object'} Mode")
+
+    ordinary = mesh.color_attributes.new("Color", "FLOAT_COLOR", "CORNER")
+    ordinary.data.foreach_set("color", np.tile((0.8, 0.4, 0.2, 1), (8, 1)).ravel())
+    mat.adm.vertex_controls_enabled = False
+    check(bpy.ops.adm.convert_materials() == {"FINISHED"} and mat.adm.vertex_controls_enabled,
+          "Convert Materials to ADM enables control-layer authoring")
+    check(close(layer_values(mesh, "Color"), (0.8, 0.4, 0.2, 1)),
+          "conversion preserves unrelated ordinary color layers")
+
+
 def build_rig():
     arm_data = bpy.data.armatures.new("Rig")
     arm = bpy.data.objects.new("Rig", arm_data)
@@ -248,6 +473,9 @@ def main(tmp):
     bpy.ops.wm.read_homefile(use_empty=True)
     from adm_blender.blender.operators import ensure_role_names
     ensure_role_names()
+    test_vertex_color_authoring(tmp)
+    bpy.ops.wm.read_homefile(use_empty=True)
+    ensure_role_names()
     sc = bpy.context.scene
     test_material_interpolation()
 
@@ -381,8 +609,7 @@ def main(tmp):
                                        "emissiveFactor", "alphaMode")), "explicit non-core PBR fallback")
     check(pm.get("shaderParameters") == {"glossy": True} and pm.get("animationId") == "paint",
           f"paint material {pm}")
-    body_primitive = next(p for m in doc["meshes"] for p in m["primitives"]
-                          if "COLOR_0" in p["attributes"])
+    body_primitive = next(p for m in doc["meshes"] if m["name"] == body.data.name for p in m["primitives"])
     check("COLOR_1" in body_primitive["attributes"],
           "reserved COLOR_1 exported under the required vertex-control extension")
     color1_values = read_accessor(rep.doc, rep.bin, body_primitive["attributes"]["COLOR_1"])

@@ -111,6 +111,15 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
             self.filepath = bpy.path.clean_name(root.name) + self.filename_ext
         elif not any(o.adm.adm_type == "MODEL" for o in context.view_layer.objects):
             self.scope = "SELECTED" if context.selected_objects else "SCENE"
+        if not self.properties.is_property_set("vertex_controls"):
+            objects = ((root, *root.children_recursive) if root is not None and self.scope == "ROOT"
+                       else context.selected_objects if self.scope == "SELECTED" else context.view_layer.objects)
+            self.vertex_controls = any(
+                obj.type == "MESH" and obj.adm.adm_type != "COLLIDER"
+                and any(slot.material is not None and slot.material.adm.vertex_controls_enabled
+                        for slot in obj.material_slots)
+                for obj in objects
+            )
         return super().invoke(context, event)
 
     def draw(self, context):

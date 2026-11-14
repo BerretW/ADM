@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "adm_tools"
-version = "1.10.0"
+version = "1.11.0"
 name = "ADM Tools"
 tagline = "Import, export and validate ADM 1.0 models and animations"
 maintainer = "ADM contributors"

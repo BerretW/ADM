@@ -37,6 +37,14 @@ class ADM_UL_lod_levels(bpy.types.UIList):
         row.prop(item, "min_distance", text="")
 
 
+class ADM_UL_tint_palette(bpy.types.UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        layout.label(text=f"Entry {index}")
+        swatch = layout.row()
+        swatch.enabled = False
+        swatch.prop(item, "color", text="")
+
+
 class ADM_UL_face_bindings(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -546,6 +554,75 @@ class ADM_PT_object(_Side, bpy.types.Panel):
             draw_bone_props(self.layout, context, obj, obj.data.bones[context.active_bone.name])
             self.layout.separator()
         draw_object_props(self.layout, context, obj)
+
+
+def draw_vertex_colors(layout, context, show_palette_picker=True):
+    from .vertex_colors import DEFAULTS, VertexColorError, validate_layers
+    obj = context.object
+    wm = context.window_manager.adm
+    layout.label(text="R: Tint  G: Normal  B: Reflectivity  A: Wetness")
+    layout.label(text="COLOR_1 is reserved; no shading effect", icon="INFO")
+    try:
+        validate_layers(obj.data)
+    except VertexColorError as exc:
+        layout.label(text=str(exc), icon="ERROR")
+        return
+    for name in DEFAULTS:
+        attr = obj.data.color_attributes.get(name)
+        layout.label(text=f"{name}: {attr.domain} / {attr.data_type}" if attr else f"{name}: missing",
+                     icon="CHECKMARK" if attr else "ERROR")
+    layout.operator("adm.vertex_colors", text="Initialize Layers", icon="ADD").action = "INITIALIZE"
+    layout.prop(wm, "vertex_color_scope")
+    layout.operator("adm.vertex_colors", text="Reset Defaults", icon="LOOP_BACK").action = "RESET"
+    row = layout.row(align=True)
+    row.prop(wm, "vertex_color_layer", text="")
+    row.operator("adm.vertex_colors", text="Make Active", icon="COLOR").action = "ACTIVE"
+    layout.prop(wm, "vertex_color_channel")
+    row = layout.row(align=True)
+    for i, channel in enumerate("RGBA"):
+        sub = row.row()
+        sub.enabled = wm.vertex_color_channel in {"RGBA", channel}
+        sub.prop(wm, "vertex_color_values", index=i, text=channel)
+    layout.operator("adm.vertex_colors", text="Apply Channels", icon="BRUSH_DATA").action = "APPLY"
+    if obj.data.users > 1:
+        layout.label(text="Shared mesh: edits affect all its users", icon="ERROR")
+    mat = obj.active_material
+    if mat is None:
+        layout.label(text="Assign a material to enable vertex-control preview", icon="INFO")
+        return
+    if show_palette_picker:
+        layout.prop(mat.adm, "vertex_controls_enabled")
+        layout.template_ID(mat.adm, "vertex_tint_palette", new="image.new", open="image.open")
+    palette = mat.adm.vertex_tint_palette
+    if palette is None:
+        layout.label(text="Choose a one-row Tint Palette image for swatches", icon="INFO")
+        return
+    if palette.size[1] != 1 or palette.size[0] < 1 or palette.channels != 4:
+        layout.label(text="Tint Palette must be a one-row RGBA image", icon="ERROR")
+        return
+    layout.operator("adm.tint_palette_refresh", icon="FILE_REFRESH")
+    if len(mat.adm.tint_palette_entries) != palette.size[0]:
+        layout.label(text="Refresh Palette to load its current swatches", icon="INFO")
+        return
+    layout.template_list("ADM_UL_tint_palette", "", mat.adm, "tint_palette_entries",
+                         mat.adm, "active_tint_entry", rows=3)
+    layout.label(text="R stores a normalized index, not the swatch RGB")
+    layout.label(text="Palette edits apply only to faces using the active material")
+    layout.operator("adm.vertex_colors", text="Apply Palette to R", icon="COLOR").action = "TINT"
+
+
+class ADM_PT_vertex_colors(_Side, bpy.types.Panel):
+    bl_label = "Vertex Colors"
+    bl_parent_id = "ADM_PT_object"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "MESH" and obj.adm.adm_type != "COLLIDER"
+
+    def draw(self, context):
+        draw_vertex_colors(self.layout, context)
 
 
 class ADM_PT_skeleton(_Side, bpy.types.Panel):
@@ -1118,6 +1195,10 @@ def draw_material(lay, context, mat):
             "reflection_multiplier": "reflectionMultiplier",
             "wetness_offset": "wetnessOffset",
         }[field]
+    obj = context.object
+    if obj is not None and obj.type == "MESH" and obj.adm.adm_type != "COLLIDER" \
+            and obj.active_material == mat:
+        draw_vertex_colors(controls, context, show_palette_picker=False)
 
     draw_texture_slots(lay, context, mat)
 
@@ -1227,12 +1308,14 @@ def menu_add(self, context):
     self.layout.menu(ADM_MT_add.bl_idname, icon="MOD_BUILD")
 
 
-SIDEBAR_PANELS = (ADM_PT_tools, ADM_PT_object, ADM_PT_skeleton, ADM_PT_skel_roles, ADM_PT_skel_reference, ADM_PT_ik,
+SIDEBAR_PANELS = (ADM_PT_tools, ADM_PT_object, ADM_PT_vertex_colors,
+                  ADM_PT_skeleton, ADM_PT_skel_roles, ADM_PT_skel_reference, ADM_PT_ik,
                   ADM_PT_skel_sockets, ADM_PT_skel_skin, ADM_PT_skel_anim, ADM_PT_skel_report,
                   ADM_PT_face, ADM_PT_expressions, ADM_PT_shaders, ADM_PT_animation, ADM_PT_validation)
 
 CLASSES = (
-    ADM_UL_lod_levels, ADM_UL_face_bindings, ADM_UL_expressions, ADM_UL_expression_bindings, ADM_UL_ik_chains,
+    ADM_UL_lod_levels, ADM_UL_tint_palette, ADM_UL_face_bindings, ADM_UL_expressions,
+    ADM_UL_expression_bindings, ADM_UL_ik_chains,
     ADM_UL_bone_roles, ADM_UL_libraries, ADM_UL_clips, ADM_UL_events, ADM_UL_report,
     ADM_UL_shader_defs, ADM_UL_shader_params,
     *SIDEBAR_PANELS,

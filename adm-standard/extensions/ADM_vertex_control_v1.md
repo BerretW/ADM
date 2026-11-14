@@ -165,7 +165,12 @@ that unsupported behavior rather than guess.
 ## Blender reference implementation status
 
 The Blender add-on transports `COLOR_0`/`COLOR_1`, the tint palette reference and the four
-extension-level parameter values through export/import. It supports ADM_ANIM binding and playback
+extension-level parameter values through export/import. Its authoring tools initialize missing
+layers to the documented defaults, reset all or selected face corners, and write individual linear
+channels. The tint swatch picker writes a normalized, offset-aware palette position to `COLOR_0.R`,
+preserving G/B/A. Import materializes omitted optional controls; vertex-control export writes
+their documented defaults without changing the Blender source mesh. Ordinary color assets without
+this extension retain their original semantics. It supports ADM_ANIM binding and playback
 for these parameters by extension-defined name and exact shader identity. Vertex-control preview
 nodes apply the tint palette, normal-strength, wetness-color, wetness-roughness and F0 rules. For F0,
 the preview mixes dielectric and metallic Principled lobes at the material metallic factor: the

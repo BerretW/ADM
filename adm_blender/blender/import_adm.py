@@ -121,6 +121,8 @@ class ModelImporter:
                         continue
                     missing_image_uris.append(image.get("uri", f"image:{image_index}"))
             vertex_controls = (m.get("extensions") or {}).get(K.VERTEX_CONTROL_EXT)
+            if K.VERTEX_CONTROL_EXT in d.get("extensionsRequired", []):
+                mat.adm.vertex_controls_enabled = True
             if isinstance(vertex_controls, dict):
                 mat.adm.vertex_controls_enabled = True
                 params = vertex_controls.get("parameters", {})
@@ -640,9 +642,9 @@ class ModelImporter:
             uv_sets = [all(f"TEXCOORD_{k}" in p["attributes"] for p in prims) for k in (0, 1)]
             if not uv_sets[0]:
                 uv_sets[1] = False
-        has_c = (any("COLOR_0" in p["attributes"] for p in prims) if vertex_control or interactive_bindings
-                 else all("COLOR_0" in p["attributes"] for p in prims)) and not collision
-        has_c1 = vertex_control and all("COLOR_1" in p["attributes"] for p in prims) and not collision
+        has_c = (vertex_control or (any("COLOR_0" in p["attributes"] for p in prims) if interactive_bindings
+                                   else all("COLOR_0" in p["attributes"] for p in prims))) and not collision
+        has_c1 = vertex_control and not collision
         has_s = all("JOINTS_0" in p["attributes"] for p in prims) and not collision and skin_index is not None
         if collision:
             uv_sets = [False, False]
@@ -677,7 +679,7 @@ class ModelImporter:
                     default_color = (0.0, 1.0, 1.0, 0.0) if vertex_control else (1.0, 1.0, 1.0, 1.0)
                     col.append(np.tile(default_color, (n, 1)))
             if has_c1:
-                col1.append(self.acc(a["COLOR_1"]))
+                col1.append(self.acc(a["COLOR_1"]) if "COLOR_1" in a else np.zeros((n, 4)))
             if has_s:
                 jnt.append(self.acc(a["JOINTS_0"], np.int64))
                 wgt.append(self.acc(a["WEIGHTS_0"]))
