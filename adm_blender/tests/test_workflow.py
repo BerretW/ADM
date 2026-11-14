@@ -9,6 +9,8 @@ import sys
 import tempfile
 import traceback
 
+import bmesh
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, REPO)
@@ -56,6 +58,11 @@ def select(*objs, active=None):
     for o in objs:
         o.select_set(True)
     bpy.context.view_layer.objects.active = active or (objs[0] if objs else None)
+
+
+def string_attr_value(item):
+    value = item.value
+    return value.decode("utf-8") if isinstance(value, bytes) else value
 
 
 def build_rig():
@@ -109,11 +116,12 @@ def build_body(arm):
 def main(tmp):
     adm_blender.register()
     from adm_blender.blender import material_anim as MA
-    from adm_blender.blender.export_adm import ExportOptions, ModelExporter
+    from adm_blender.blender.export_adm import ExportOptions, ModelExporter, export_model
     from adm_blender.blender.export_anim import AnimExporter
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
     from adm_blender.blender.import_anim import AnimImportOptions, import_library
-    from adm_blender.core.validate import validate_file
+    from adm_blender.core import constants as K
+    from adm_blender.core.validate import validate_adm_resolved, validate_file
     spec = importlib.util.spec_from_file_location("adm_reference_container",
                                                   os.path.join(REPO, "adm-standard", "tools", "container.py"))
     reference = importlib.util.module_from_spec(spec)
@@ -142,10 +150,37 @@ def main(tmp):
     collider = bpy.context.active_object
     physical = root.adm.physical_materials.add()
     physical.name, physical.friction, physical.restitution = "cloth", 0.6, 0.1
+    physical = root.adm.physical_materials.add()
+    physical.name, physical.profile = "stone", "adm.phys.stone.v1"
     collider.adm.physical_material = "cloth"
     collider_world = collider.matrix_world.copy()
     collider.parent, collider.parent_type, collider.parent_bone = arm, "BONE", "mixamorig:Hips"
     collider.matrix_world = collider_world
+
+    bpy.ops.mesh.primitive_cube_add(size=0.5, location=(2, 0, 0.5))
+    mesh_collider = bpy.context.active_object
+    mesh_collider.name = "MeshCollider"
+    mesh_collider.parent = root
+    mesh_collider.adm.adm_type = "COLLIDER"
+    mesh_collider.adm["collider_shape"] = 3
+    mesh_collider.adm.physical_material = "stone"
+    select(mesh_collider)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_mode(type="FACE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    edit_mesh = bmesh.from_edit_mesh(mesh_collider.data)
+    edit_mesh.faces.ensure_lookup_table()
+    edit_mesh.faces[0].select_set(True)
+    bmesh.update_edit_mesh(mesh_collider.data)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    check(mesh_collider.data.polygons[0].select, "face selection survives Edit Mode")
+    check(bpy.ops.adm.physical_material_assign_faces() == {"FINISHED"}, "assign physical material to selected face")
+    face_attr = mesh_collider.data.attributes.get("adm_physical_material_id")
+    check(face_attr is not None and string_attr_value(face_attr.data[0]) == "stone",
+          f"FACE string attribute stores stable ID ({face_attr.data[0].value!r})")
+    mesh_collider.data.polygons[0].select = False
+    mesh_collider.adm.physical_material = "cloth"
+
     hitbox = root.adm.hitboxes.add()
     hitbox.name, hitbox.collider, hitbox.object, hitbox.role = "torso", collider, arm, "torso"
     hitbox.bone = "mixamorig:Hips"
@@ -200,6 +235,13 @@ def main(tmp):
     check(data[8:12] == (64).to_bytes(4, "little"), "Draft 0.4 native header")
     check(all("chunkId" in view for view in doc["bufferViews"]), "chunk-addressed buffer views")
     check(doc["physicalMaterials"][0]["id"] == "cloth", "physical material exported")
+    physical_primitive = next(
+        p for m in doc["meshes"] for p in m["primitives"]
+        if K.PHYSICAL_SURFACES_EXT in p.get("extensions", {})
+    )
+    face_ids = physical_primitive["extensions"][K.PHYSICAL_SURFACES_EXT]["faceMaterials"]
+    check(len(face_ids) == 12 and face_ids.count("stone") == 2 and face_ids.count("cloth") == 10,
+          f"per-triangle physical surfaces {face_ids}")
     check(doc["modelComponents"][0]["id"] == "back.part", "component exported")
     check(doc["hitboxes"][0]["id"] == "torso", "hitbox exported")
     check(any(d["id"] == "studio.paint" for d in doc.get("shaderDefinitions", [])), "shader definition embedded")
@@ -213,6 +255,17 @@ def main(tmp):
     model_path = os.path.join(tmp, "hero.adm")
     with open(model_path, "wb") as fh:
         fh.write(data)
+    external_path = os.path.join(tmp, "hero_external.adm")
+    external_exp, external_report = export_model(
+        bpy.context, external_path, root, ExportOptions(embed_textures=False)
+    )
+    check(external_report.ok, f"external-texture model valid {errs(external_report)}")
+    external_image = external_report.doc["images"][0]
+    check("uri" in external_image and os.path.isfile(os.path.join(tmp, *external_image["uri"].split("/"))),
+          "external texture sidecar written")
+    with open(external_path, "rb") as fh:
+        external_blob = fh.read()
+    check(validate_adm_resolved(external_blob, external_path).ok, "external texture resolves and validates")
 
     print("== animation authoring")
     lib = sc.adm_anim.libraries.add()
@@ -309,11 +362,18 @@ def main(tmp):
     print("== re-import into a fresh file")
     bpy.ops.wm.read_homefile(use_empty=True)
     ensure_role_names()
-    root2 = ModelImporter(bpy.context, model_path, ImportOptions()).run()
+    root2 = ModelImporter(bpy.context, external_path, ImportOptions()).run()
     check(root2.adm.physical_materials[0].name == "cloth", "physical material imported")
     check(root2.adm.model_components[0].bone == "mixamorig:Hips", "component bone reference imported")
     check(root2.adm.hitboxes[0].collider.adm.physical_material == "cloth", "hitbox collider link imported")
     check(root2.adm.hitboxes[0].bone == "mixamorig:Hips", "hitbox bone ancestor imported")
+    imported_collider = next(o for o in bpy.data.objects if o.adm.adm_type == "COLLIDER"
+                             and o.adm.collider_shape == "MESH")
+    imported_faces = imported_collider.data.attributes["adm_physical_material_id"]
+    check(len(imported_faces.data) == 12 and
+          sum(1 for face in imported_faces.data if string_attr_value(face) == "stone") == 2 and
+          sum(1 for face in imported_faces.data if string_attr_value(face) == "cloth") == 10,
+          "per-triangle physical IDs round-trip to Blender FACE attribute")
     arm2 = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
     check(arm2 is not None, "armature imported")
     paint2 = bpy.data.materials.get("Paint")

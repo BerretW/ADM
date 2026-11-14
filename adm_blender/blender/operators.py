@@ -238,6 +238,41 @@ class ADM_OT_convert_to_collider(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ADM_OT_physical_material_assign_faces(bpy.types.Operator):
+    """Assign the collider's stable physical-material ID to selected mesh faces"""
+    bl_idname = "adm.physical_material_assign_faces"
+    bl_label = "Assign Surface To Selected Faces"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (obj is not None and obj.type == "MESH" and obj.mode == "OBJECT"
+                and obj.adm.adm_type == "COLLIDER" and obj.adm.collider_shape == "MESH")
+
+    def execute(self, context):
+        obj = context.object
+        ident = obj.adm.physical_material.strip()
+        root = find_model_root(obj)
+        if not ident or root is None or not any(item.name == ident for item in root.adm.physical_materials):
+            self.report({"ERROR"}, "Set the collider's default to a registered physical material first")
+            return {"CANCELLED"}
+        selected = [poly.index for poly in obj.data.polygons if poly.select]
+        if not selected:
+            self.report({"ERROR"}, "Select one or more faces in Edit Mode, then return to Object Mode")
+            return {"CANCELLED"}
+        attr = obj.data.attributes.get("adm_physical_material_id")
+        if attr is None:
+            attr = obj.data.attributes.new("adm_physical_material_id", "STRING", "FACE")
+        elif attr.domain != "FACE" or attr.data_type != "STRING":
+            self.report({"ERROR"}, "adm_physical_material_id exists but is not a FACE string attribute")
+            return {"CANCELLED"}
+        for index in selected:
+            attr.data[index].value = ident.encode("utf-8")
+        self.report({"INFO"}, f"Assigned '{ident}' to {len(selected)} face(s)")
+        return {"FINISHED"}
+
+
 class ADM_OT_create_lod_group(bpy.types.Operator):
     """Group the selected objects into an ADM LOD group (ordered by name, LOD0 first)"""
     bl_idname = "adm.create_lod_group"
@@ -1311,6 +1346,7 @@ class ADM_OT_clear_report(bpy.types.Operator):
 
 CLASSES = (
     ADM_OT_create_model_root, ADM_OT_create_scene, ADM_OT_create_collider, ADM_OT_convert_to_collider,
+    ADM_OT_physical_material_assign_faces,
     ADM_OT_create_lod_group, ADM_OT_lod_level_add, ADM_OT_lod_level_remove, ADM_OT_lod_preview,
     ADM_OT_create_attachment, ADM_OT_set_type, ADM_OT_convert_materials,
     ADM_OT_auto_map_roles, ADM_OT_clear_roles, ADM_OT_select_role_bone, ADM_OT_compute_rig_id,

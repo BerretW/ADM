@@ -29,8 +29,7 @@ When `COLOR_0` is absent, its value is `(0,1,1,0)`. Values are linearly interpol
 triangle before material evaluation. Exporters MUST clamp values to `[0,1]`; readers MUST reject
 out-of-range F32 values. U8 values are divided by 255.
 
-The material's numeric `shaderParameters` MAY include the following standard animatable parameters;
-all official Core 20 profiles define them with the listed defaults and bounds:
+The extension's optional material `parameters` object MAY contain these controls:
 
 | Name | Default | Bounds |
 |---|---:|---:|
@@ -39,9 +38,11 @@ all official Core 20 profiles define them with the listed defaults and bounds:
 | `reflectionMultiplier` | `1` | `[0,4]` |
 | `wetnessOffset` | `0` | `[-1,1]` |
 
-An omitted value uses its default. They use the existing `shaderParameter` animation target and do
-not animate or rewrite vertex buffers. A material needs `animationId` only when an animation
-actually targets it.
+An omitted value uses its default. In this revision these names are extension parameters, not
+registered members of each shader's `shaderParameters` schema. They MUST NOT be emitted as
+`shaderParameter` animation targets until the shader registry and animation binding rules register
+them for the exact shader identity. The values do not animate or rewrite vertex buffers in P10;
+this is an implementation/specification gap, not an implicit retargeting convention.
 
 ## Tint palette
 
@@ -129,3 +130,11 @@ cross-profile interpretation.
 
 The initial Core 20 per-shader `COLOR_1` table and executable renderer conformance fixtures are
 pending; the generic attribute transport does not claim shader-specific `COLOR_1` conformance.
+
+## Blender reference implementation status
+
+The P10 Blender add-on can transport `COLOR_0`/`COLOR_1`, the tint palette reference and the four
+extension-level parameter values through export/import. It does not yet evaluate the tint, normal,
+reflectivity or wetness equations in its viewport shader previews, and does not implement their
+animation binding. Therefore an exported file can be structurally valid while its controls are not
+visually realized by Blender; this is not renderer conformance.

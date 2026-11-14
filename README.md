@@ -39,7 +39,8 @@ See the [add-on guide](adm_blender/README.md) for authoring, import/export and a
 
 Supported authoring includes meshes, skins, morph targets, semantic skeleton profiles, facial bindings,
 IK descriptors, LODs, attachment sockets, shader parameter definitions/tracks, model components,
-physical materials and bone-linked hitboxes.
+physical materials, per-triangle collision surfaces, and bone-linked hitboxes. External texture
+sidecars are optional; embedded textures remain the default.
 
 ### Important limits
 
@@ -49,6 +50,11 @@ physical materials and bone-linked hitboxes.
 - All 20 official shader profiles have a Blender viewport preview. Their parameters drive the node tree,
   and the export keeps the portable PBR fallback. Skin, fur and fabric previews are approximations.
   Custom shaders use a reported PBR fallback, and certified renderer conformance is not claimed.
+- `ADM_vertex_control_v1` can transport `COLOR_0`/`COLOR_1`, palette references, and material control
+  values. Those values do not yet drive viewport shading or animation; per-shader `COLOR_1` semantics
+  are incomplete. See the `SPEC_GAP-SHADER-CORE20` entry before relying on them.
+- External-image and per-triangle physical-surface round trips have Blender workflow coverage, but
+  security-edge cases and independent-reader interoperability remain open.
 - Vehicle/weapon profile names remain provisional. Physics, damage and other gameplay behavior
   are outside this asset format.
 - Skeleton profiles: `humanoid.vrm1` is fully supported. Quadruped profiles (`animal.*.v1`) are

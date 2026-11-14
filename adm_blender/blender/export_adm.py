@@ -6,6 +6,7 @@ additional scenes. Without a model root the whole view layer (or the selection) 
 """
 
 import hashlib
+import os
 from collections import defaultdict
 
 import bpy
@@ -387,7 +388,13 @@ class ModelExporter:
         if physical_attr is not None:
             if physical_attr.domain != "FACE" or physical_attr.data_type != "STRING":
                 raise ExportError(f"collider '{obj.name}': adm_physical_material_id must be a FACE string attribute")
-            face_physical_ids = [physical_attr.data[int(poly)].value for poly in tri_polygons]
+            try:
+                face_physical_ids = [
+                    value.decode("utf-8") if isinstance(value, bytes) else value
+                    for value in (physical_attr.data[int(poly)].value for poly in tri_polygons)
+                ]
+            except UnicodeDecodeError as exc:
+                raise ExportError(f"collider '{obj.name}': adm_physical_material_id contains invalid UTF-8") from exc
 
         columns = [loop_vert[tri_loops].astype(np.float64)[:, None]]
         normals = tangents = None

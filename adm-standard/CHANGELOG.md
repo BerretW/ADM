@@ -88,3 +88,13 @@
 - Skin, fur and fabric previews are approximations with Principled BSDF and are labeled as such in the UI.
 - Added a reference mortar-mask generator and Cycles-bake tests that check preview colors and roughness against the contract math.
 - No binary container change.
+
+## Draft 0.4 revision P10 — vertex controls, external images and physical surfaces
+
+- Added versioned extension contracts for `ADM_vertex_control_v1`, `ADM_external_images_v1`, and `ADM_physical_surfaces_v1`.
+- Registered `COLOR_0` control semantics only when the required vertex-control extension is declared; retained ordinary linear RGBA semantics otherwise. `COLOR_1` transport is defined, but per-profile meanings remain a SPEC_GAP.
+- Added structural and resolved validation for safe relative external-image URIs, MIME, size, dimensions, hashes and fallback references. Blender export defaults to embedded textures; external export writes deterministic sidecars and import resolves them relative to the ADM asset.
+- Added physical surface profile IDs and per-triangle collision-mesh references. Blender stores IDs in the `adm_physical_material_id` FACE string attribute; the UI can assign the collider's selected stable ID to selected faces.
+- Added Blender workflow tests for external sidecar resolution and physical surface export/import round-trip.
+- Vertex-control values and palette settings currently serialize and import, but universal tint/normal/reflection/wetness preview application, verified animation binding, full `COLOR_1` rules, external failure-cleanup/security edge coverage, and independent-reader interoperability remain open in `SPEC_GAPS.md`. These extensions are not yet certified for full renderer interoperability.
+- No binary container change.

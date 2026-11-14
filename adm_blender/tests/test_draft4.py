@@ -137,6 +137,28 @@ class Draft4Tests(unittest.TestCase):
         self.doc["extensionsRequired"] = []
         self.assertIn("IMAGE_EXTERNAL_EXT", self.codes())
 
+    def test_external_image_symlink_cannot_escape_asset_root(self):
+        blob = encode_png(1, 1, bytes((255, 255, 255, 255)))
+        self.doc["images"] = [{"uri": "textures/link.png", "mimeType": "image/png"}]
+        self.doc["extensionsUsed"] = [K.EXTERNAL_IMAGES_EXT]
+        self.doc["extensionsRequired"] = [K.EXTERNAL_IMAGES_EXT]
+        data = write_container(K.ADM_MAGIC, self.doc, self.chunks)
+        with tempfile.TemporaryDirectory() as asset_dir, tempfile.TemporaryDirectory() as outside_dir:
+            asset_root = Path(asset_dir)
+            link_dir = asset_root / "textures"
+            link_dir.mkdir()
+            outside_image = Path(outside_dir) / "outside.png"
+            outside_image.write_bytes(blob)
+            link = link_dir / "link.png"
+            try:
+                link.symlink_to(outside_image)
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            model_path = asset_root / "model.adm"
+            model_path.write_bytes(data)
+            report = validate_adm_resolved(data, model_path)
+            self.assertIn("IMAGE_EXTERNAL_PATH", {e.code for e in report.errors})
+
     def test_animation_accessors_require_anim_chunk(self):
         doc, chunks = read_container((FIXTURES / "shader_parameter_tracks.adm_anim").read_bytes(), K.ANIM_MAGIC)
         # A model's GEOM payload has a valid byte range but is not animation storage.

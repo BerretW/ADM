@@ -186,6 +186,9 @@ def draw_object_props(layout, context, obj):
         box.prop(p, "collider_trigger")
         if root is not None:
             box.prop_search(p, "physical_material", root.adm, "physical_materials")
+            if p.collider_shape == "MESH":
+                box.label(text="Select faces in Edit Mode, then return to Object Mode", icon="INFO")
+                box.operator("adm.physical_material_assign_faces", icon="FACESEL")
         else:
             box.prop(p, "physical_material")
     elif t == "LOD_GROUP":

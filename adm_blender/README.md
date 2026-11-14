@@ -29,7 +29,9 @@ validation and import/export.
 On the **Model Root**, the Object panel also edits **Physical Materials**, **Model Components** and
 **Hitboxes**. Components reference an object or armature bone and an optional attachment socket.
 Hitboxes reference an exported collider and an optional collider node/ancestor; physical material IDs
-are assigned on colliders. These are asset descriptors, not physics simulation or damage behavior.
+are assigned on colliders. For a MESH collider, select faces in Edit Mode, choose the physical ID on
+the collider, return to Object Mode, and click **Assign Surface To Selected Faces**. Unassigned faces
+use the collider's default ID. These are asset descriptors, not physics simulation or damage behavior.
 Vehicle and firearm profiles remain provisional, not certified built-ins.
 
 **Import and export:** use *File › Import/Export › ADM Model (.adm)* and *ADM Animation Library*.
@@ -145,6 +147,12 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   Shader/layer definitions and their animation data remain editable and exportable; arbitrary custom
   shader rendering and certified layered rendering are not claimed. PBR tracks animate the fallback
   independently of custom shader parameters.
+- Export's **Embed Textures** option is enabled by default. When disabled, external images are written
+  under a deterministic relative `textures/` path and validated against the ADM file's directory on
+  import.
+- `ADM_vertex_control_v1` can serialize `COLOR_0`/`COLOR_1`, palette references, and material control
+  values. Those values do not yet drive viewport shading or animation, and per-shader `COLOR_1`
+  semantics remain open; see `adm-standard/SPEC_GAPS.md`.
 - Image export (the **Images** option in File > Export > ADM):
   - **PNG** (default) writes only PNG. JPEG, DDS, KTX2 and other sources are converted, so any
     engine can read the file.

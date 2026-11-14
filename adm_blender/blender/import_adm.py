@@ -712,7 +712,7 @@ class ModelImporter:
         if collision and len(face_physical) and any(face_physical):
             attr = me.attributes.new("adm_physical_material_id", "STRING", "FACE")
             for poly, ident in zip(attr.data, face_physical):
-                poly.value = ident
+                poly.value = ident.encode("utf-8")
 
         # materials
         used = sorted(set(MI.tolist()))
