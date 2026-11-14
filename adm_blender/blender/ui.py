@@ -211,6 +211,21 @@ def draw_object_props(layout, context, obj):
         col.prop(p, "component_role")
         if p.component_role.strip():
             col.prop(p, "component_profile")
+    if obj.type == "MESH" and t != "COLLIDER" and any(
+            slot.material is not None and slot.material.adm.shader == "INTERACTIVE"
+            for slot in obj.material_slots):
+        box = layout.box()
+        box.label(text="Interactive Surface", icon="MATERIAL")
+        box.prop(p, "interactive_surface_id")
+        box.prop(p, "interactive_tex_coord")
+        box.prop(p, "interactive_aspect_ratio")
+        box.label(text="Select display faces in Edit Mode, then return to Object Mode", icon="INFO")
+        row = box.row(align=True)
+        row.operator("adm.interactive_surface_assign_faces", text="Assign Selected", icon="FACESEL")
+        row.operator("adm.interactive_surface_assign_faces", text="Clear").clear = True
+        box.operator("adm.interactive_surface_assign_faces", text="Read Selected Faces").load = True
+        if obj.data.users > 1:
+            box.label(text="Linked mesh objects share face IDs", icon="ERROR")
 
 
 def draw_model_metadata(layout, props):
@@ -1006,6 +1021,9 @@ def draw_material(lay, context, mat):
         col.label(text="Uses the portable PBR Emissive Factor and Texture", icon="INFO")
     elif p.shader == "DECAL":
         col.label(text="Mesh overlay; uses ADM straight-alpha compositing", icon="INFO")
+    elif p.shader == "INTERACTIVE":
+        col.label(text="Static PBR fallback preview; runtime image is supplied by the engine", icon="INFO")
+        col.label(text="Assign surface ID and UV to selected faces in Object properties", icon="INFO")
     elif p.shader == "CUSTOM":
         col.label(text="SHADER_FALLBACK: portable PBR preview", icon="INFO")
     elif p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):

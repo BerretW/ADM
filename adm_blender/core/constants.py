@@ -101,6 +101,7 @@ SHADER_BARK = ("adm.nature.bark", "1.0.0")
 SHADER_ROCK = ("adm.nature.rock", "1.0.0")
 SHADER_WATER = ("adm.nature.water", "1.0.0")
 SHADER_FABRIC = ("adm.surface.fabric", "1.0.0")
+SHADER_INTERACTIVE = ("adm.surface.interactive", "1.0.0")
 LAYERS_EXT = "ADM_material_layers_v1"
 VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
 VERTEX_CONTROL_PARAMS = {
@@ -111,7 +112,11 @@ VERTEX_CONTROL_PARAMS = {
 }
 EXTERNAL_IMAGES_EXT = "ADM_external_images_v1"
 PHYSICAL_SURFACES_EXT = "ADM_physical_surfaces_v1"
-SUPPORTED_EXTENSIONS = (LAYERS_EXT, VERTEX_CONTROL_EXT, EXTERNAL_IMAGES_EXT, PHYSICAL_SURFACES_EXT)
+INTERACTIVE_SURFACES_EXT = "ADM_interactive_surfaces_v1"
+INTERACTIVE_SURFACES_VERSION = "1.0.0"
+INTERACTIVE_SURFACES_CAPABILITY = "ADM-INTERACTIVE-SURFACES-1"
+SUPPORTED_EXTENSIONS = (LAYERS_EXT, VERTEX_CONTROL_EXT, EXTERNAL_IMAGES_EXT, PHYSICAL_SURFACES_EXT,
+                        INTERACTIVE_SURFACES_EXT)
 PHYSICAL_SURFACE_PROFILES = (
     "adm.phys.wood.v1", "adm.phys.metal.v1", "adm.phys.stone.v1",
     "adm.phys.ground.v1", "adm.phys.glass.v1",
@@ -139,6 +144,7 @@ OFFICIAL_SHADER_KINDS = {
     SHADER_ROCK: "ROCK",
     SHADER_WATER: "WATER",
     SHADER_FABRIC: "FABRIC",
+    SHADER_INTERACTIVE: "INTERACTIVE",
 }
 OFFICIAL_SHADER_KEYS = {kind: key for key, kind in OFFICIAL_SHADER_KINDS.items()}
 
@@ -300,6 +306,14 @@ OFFICIAL_SHADERS = {
                       [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
         _shader_param("fiber_strength", "F32", 0.25, "Grazing-angle fiber lobe weight.", 0.0, 1.0),
         _shader_param("anisotropy", "F32", 0.4, "Tangent-oriented specular lobe strength.", 0.0, 1.0),
+    ],
+    SHADER_INTERACTIVE: [
+        _shader_param("brightness", "F32", 1.0, "Linear multiplier applied to runtime content RGB.",
+                      0.0, 16.0, True),
+        _shader_param("emissive_strength", "F32", 1.0, "Emission multiplier in lit runtime mode.",
+                      0.0, 16.0, True),
+        _shader_param("enabled", "BOOL", True, "When false, show the authored PBR fallback."),
+        _shader_param("unlit", "BOOL", True, "Render runtime content without light-dependent shading."),
     ],
 }
 

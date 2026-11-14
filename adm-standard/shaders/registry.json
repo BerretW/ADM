@@ -1017,6 +1017,43 @@
         }
       ],
       "contract": "adm.surface.fabric.v1.md"
+    },
+    {
+      "id": "adm.surface.interactive",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "brightness",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Linear multiplier applied to runtime content RGB.",
+          "minimum": 0.0,
+          "maximum": 16.0,
+          "animatable": true
+        },
+        {
+          "name": "emissive_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Emission multiplier in lit runtime mode.",
+          "minimum": 0.0,
+          "maximum": 16.0,
+          "animatable": true
+        },
+        {
+          "name": "enabled",
+          "type": "BOOL",
+          "default": true,
+          "description": "When false, show the authored PBR fallback."
+        },
+        {
+          "name": "unlit",
+          "type": "BOOL",
+          "default": true,
+          "description": "Render runtime content without light-dependent shading."
+        }
+      ],
+      "contract": "adm.surface.interactive.v1.md"
     }
   ]
 }

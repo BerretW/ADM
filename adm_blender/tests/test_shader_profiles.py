@@ -37,6 +37,14 @@ def main(tmp):
 
     for key, kind in K.OFFICIAL_SHADER_KINDS.items():
         mat.adm.shader = kind
+        if kind == "INTERACTIVE":
+            bpy.context.view_layer.objects.active = cube
+            cube.select_set(True)
+            for poly in cube.data.polygons:
+                poly.select = True
+            cube.adm.interactive_surface_id = "test_screen"
+            check(bpy.ops.adm.interactive_surface_assign_faces() == {"FINISHED"},
+                  "INTERACTIVE: assign screen faces")
         if kind == "EMISSIVE":
             bsdf = M.principled_of(mat)
             bsdf.inputs["Emission Color"].default_value = (0.25, 0.5, 0.75, 1.0)
@@ -68,7 +76,7 @@ def main(tmp):
         if kind not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
             check(not any("portable PBR fallback" in warning for warning in exporter.warnings),
                   f"{kind}: has a profile preview, no fallback warning")
-            if imported is not None:
+            if imported is not None and kind != "INTERACTIVE":
                 out = next((n for n in imported.node_tree.nodes
                             if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
                 check(out is not None and M.is_preview_node(out), f"{kind}: imported material shows profile preview")

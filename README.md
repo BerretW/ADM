@@ -39,17 +39,20 @@ See the [add-on guide](adm_blender/README.md) for authoring, import/export and a
 
 Supported authoring includes meshes, skins, morph targets, semantic skeleton profiles, facial bindings,
 IK descriptors, LODs, attachment sockets, shader parameter definitions/tracks, model components,
-physical materials, per-triangle collision surfaces, and bone-linked hitboxes. External texture
-sidecars are optional; embedded textures remain the default.
+physical materials, per-triangle collision surfaces, stable interactive display surfaces, and
+bone-linked hitboxes. External texture sidecars are optional; embedded textures remain the default.
 
 ### Important limits
 
 - RAW chunk storage is supported; optional ZSTD decoding is not.
 - Textures export as PNG by default (any source format is converted). KTX2 or DDS (RGBA8/BC1/BC3)
   can be chosen at export and always carry an embedded PNG fallback; Basis Universal and BC7 are not supported.
-- All 20 official shader profiles have a Blender viewport preview. Their parameters drive the node tree,
+- The original 20 shader profiles have a Blender viewport preview. Their parameters drive the node tree,
   and the export keeps the portable PBR fallback. Skin, fur and fabric previews are approximations.
   Custom shaders use a reported PBR fallback, and certified renderer conformance is not claimed.
+- `adm.surface.interactive@1.0.0` and `ADM-INTERACTIVE-SURFACES-1` identify dynamic displays on
+  geometry. Blender previews the static authored fallback; runtime images, interaction and
+  independent renderer certification remain outside the add-on.
 - `ADM_vertex_control_v1` transports `COLOR_0`/`COLOR_1`, palette references, and material control
   values. `COLOR_0` drives the Blender preview and its four parameters can be animated. For all Core 20
   profiles, `COLOR_1` is explicitly reserved, has no shading effect, and is preserved for round-trip
@@ -76,12 +79,14 @@ Run from the repository root:
 ```powershell
 python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_gputex -v
 python .\adm-standard\tools\run_tests.py
+python .\adm-standard\tools\test_interactive_surfaces.py
 ```
 
 Run Blender round trips separately:
 
 ```powershell
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_fixtures.py
+& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_interactive_blender.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_workflow.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_skeleton_blender.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_material_slots.py

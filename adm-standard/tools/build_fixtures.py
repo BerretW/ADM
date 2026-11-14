@@ -72,6 +72,18 @@ def build_valid_fixtures(source_root, output_root):
     return records
 
 
+def copy_expectations(source_root, output_root):
+    source_dir = source_root / "expectations"
+    if not source_dir.is_dir():
+        return
+    destination = output_root / "expectations"
+    destination.mkdir(parents=True, exist_ok=True)
+    for source in sorted(source_dir.glob("*.json")):
+        target = destination / source.name
+        if source.resolve() != target.resolve():
+            target.write_bytes(source.read_bytes())
+
+
 def build_invalid_fixtures(records, output_root):
     invalid_dir = output_root / "invalid"
     invalid_dir.mkdir(parents=True, exist_ok=True)
@@ -98,6 +110,37 @@ def build_invalid_fixtures(records, output_root):
     del missing_fallback["materials"][0]["roughnessFactor"]
     create(invalid_dir / "bad_missing_pbr.adm", magic, missing_fallback, shader_chunks)
 
+    magic, interactive_doc, interactive_chunks, _source_path = records[("valid", "interactive_terminal")]
+    ext = "ADM_interactive_surfaces_v1"
+    malformed_interactive = (
+        ("bad_interactive_duplicate_id.adm",
+         lambda doc: doc["extensions"][ext]["surfaces"][1].update(surfaceId="main_display")),
+        ("bad_interactive_node.adm",
+         lambda doc: doc["extensions"][ext]["surfaces"][0]["bindings"][0].update(node=999)),
+        ("bad_interactive_primitive.adm",
+         lambda doc: doc["extensions"][ext]["surfaces"][0]["bindings"][0].update(primitive=999)),
+        ("bad_interactive_missing_uv.adm",
+         lambda doc: doc["meshes"][0]["primitives"][0]["attributes"].pop("TEXCOORD_0")),
+        ("bad_interactive_uv_set.adm",
+         lambda doc: doc["extensions"][ext]["surfaces"][0]["bindings"][0].update(texCoord=2)),
+        ("bad_interactive_shader_version.adm",
+         lambda doc: doc["materials"][1]["shader"].update(version="2.0.0")),
+        ("bad_interactive_parameter.adm",
+         lambda doc: doc["materials"][1]["shaderParameters"].update(brightness=17)),
+        ("bad_interactive_extension_version.adm",
+         lambda doc: doc["extensions"][ext].update(version="2.0.0")),
+        ("bad_interactive_required_unknown.adm",
+         lambda doc: (doc["extensionsUsed"].append("Other_v1"), doc.update(extensionsRequired=["Other_v1"]))),
+        ("bad_interactive_bad_material.adm",
+         lambda doc: doc["meshes"][0]["primitives"][0].update(material=999)),
+        ("bad_interactive_missing_fallback.adm",
+         lambda doc: doc["materials"][1].pop("roughnessFactor")),
+    )
+    for name, mutate in malformed_interactive:
+        invalid = copy.deepcopy(interactive_doc)
+        mutate(invalid)
+        create(invalid_dir / name, magic, invalid, interactive_chunks)
+
     cycle_manifest = {
         "asset": {},
         "scene": 0,
@@ -121,6 +164,7 @@ def main(argv=None):
     output_root.mkdir(parents=True, exist_ok=True)
     records = build_valid_fixtures(FIXTURE_DIR, output_root)
     build_invalid_fixtures(records, output_root)
+    copy_expectations(FIXTURE_DIR, output_root)
     print(f"Built fixtures under {output_root}")
 
 

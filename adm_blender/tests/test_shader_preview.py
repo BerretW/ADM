@@ -154,6 +154,21 @@ def main():
         mat.adm.shader = "CORE"
         check(not any(M.is_preview_node(n) for n in mat.node_tree.nodes), f"{kind}: CORE removes preview nodes")
 
+    # Interactive: the object displays its authored fallback, not invented runtime content.
+    mat = bpy.data.materials.new("interactive_static")
+    plane.data.materials.clear()
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    fallback = M.principled_of(mat)
+    fallback.inputs["Base Color"].default_value = (0.2, 0.4, 0.6, 1.0)
+    fallback.inputs["Specular IOR Level"].default_value = 0.0
+    mat.adm.shader = "INTERACTIVE"
+    mat.adm.params["brightness"].value_f = 8.0
+    mat.adm.params["enabled"].value_bool = False
+    alb = bake(plane, mat, "DIFFUSE")
+    check(close(alb[8, 8, :3], (0.2, 0.4, 0.6)),
+          f"INTERACTIVE: disabled runtime still displays the authored fallback on the object ({alb[8, 8, :3]})")
+
     # 2. Brick: bake albedo / roughness ------------------------------------------------------------
     mat = bpy.data.materials.new("brick")
     plane.data.materials.clear()

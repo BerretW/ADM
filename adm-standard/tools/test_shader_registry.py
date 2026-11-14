@@ -14,7 +14,7 @@ registry_path = root / "adm-standard" / "shaders" / "registry.json"
 registry = json.loads(registry_path.read_text(encoding="utf-8"))
 entries = registry["shaders"]
 assert registry["registryVersion"] == "1.0.0"
-assert len(entries) == 20
+assert len(entries) == 21
 assert len(entries) == len({(entry["id"], entry["version"]) for entry in entries})
 assert all(re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", entry["id"]) for entry in entries)
 assert all(entry["version"] == "1.0.0" for entry in entries)

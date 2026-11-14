@@ -6,6 +6,7 @@ additional scenes. Without a model root the whole view layer (or the selection) 
 """
 
 import hashlib
+import math
 import os
 from collections import defaultdict
 
@@ -19,11 +20,11 @@ from ..core import skeleton_profiles as SP
 from ..core.buffers import BinBuilder
 from ..core.container import AdmFormatError, write_container
 from ..core.rigid import rig_id_from_document
-from ..core.validate import validate_adm
+from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.9.1 (ADM Draft 0.4 P11)"
+GENERATOR = "ADM Tools for Blender 1.10.0 (ADM Draft 0.4 P13)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -150,6 +151,7 @@ class ModelExporter:
         self.root_inv = root.matrix_world.inverted_safe() if root else Matrix.Identity(4)
         self.b = BinBuilder()
         self.meshes = []
+        self.mesh_interactive = []
         self.mesh_cache = {}
         self.node_mesh = {}
         self.node_skin = {}
@@ -345,16 +347,18 @@ class ModelExporter:
                 me = obj.data
             if me is None:
                 raise ExportError(f"'{obj.name}': Blender could not produce a mesh for export")
-            mesh = self._build_mesh(obj, me, arm, has_keys, collision)
+            built = self._build_mesh(obj, me, arm, has_keys, collision)
         finally:
             if obj_eval is not None:
                 obj_eval.to_mesh_clear()
             if edit_copy is not None:
                 bpy.data.meshes.remove(edit_copy)
-        if mesh is None:
+        if built is None:
             result = None
         else:
+            mesh, interactive = built
             self.meshes.append(mesh)
+            self.mesh_interactive.append(interactive)
             result = (len(self.meshes) - 1, arm) if arm is not None else len(self.meshes) - 1
         if key is not None:
             self.mesh_cache[key] = result
@@ -396,6 +400,55 @@ class ModelExporter:
         for mi in tri_mat:
             prim_mats.append(mat_slots[mi] if 0 <= mi < len(mat_slots) else None)
         prim_mats = np.array([-1 if m is None else m for m in prim_mats], dtype=np.int64)
+        interactive_attrs = []
+        for name, kind in (("adm_interactive_surface_id", "STRING"),
+                           ("adm_interactive_texcoord", "INT"),
+                           ("adm_interactive_aspect_ratio", "FLOAT")):
+            attr = me.attributes.get(name) if not collision else None
+            if attr is not None and (attr.domain != "FACE" or attr.data_type != kind):
+                raise ExportError(f"'{obj.name}': {name} must be a FACE {kind} attribute")
+            interactive_attrs.append(attr)
+        groups = defaultdict(list)
+        for ti, (slot, exported_mat, poly) in enumerate(zip(tri_mat, prim_mats, tri_polygons)):
+            source = (obj.material_slots[int(slot)].material
+                      if not collision and 0 <= slot < len(obj.material_slots) else None)
+            is_interactive = source is not None and source.adm.shader_key() == K.SHADER_INTERACTIVE
+            if is_interactive:
+                if source.adm.vertex_controls_enabled and not self.opts.vertex_controls:
+                    self.warn(f"'{source.name}': ADM Vertex Controls are disabled for export; "
+                              "interactive control settings and COLOR_1 will be omitted, and COLOR_0 "
+                              "will use ordinary vertex-color semantics")
+                elif source.adm.vertex_controls_enabled and not self.opts.export_colors:
+                    self.warn(f"'{source.name}': Vertex Colors are disabled for export; "
+                              "interactive COLOR_0 and COLOR_1 data will be omitted")
+                if exported_mat < 0:
+                    raise ExportError(f"'{obj.name}': interactive surfaces require material export")
+                if any(attr is None for attr in interactive_attrs):
+                    raise ExportError(f"'{obj.name}': assign a surface ID, UV set and aspect ratio to every "
+                                      "interactive face before export")
+                try:
+                    raw = interactive_attrs[0].data[int(poly)].value
+                    ident = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+                except UnicodeDecodeError as exc:
+                    raise ExportError(f"'{obj.name}': interactive surface ID contains invalid UTF-8") from exc
+                if not isinstance(ident, str) or not PARAM_NAME_RE.fullmatch(ident):
+                    raise ExportError(f"'{obj.name}': face {int(poly)} needs a surface ID matching "
+                                      "[a-z][a-z0-9_]*, at most 64 characters")
+                texcoord = interactive_attrs[1].data[int(poly)].value
+                ratio = interactive_attrs[2].data[int(poly)].value
+                if texcoord not in (0, 1):
+                    raise ExportError(f"'{obj.name}': surface '{ident}' has invalid UV set {texcoord}")
+                if len(uv_layers) <= texcoord:
+                    raise ExportError(f"'{obj.name}': surface '{ident}' requires exported UV {texcoord}; "
+                                      "create the UV map and enable UV 1 export if needed")
+                if not math.isfinite(ratio) or not 0 <= ratio <= 1000:
+                    raise ExportError(f"'{obj.name}': surface '{ident}' aspect ratio must be 0 (unspecified) "
+                                      "or in (0,1000]")
+                group = (int(exported_mat), ident, texcoord, ratio)
+            else:
+                group = (int(exported_mat), "", 0, 0.0)
+            groups[group].append(ti)
+        has_interactive = any(group[1] for group in groups)
         face_physical_ids = None
         physical_attr = me.attributes.get("adm_physical_material_id") if collision else None
         if physical_attr is not None:
@@ -451,7 +504,8 @@ class ModelExporter:
                 n = nverts if ca.domain == "POINT" else nloops
                 col = _np_get(ca.data, "color", n, 4).astype(np.float64)
                 colors = col[loop_vert] if ca.domain == "POINT" else col
-                colors = np.clip(colors, 0.0, 1.0)
+                if self.opts.vertex_controls or not has_interactive:
+                    colors = np.clip(colors, 0.0, 1.0)
                 columns.append(colors[tri_loops])
             if ca1 is not None:
                 n = nverts if ca1.domain == "POINT" else nloops
@@ -462,9 +516,20 @@ class ModelExporter:
         normal_mapped = any(m >= 0 and "normalTexture" in self.mat.materials[m] for m in set(prim_mats.tolist()))
         want_tangents = normals is not None and uvs and (
             self.opts.export_tangents == "ALWAYS" or (self.opts.export_tangents == "AUTO" and normal_mapped))
+        interactive_tangents = {}
         if want_tangents:
-            tangents = self._tangents(me, uv_layers, uvs[0], normals, loop_vert, tri_loops, co, obj)
-            columns.append(tangents[tri_loops])
+            if has_interactive:
+                used_uvs = {
+                    self.mat.materials[m].get("normalTexture", {}).get("texCoord", 0) if m >= 0 else 0
+                    for m, _, _, _ in groups
+                }
+                for uv_index in used_uvs:
+                    layer = uv_layers[uv_index] if uv_index < len(uv_layers) else uv_layers[0]
+                    interactive_tangents[uv_index] = self._tangents(
+                        me, [layer], uvs[uv_index], normals, loop_vert, tri_loops, co, obj)
+            else:
+                tangents = self._tangents(me, uv_layers, uvs[0], normals, loop_vert, tri_loops, co, obj)
+                columns.append(tangents[tri_loops])
 
         # skinning (per vertex)
         joints = weights = None
@@ -502,11 +567,18 @@ class ModelExporter:
                     key_nrm.append(None)
 
         prims = []
+        interactive = {}
         mesh_targets_used = bool(key_names)
-        for m in sorted(set(prim_mats.tolist())):
-            tri_sel = np.nonzero(prim_mats == m)[0]
+        for (m, ident, texcoord, ratio), triangles in sorted(groups.items()):
+            tri_sel = np.asarray(triangles, dtype=np.int64)
             corner_sel = (tri_sel[:, None] * 3 + np.arange(3)[None, :]).reshape(-1)
-            rows = np.hstack([c[corner_sel] for c in columns])
+            group_tangents = tangents
+            row_columns = [c[corner_sel] for c in columns]
+            if interactive_tangents:
+                tangent_uv = self.mat.materials[m].get("normalTexture", {}).get("texCoord", 0) if m >= 0 else 0
+                group_tangents = interactive_tangents[tangent_uv]
+                row_columns.append(group_tangents[tri_loops[corner_sel]])
+            rows = np.hstack(row_columns)
             _, first, inverse = np.unique(rows, axis=0, return_index=True, return_inverse=True)
             inverse = inverse.reshape(-1)
             order = np.argsort(first)
@@ -519,10 +591,11 @@ class ModelExporter:
             attrs = {"POSITION": self.b.add_accessor(cv.np_vec_to_adm(co[src_vert]), "F32", "VEC3")}
             if normals is not None:
                 attrs["NORMAL"] = self.b.add_accessor(cv.np_vec_to_adm(normals[src_corner]), "F32", "VEC3")
-            if tangents is not None:
-                t = tangents[src_corner]
+            if group_tangents is not None:
+                t = group_tangents[src_corner]
                 txyz = cv.np_vec_to_adm(t[:, :3])
-                attrs["TANGENT"] = self.b.add_accessor(np.hstack([txyz, t[:, 3:4]]), "F32", "VEC4")
+                sign = -t[:, 3:4] if has_interactive else t[:, 3:4]
+                attrs["TANGENT"] = self.b.add_accessor(np.hstack([txyz, sign]), "F32", "VEC4")
             for i, uv in enumerate(uvs[:2]):
                 attrs["TEXCOORD_%d" % i] = self.b.add_accessor(uv[src_corner], "F32", "VEC2")
             if colors is not None:
@@ -561,13 +634,15 @@ class ModelExporter:
                             t["NORMAL"] = self.b.add_accessor(cv.np_vec_to_adm(dn), "F32", "VEC3")
                     targets.append(t)
                 prim["targets"] = targets
+            if ident:
+                interactive[len(prims)] = (ident, texcoord, ratio)
             prims.append(prim)
         out = {"name": obj.data.name if obj.type == "MESH" else obj.name, "primitives": prims}
         if mesh_targets_used:
             out["targetNames"] = key_names
             if any(w != 0.0 for w in key_weights):
                 out["weights"] = [cv.f32(w) for w in key_weights]
-        return out
+        return out, interactive
 
     def _tangents(self, me, uv_layers, uv0_adm, normals, loop_vert, tri_loops, co, obj):
         nloops = len(me.loops)
@@ -670,6 +745,21 @@ class ModelExporter:
                 self.node_skin[rec.index] = self.skin_for(arm, rec.world)
             else:
                 self.node_mesh[rec.index] = res
+
+    def _interactive_surfaces(self):
+        surfaces = {}
+        for node, mesh in sorted(self.node_mesh.items()):
+            for primitive, (ident, texcoord, ratio) in sorted(self.mesh_interactive[mesh].items()):
+                surface = surfaces.get(ident)
+                if surface is None:
+                    surface = {"surfaceId": ident, "bindings": []}
+                    if ratio:
+                        surface["aspectRatio"] = ratio
+                    surfaces[ident] = surface
+                elif surface.get("aspectRatio", 0.0) != ratio:
+                    raise ExportError(f"surface '{ident}': aspect ratio differs between assigned faces")
+                surface["bindings"].append({"node": node, "primitive": primitive, "texCoord": texcoord})
+        return [surfaces[ident] for ident in sorted(surfaces)]
 
     def _node_dicts(self):
         out = []
@@ -989,6 +1079,9 @@ class ModelExporter:
         physical, components, hitboxes = self._physical_components()
         faces, exprs = self._face_and_expressions()
         iks = self._ik_chains()
+        surfaces = self._interactive_surfaces()
+        if surfaces:
+            self.mat.extensions_used.add(K.INTERACTIVE_SURFACES_EXT)
 
         asset = {"generator": GENERATOR}
         if self.root is not None and self.root.adm.copyright.strip():
@@ -1010,6 +1103,10 @@ class ModelExporter:
         for key, val in optional:
             if val:
                 doc[key] = val
+        if surfaces:
+            doc["extensions"] = {K.INTERACTIVE_SURFACES_EXT: {
+                "version": K.INTERACTIVE_SURFACES_VERSION, "surfaces": surfaces,
+            }}
         doc["accessors"] = self.b.accessors
         doc["bufferViews"] = self.b.buffer_views
         bin_bytes = self.b.bytes()

@@ -55,6 +55,18 @@ def main(tmp):
     data, rep = ModelExporter(ctx, root, ExportOptions()).export()
     check(rep.ok, f"split-chunk triangle round-trip valid {errs(rep)}")
 
+    print("== interactive_terminal.adm")
+    bpy.ops.wm.read_homefile(use_empty=True)
+    ctx = bpy.context
+    interactive_importer = ModelImporter(ctx, os.path.join(FIX, "interactive_terminal.adm"), ImportOptions())
+    interactive_root = interactive_importer.run()
+    check(interactive_importer.node_obj[0].data != interactive_importer.node_obj[1].data,
+          "shared source mesh has independent surface IDs per node")
+    data, rep = ModelExporter(ctx, interactive_root, ExportOptions()).export()
+    surfaces = rep.doc.get("extensions", {}).get(K.INTERACTIVE_SURFACES_EXT, {}).get("surfaces", [])
+    check(rep.ok and {surface["surfaceId"] for surface in surfaces} ==
+          {"main_display", "security_monitor_right"}, f"interactive fixture round-trip {errs(rep)}")
+
     print("== shader_layered.adm")
     bpy.ops.wm.read_homefile(use_empty=True)
     ctx = bpy.context

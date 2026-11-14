@@ -7,10 +7,16 @@ This kit contains a rewritten integrated specification for the proposed **native
 ## Contents
 
 - `ADM-1.0-SPEC.md`: normative *proposal*, including exact 64-byte header, 80-byte chunk directory entries, chunk-addressed bufferViews, safety rules, model data, animation libraries, morphs, two-bone IK, shaders and PBR fallback.
-- `fixtures/valid/`: 5 small binary reference examples and their readable JSON manifests.
-- `fixtures/invalid/`: 6 intentionally corrupted/invalid files.
+- `fixtures/valid/`: binary reference examples and their readable JSON manifests, including the
+  two-display `interactive_terminal.adm`.
+- `fixtures/invalid/`: intentionally corrupted/invalid container and interactive-surface files.
+- `fixtures/expectations/interactive_terminal.expected.json`: explicit surface, hit-test and runtime
+  color/alpha reference values.
 - `tools/container.py`: standalone Python standard-library-only writer, container checker and minimal seek/range reader.
-- `tools/build_fixtures.py`: regenerates valid test data from earlier Draft 0.3 fixtures **only when the older ZIP is available at the development path**; the packaged fixtures are already generated and no older files are needed to run tests.
+- `tools/build_fixtures.py`: regenerates fixtures from checked-in manifests and verified chunk payloads.
+- `tools/build_interactive_fixture.py --check`: rebuilds the interactive fixture from explicit source
+  geometry and image data and compares its bytes.
+- `tools/test_interactive_surfaces.py`: independent fixture and numerical UV/color/alpha checks.
 - `tools/run_tests.py`: reproducible tests for the supplied files.
 - `TEST-RESULTS.md`: executed tests and known gaps.
 - `CHANGELOG.md`: changes since Draft 0.3.
@@ -29,8 +35,9 @@ python3 tools/container.py fixtures/valid/triangle.adm
 - A file starts with an indexable, noncompressed JSON manifest and a directory of independently accessible chunks.
 - Small viewers can implement basic PBR and skip optional shader technology.
 - Every advanced material contains explicitly serialized portable PBR fallback fields.
-- The machine-readable shader registry contains all 20 requested profile IDs and their typed parameter schemas.
-  Blender renders a viewport preview for every official profile (skin, fur and fabric are approximations); custom shaders report PBR fallback. See `SPEC_GAPS.md`.
+- The machine-readable shader registry contains the Core 20 and the interactive surface profile.
+  Blender renders Core 20 previews (skin, fur and fabric are approximations) and the authored static
+  PBR fallback for interactive surfaces; custom shaders report PBR fallback. See `SPEC_GAPS.md`.
 - `AMA0` animation libraries store searchable clip descriptions and may animate bones, morph targets, expressions and numeric shader/PBR fields.
 - Humanoid bone roles follow VRM 1.0; ADM-REF-NORM-1 and the ADM-IK-1 two-bone solver are now specified, but independent conformance work remains.
 - Vehicle/weapon roles are now defined in **normative annexes** `profiles/vehicle.car.v1.md` and `profiles/weapon.firearm.v1.md`. The profiles are specified but **not yet independently certified**. No gameplay behavior is encoded.
@@ -66,8 +73,10 @@ These tests are executed by the reference Blender toolkit (`adm_blender/tests/te
 
 ## Shader registry (P8)
 
-- `shaders/registry.json` contains the 20 requested versioned shader IDs and typed parameter schemas.
+- `shaders/registry.json` contains the Core 20 and the versioned interactive shader and typed schemas.
 - `shaders/*.v1.md` contains a contract annex for each non-core profile; §8 retains the existing core and layered semantics.
 - `tools/build_shader_registry.py --check` detects drift between Blender's normative parameter tables and the generated registry.
 - `tools/test_shader_registry.py` validates IDs, parameter defaults and annex presence. `adm_blender/tests/test_shader_math.py` checks independent scalar/vector reference values.
-- Blender round-trip tests preserve all 20 identities and schemas, but most specialist viewport node builders remain unimplemented and fall back explicitly to PBR. This is not full Core 20 renderer conformance; see `SPEC_GAPS.md`.
+- Blender round-trip tests preserve the registered identities and schemas. The interactive shader uses
+  static fallback preview rather than runtime rendering. This is not independent renderer conformance;
+  see `SPEC_GAPS.md`.

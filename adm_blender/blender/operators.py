@@ -7,7 +7,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, St
 from mathutils import Matrix, Vector
 
 from ..core import constants as K
-from ..core.validate import validate_file
+from ..core.validate import PARAM_NAME_RE, validate_file
 from . import props as P
 from .colliders import new_collider_object, refresh_collider_mesh, style_collider_object
 from .export_adm import ExportError, ExportOptions, ModelExporter, compute_rig_id, find_model_root
@@ -270,6 +270,93 @@ class ADM_OT_physical_material_assign_faces(bpy.types.Operator):
         for index in selected:
             attr.data[index].value = ident.encode("utf-8")
         self.report({"INFO"}, f"Assigned '{ident}' to {len(selected)} face(s)")
+        return {"FINISHED"}
+
+
+class ADM_OT_interactive_surface_assign_faces(bpy.types.Operator):
+    """Assign or clear an interactive surface on selected mesh faces"""
+    bl_idname = "adm.interactive_surface_assign_faces"
+    bl_label = "Assign Interactive Surface"
+    bl_options = {"REGISTER", "UNDO"}
+
+    clear: BoolProperty(default=False, options={"HIDDEN"})
+    load: BoolProperty(default=False, options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (obj is not None and obj.type == "MESH" and obj.mode == "OBJECT"
+                and obj.adm.adm_type != "COLLIDER")
+
+    def execute(self, context):
+        obj = context.object
+        selected = [poly for poly in obj.data.polygons if poly.select]
+        if not selected:
+            self.report({"ERROR"}, "Select one or more faces in Edit Mode, then return to Object Mode")
+            return {"CANCELLED"}
+        fields = (("adm_interactive_surface_id", "STRING"),
+                  ("adm_interactive_texcoord", "INT"),
+                  ("adm_interactive_aspect_ratio", "FLOAT"))
+        for name, kind in fields:
+            attr = obj.data.attributes.get(name)
+            if attr is not None and (attr.domain != "FACE" or attr.data_type != kind):
+                self.report({"ERROR"}, f"{name} must be a FACE {kind} attribute")
+                return {"CANCELLED"}
+        if self.load:
+            attrs = [obj.data.attributes.get(name) for name, _ in fields]
+            if any(attr is None for attr in attrs):
+                self.report({"ERROR"}, "Selected mesh has no complete interactive surface assignments")
+                return {"CANCELLED"}
+            try:
+                values = {
+                    (attrs[0].data[poly.index].value.decode("utf-8"),
+                     attrs[1].data[poly.index].value, attrs[2].data[poly.index].value)
+                    for poly in selected
+                }
+            except UnicodeDecodeError:
+                self.report({"ERROR"}, "Selected surface ID contains invalid UTF-8")
+                return {"CANCELLED"}
+            if len(values) != 1:
+                self.report({"ERROR"}, "Selected faces do not share one surface ID, UV set and aspect ratio")
+                return {"CANCELLED"}
+            ident, texcoord, ratio = values.pop()
+            if not PARAM_NAME_RE.fullmatch(ident) or texcoord not in (0, 1) or not 0 <= ratio <= 1000:
+                self.report({"ERROR"}, "Selected faces have an invalid interactive surface assignment")
+                return {"CANCELLED"}
+            obj.adm.interactive_surface_id = ident
+            obj.adm.interactive_tex_coord = str(texcoord)
+            obj.adm.interactive_aspect_ratio = ratio
+            self.report({"INFO"}, f"Loaded surface '{ident}' from selected faces")
+            return {"FINISHED"}
+        ident = obj.adm.interactive_surface_id.strip()
+        texcoord = int(obj.adm.interactive_tex_coord)
+        if not self.clear:
+            if not PARAM_NAME_RE.fullmatch(ident):
+                self.report({"ERROR"}, "Surface ID must match [a-z][a-z0-9_]*, at most 64 characters")
+                return {"CANCELLED"}
+            if len(obj.data.uv_layers) <= texcoord:
+                self.report({"ERROR"}, f"UV {texcoord} does not exist on this mesh")
+                return {"CANCELLED"}
+            for poly in selected:
+                slots = obj.material_slots
+                mat = slots[poly.material_index].material if poly.material_index < len(slots) else None
+                if mat is None or mat.adm.shader_key() != K.SHADER_INTERACTIVE:
+                    self.report({"ERROR"}, "Every selected face must use the Interactive Surface ADM material")
+                    return {"CANCELLED"}
+        if self.clear and obj.data.attributes.get(fields[0][0]) is None:
+            self.report({"ERROR"}, "Selected mesh has no interactive surface assignments to clear")
+            return {"CANCELLED"}
+        attrs = [obj.data.attributes.get(name) or obj.data.attributes.new(name, kind, "FACE")
+                 for name, kind in fields]
+        for poly in selected:
+            attrs[0].data[poly.index].value = b"" if self.clear else ident.encode("ascii")
+            attrs[1].data[poly.index].value = 0 if self.clear else texcoord
+            attrs[2].data[poly.index].value = 0.0 if self.clear else obj.adm.interactive_aspect_ratio
+        if obj.data.users > 1:
+            self.report({"WARNING"}, "Assignments affect every object sharing this mesh; make it single-user "
+                                    "for independent IDs")
+        else:
+            self.report({"INFO"}, f"{'Cleared' if self.clear else 'Assigned'} {len(selected)} face(s)")
         return {"FINISHED"}
 
 
@@ -1354,7 +1441,7 @@ class ADM_OT_clear_report(bpy.types.Operator):
 
 CLASSES = (
     ADM_OT_create_model_root, ADM_OT_create_scene, ADM_OT_create_collider, ADM_OT_convert_to_collider,
-    ADM_OT_physical_material_assign_faces,
+    ADM_OT_physical_material_assign_faces, ADM_OT_interactive_surface_assign_faces,
     ADM_OT_create_lod_group, ADM_OT_lod_level_add, ADM_OT_lod_level_remove, ADM_OT_lod_preview,
     ADM_OT_create_attachment, ADM_OT_set_type, ADM_OT_convert_materials,
     ADM_OT_auto_map_roles, ADM_OT_clear_roles, ADM_OT_select_role_bone, ADM_OT_compute_rig_id,

@@ -1,6 +1,6 @@
 # ADM 1.0 — Apparatus Drawable Model & Animation Standard
 
-**Status:** Draft 0.4 revision P4 — normative humanoid retarget/IK rules and specification-gap dispositions; **NOT ratified**  
+**Status:** Draft 0.4 revision P13 — interactive surfaces and prior profile revisions; **NOT ratified**<br>
 **Date:** 2026-11-13  
 **Formats:** `.adm` (drawable model), `.adm_anim` (standalone animation library)  
 **Version:** 1.0 (`major=1, minor=0`) for each independent file format  
@@ -21,6 +21,12 @@ The terms **MUST**, **MUST NOT**, **SHOULD**, **MAY** express requirements. Fiel
 **Self-contained model by default:** `.adm` is self-contained for its geometry, skeleton, morph targets, materials and images. It may contain multiple mesh primitives and nodes. Models of a building, animal or car can be complete in one file. The generic model/asset layer does NOT require references to other `.adm` files. Animations are explicitly in separate `.adm_anim` libraries and may be shared by models. Loading libraries is an application responsibility.
 
 **Mandatory reader capabilities:** `ADM-CONTAINER-1` validates/streams the chunk container and `ADM-CORE-1` validates model semantics; `ADM-ANIM-1` parses/evaluates animation libraries; `ADM-HUMANOID-1` supports standardized humanoid retarget; `ADM-IK-1` supports two-segment IK; `ADM-FACE-ARKIT52-1` supports the facial channel profile; `ADM-SHADER-CORE-1` supports standard PBR shader binding and portable PBR parameter animation; `ADM-SHADER-LAYERED-1` supports deterministic multilayer material evaluation; `ADM-TEX-KTX2-1` and `ADM-TEX-DDS-1` decode the GPU texture container subsets of §8.6. Readers MUST advertise the profile(s) they implement, not claim support for data that they silently drop. Writers need not generate every optional model feature, but generated data MUST conform.
+
+**Optional interactive display capability:** `ADM-INTERACTIVE-SURFACES-1` implements the exact
+`adm.surface.interactive@1.0.0` visual contract and the versioned surface binding extension
+[`ADM_interactive_surfaces_v1`](extensions/ADM_interactive_surfaces_v1.md). A core reader need not
+provide runtime content or interaction and may render the portable PBR fallback under the normal
+extension rules. The application, not ADM, supplies runtime images and interaction logic.
 
 **References adopted, not embedded wholesale:** glTF 2.0 mathematics / texture conventions, VRM 1.0 humanoid bone roles and T-pose semantics, Apple ARKit facial coefficient identifiers. Their foreign container formats do **not** replace ADM's on-disk layout.
 
@@ -217,6 +223,11 @@ The official shader `adm.surface.cutout@1.0.0` is a masked-alpha semantic profil
 The official shader `adm.surface.emissive@1.0.0` uses the ordinary PBR emissive texture and factor and has no additional shader parameters. The emissive contribution is exactly `emissiveFactor × linear(emissiveTexture.rgb)`, where the texture term is `[1,1,1]` when absent; the existing §8 sRGB decoding rule applies. A material selecting this profile MUST have at least one positive `emissiveFactor` component. Emission does not illuminate other geometry, and bloom, global illumination and time-varying emission are outside the profile. Standard `pbrParameter` animation of `emissiveFactor` remains available.
 
 The official shader `adm.surface.decal@1.0.0` is an alpha-blended mesh overlay using the ordinary PBR fields and no additional shader parameters. A material selecting this profile MUST set `alphaMode` to `BLEND`; composition is the straight-alpha linear-space equation in §8, with the decal as source and already rendered destination as destination. It does not define screen-space projection, depth bias, G-buffer access, or ordering between intersecting transparent surfaces. Such geometry and draw ordering are the scene author/engine's responsibility.
+
+The official optional profile [`adm.surface.interactive@1.0.0`](shaders/adm.surface.interactive.v1.md)
+and [`ADM_interactive_surfaces_v1`](extensions/ADM_interactive_surfaces_v1.md) are incorporated
+normatively. They bind stable surface IDs to actual node/mesh primitives and UV sets while retaining
+the mandatory portable PBR fallback. They do not encode UI, camera, engine resource or gameplay data.
 
 ### 8.4 Standard optional layered shader (`ADM-SHADER-LAYERED-1`)
 
@@ -685,6 +696,15 @@ For a high-speed racing-game model pipeline: chunk streaming, independently read
 `CONT-001`: header 64 bytes, exact field offsets, magic and region bounds. `CONT-002`: sorted unique chunk IDs, aligned nonoverlapping payloads and zero padding. `CONT-003`: SHA-256 mismatch detected when chunk is consumed. `CONT-004`: RAW and optional ZSTD decoding; unsupported codec must raise exact capability error. `CONT-005`: dependency closure deterministic and acyclic. `CONT-006`: parser can inspect manifest and list clips/materials **with zero payload reads**. `CONT-007`: fetch one mesh/texture/clip without loading all other chunks. `CONT-008`: malicious length/offset/overflow, truncated and zip-bomb-like content rejected without unsafe allocation. `CONT-009`: requested LOD can load independently of higher LOD when manifest dependencies permit it.
 
 `MAT-001`: fully registered layered material produces normative material parameters at sample UV. `MAT-002`: unsupported advanced shader uses core PBR fallback textures without requiring advanced code or data. `MAT-003`: any non-core shader lacking one of the explicit fallback properties required in §8 MUST be rejected with `ADM_ERR_MISSING_PBR_FALLBACK`. `MAT-004`: PBR animation continues on fallback when advanced shader parameters are unsupported; unsupported **optional** specialized tracks are skipped with diagnostics. `MAT-005`: KTX2 or DDS primary with PNG/JPEG alternate resolves correctly in a core reader (fallback chosen) and in a reader advertising `ADM-TEX-KTX2-1`/`ADM-TEX-DDS-1` (primary decoded per §8.6 with matching dimensions and colour space). `TEX-001`: GPU image outside the §8.6 subset (supercompressed, array, cubemap, unregistered format, wrong level size, trailing bytes, legacy DDS header) is `IMAGE_DECODE`. `TEX-002`: missing fallback or fallback with different size is rejected. `TEX-003`: sRGB/UNORM variant mismatching the texture role is `IMAGE_COLORSPACE`.
+
+`INTERACTIVE-001`: shared materials and meshes yield unique per-node/primitive surface identities,
+including multiple triangles and multiple bindings per surface. `INTERACTIVE-002`: UV orientation,
+clamping and barycentric hit coordinates match the extension's reference values. `INTERACTIVE-003`:
+runtime sRGB/linear conversion, straight alpha, brightness, lit/unlit emission and disabled fallback
+follow the shader contract. `INTERACTIVE-004`: invalid IDs, references, UVs, versions, parameters and
+fallbacks are rejected; unknown required extensions are rejected. `INTERACTIVE-005`: import/export
+preserves identities, UV sets, PBR fallbacks, animation IDs and numeric parameters. The supplied
+fixtures and tests do not substitute for independent runtime renderer certification.
 
 `ANIM-001`: clip metadata retrievable without loading ANIM chunks. `ANIM-002`: semantic humanoid rotations on distinct proportions conform to §16. `ANIM-003`: morph + skin evaluation order and ARKit52 channel mapping. `ANIM-004`: reachability, pole and twist cases for two-bone IK. `ANIM-005`: shader material ID binding and fallback animation results with exact times. `MOD-001`: attachment IDs and node transforms preserved through re-export. `PHYS-001`: collider/hitbox metadata round-trips without engine-specific behavior assumptions.
 

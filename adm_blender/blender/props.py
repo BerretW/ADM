@@ -131,6 +131,14 @@ class ADMObjectProps(PropertyGroup):
                                     description="Non-empty: export this node as a named attachment frame")
     component_role: StringProperty(name="Component Role", description="e.g. wheel.axle0.left, door.front.left")
     component_profile: StringProperty(name="Component Profile", default="custom.vehicle.v1")
+    interactive_surface_id: StringProperty(
+        name="Surface ID", description="Stable model-wide ID, e.g. main_display; assign to selected faces")
+    interactive_tex_coord: EnumProperty(
+        name="UV Set", items=[("0", "UV 0", "Render-active UV map"),
+                              ("1", "UV 1", "Second exported UV map")], default="0")
+    interactive_aspect_ratio: FloatProperty(
+        name="Aspect Ratio", default=0.0, min=0.0, max=1000.0, soft_max=4.0,
+        description="Recommended width/height; 0 means unspecified and never changes UV mapping")
     # collider
     collider_shape: EnumProperty(name="Shape", items=COLLIDER_SHAPES, default="BOX", update=_collider_update)
     collider_size: FloatVectorProperty(name="Size", size=3, default=(1.0, 1.0, 1.0), min=1e-4, subtype="XYZ",
@@ -237,6 +245,8 @@ SHADER_KINDS = [
     ("FABRIC", "Surface Fabric", "adm.surface.fabric@1.0.0: directional fiber approximation",
      "NODE_MATERIAL", 19),
     ("CUSTOM", "Custom Shader", "Custom shader with an embedded typed parameter schema", "NODE_MATERIAL", 20),
+    ("INTERACTIVE", "Interactive Surface", "adm.surface.interactive@1.0.0: runtime display with PBR fallback",
+     "NODE_MATERIAL", 21),
 ]
 PARAM_TYPES = [(t, t, "") for t in K.SHADER_PARAM_TYPES]
 

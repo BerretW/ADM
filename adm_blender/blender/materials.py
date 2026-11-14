@@ -243,6 +243,7 @@ class MaterialExporter:
         self.samplers = []
         self.textures = []
         self._mat_cache = {}
+        self._mat_uv_names = {}
         self._img_cache = {}
         self._tex_cache = {}
         self._sampler_cache = {}
@@ -436,12 +437,34 @@ class MaterialExporter:
         if mat is None:
             return None
         if mat.name in self._mat_cache:
-            return self._mat_cache[mat.name]
+            index = self._mat_cache[mat.name]
+            if mat.adm.shader_key() == K.SHADER_INTERACTIVE and tuple(uv_names) != self._mat_uv_names[mat.name]:
+                current = self._export_pbr(mat, list(uv_names))
+                for field in ("baseColorTexture", "metallicRoughnessTexture", "normalTexture",
+                              "occlusionTexture", "emissiveTexture"):
+                    prior = self.materials[index].get(field)
+                    now = current.get(field)
+                    if prior is not None and now is not None and prior.get("texCoord", 0) != now.get("texCoord", 0):
+                        raise ShaderExportError(f"interactive material '{mat.name}': {field} uses different UV "
+                                                "set indices on shared meshes; make their UV order consistent")
+            return index
         self.materials.append(self.export_material(mat, list(uv_names)))
         self._mat_cache[mat.name] = len(self.materials) - 1
+        self._mat_uv_names[mat.name] = tuple(uv_names)
         return self._mat_cache[mat.name]
 
-    def _ref(self, tex_index, tex_node, uv_names, extra=None):
+    def _ref(self, tex_index, tex_node, uv_names, extra=None, interactive_material=None):
+        if interactive_material is not None:
+            source = _from(tex_node.inputs.get("Vector"))
+            if source is not None:
+                if source.node.type == "UVMAP":
+                    name = source.node.uv_map
+                    if name and name not in uv_names:
+                        raise ShaderExportError(f"interactive material '{interactive_material}': texture "
+                                                f"'{tex_node.name}' requires UV map '{name}', which is not exported")
+                elif source.node.type != "TEX_COORD" or source.name != "UV":
+                    raise ShaderExportError(f"interactive material '{interactive_material}': texture "
+                                            f"'{tex_node.name}' uses unsupported UV mapping")
         ref = {"index": tex_index}
         tc = _uv_index(tex_node, uv_names)
         if tc:
@@ -599,6 +622,7 @@ class MaterialExporter:
 
     def _export_pbr(self, mat, uv_names):
         out = {"name": mat.name}
+        interactive = mat.name if mat.adm.shader_key() == K.SHADER_INTERACTIVE else None
         bsdf = principled_of(mat)
         double_sided = not mat.use_backface_culling
         if bsdf is None:
@@ -616,7 +640,7 @@ class MaterialExporter:
         if base is not None:
             if base["node"] is not None and base["node"].image is not None:
                 ti = self.texture_from_node(base["node"], True)
-                out["baseColorTexture"] = self._ref(ti, base["node"], uv_names)
+                out["baseColorTexture"] = self._ref(ti, base["node"], uv_names, interactive_material=interactive)
                 factor = base["factor"] if isinstance(base["factor"], list) else [base["factor"]] * 3
             elif base["node"] is not None:
                 self.warn(f"material '{mat.name}': Base Color texture node has no image, skipped")
@@ -630,9 +654,21 @@ class MaterialExporter:
             alpha = float(alpha_tr["factor"]) if not isinstance(alpha_tr["factor"], list) else 1.0
             clip = alpha_tr["clip"]
             if alpha_tr["node"] is None:
+                if interactive is not None:
+                    raise ShaderExportError(f"interactive material '{interactive}': alpha node setup is not "
+                                            "representable in the PBR fallback")
                 self.warn(f"material '{mat.name}': Alpha node setup not representable")
-            elif base is None or base["node"] is None or alpha_tr["node"].image != base["node"].image:
+            elif (base is None or base["node"] is None or base["node"].image is None
+                  or alpha_tr["node"].image != base["node"].image):
+                if interactive is not None:
+                    raise ShaderExportError(f"interactive material '{interactive}': alpha must come from the "
+                                            "base color texture")
                 self.warn(f"material '{mat.name}': alpha must come from the base color texture alpha channel")
+            elif interactive is not None:
+                alpha_ref = self._ref(0, alpha_tr["node"], uv_names, interactive_material=interactive)
+                if alpha_ref.get("texCoord", 0) != out["baseColorTexture"].get("texCoord", 0):
+                    raise ShaderExportError(f"interactive material '{interactive}': base color and alpha "
+                                            "use different UV sets")
         bcf = [_c01(x) for x in factor] + [_c01(alpha)]
         if bcf != [1.0, 1.0, 1.0, 1.0]:
             out["baseColorFactor"] = bcf
@@ -645,6 +681,12 @@ class MaterialExporter:
         mt = mt if mt and mt["node"] is not None and mt["node"].image else None
         rt = rt if rt and rt["node"] is not None and rt["node"].image else None
         if mt or rt:
+            if interactive is not None and mt and rt:
+                metal_ref = self._ref(0, mt["node"], uv_names, interactive_material=interactive)
+                rough_ref = self._ref(0, rt["node"], uv_names, interactive_material=interactive)
+                if metal_ref.get("texCoord", 0) != rough_ref.get("texCoord", 0):
+                    raise ShaderExportError(f"interactive material '{interactive}': metallic and roughness "
+                                            "textures use different UV sets")
             same = (mt and rt and mt["node"].image == rt["node"].image and mt["channel"] == "B" and rt["channel"] == "G")
             only_ok = (not mt and rt["channel"] == "G") or (not rt and mt["channel"] == "B")
             if same or only_ok:
@@ -653,7 +695,7 @@ class MaterialExporter:
             else:
                 ti = self.texture_composite_mr(rt, mt, mat.name)
                 node = (rt or mt)["node"]
-            out["metallicRoughnessTexture"] = self._ref(ti, node, uv_names)
+            out["metallicRoughnessTexture"] = self._ref(ti, node, uv_names, interactive_material=interactive)
         if metallic != 1.0:
             out["metallicFactor"] = _c01(metallic)
         if rough != 1.0:
@@ -669,7 +711,15 @@ class MaterialExporter:
                     ti = self.texture_from_node(ct["node"], False)
                     strength = float(nm.inputs["Strength"].default_value)
                     extra = {"scale": max(0.0, strength)} if abs(strength - 1.0) > 1e-6 else None
-                    ref = self._ref(ti, ct["node"], uv_names, extra)
+                    ref = self._ref(ti, ct["node"], uv_names, extra, interactive)
+                    if interactive is not None:
+                        if nm.uv_map and nm.uv_map not in uv_names:
+                            raise ShaderExportError(f"interactive material '{interactive}': normal map requires "
+                                                    f"UV map '{nm.uv_map}', which is not exported")
+                        normal_uv = uv_names.index(nm.uv_map) if nm.uv_map else 0
+                        if normal_uv != ref.get("texCoord", 0):
+                            raise ShaderExportError(f"interactive material '{interactive}': normal-map tangent "
+                                                    "and image UV sets differ")
                     if nm.uv_map and nm.uv_map in uv_names and uv_names.index(nm.uv_map) == 1:
                         ref["texCoord"] = 1
                     out["normalTexture"] = ref
@@ -691,7 +741,8 @@ class MaterialExporter:
         if occ is not None:
             ti = self.texture_from_node(occ, False)
             st = mat.adm.occlusion_strength
-            out["occlusionTexture"] = self._ref(ti, occ, uv_names, {"strength": st} if st != 1.0 else None)
+            out["occlusionTexture"] = self._ref(ti, occ, uv_names, {"strength": st} if st != 1.0 else None,
+                                                interactive)
 
         # emission
         strength = float(bsdf.inputs["Emission Strength"].default_value)
@@ -699,7 +750,7 @@ class MaterialExporter:
         ecol = list(bsdf.inputs["Emission Color"].default_value[:3])
         if et is not None and et["node"] is not None and et["node"].image and strength > 0:
             ti = self.texture_from_node(et["node"], True)
-            out["emissiveTexture"] = self._ref(ti, et["node"], uv_names)
+            out["emissiveTexture"] = self._ref(ti, et["node"], uv_names, interactive_material=interactive)
             ecol = et["factor"] if isinstance(et["factor"], list) else [et["factor"]] * 3
         ef = [max(0.0, float(c) * strength) for c in ecol]
         if any(v > 0 for v in ef):
@@ -1694,4 +1745,5 @@ def refresh_shader_preview(mat):
 
 def has_profile_preview(shader_kind):
     from . import shader_preview
-    return shader_kind in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL") or shader_kind in shader_preview.BUILDERS
+    return shader_kind in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL", "INTERACTIVE") \
+        or shader_kind in shader_preview.BUILDERS

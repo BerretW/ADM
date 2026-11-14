@@ -1,5 +1,35 @@
 # Draft 0.4 executed test report
 
+## P13 interactive surfaces — local verification
+
+- CI-equivalent Python unittest command (`test_container`, `test_draft4`, `test_skeleton_profiles`,
+  `test_gputex`, `test_shader_math`): **92 tests, 91 passed, 1 skipped**. Windows denied permission
+  to create the symlink for the existing external-image escape test.
+- `python adm-standard/tools/run_tests.py`: **25 passed, 0 failed**;
+  `test_profiles.py`: **12 passed**. The interactive reference test verifies two stable IDs, shared
+  geometry, UV/hit mapping, bilinear sRGB-to-linear sampling, alpha, runtime equations and fallback.
+- Shader registry generation and tests: **PASS**, 21 exact-version profiles.
+  `build_interactive_fixture.py --check` and the self-contained fixture generator's byte comparison:
+  **PASS**, including all 11 malformed interactive fixtures.
+- Blender 5.2.3 `test_interactive_blender.py`: **42 checks passed**. These include embedded and
+  external fallback round trips, shared materials and meshes, per-face IDs, curved/multi-triangle
+  screens, geometry edits, material-slot reordering, triangulation, animation, HDR `COLOR_0`,
+  `COLOR_1`, palette controls, UV 1-only import, binary32 aspect-ratio limits, and explicit rejection
+  of missing or incompatible fallback UVs. Mirrored-UV normal tangents and handedness are checked.
+- Blender 5.2.3 `test_shader_preview.py`, `test_shader_profiles.py`, `test_workflow.py`,
+  `test_fixtures.py`, `test_material_slots.py`, `test_texture_formats.py`, and
+  `test_skeleton_blender.py`: **PASS**. The Cycles bake checks that the disabled interactive screen
+  still displays its authored static fallback RGB `(0.2, 0.4, 0.6)` on the object.
+- Blender 5.2.3 `build_material_test_scene.py`: **PASS**; the generated scene was non-empty and the
+  temporary file was removed. Blender emitted dependency-cycle warnings, but all scripts exited 0.
+- Blender 5.2.3 installed `adm_tools-1.10.0.zip` into an isolated temporary extension repository:
+  **PASS**. The addon was enabled, the interactive material shader was selectable, and the surface
+  assignment operator was registered. The temporary repository was removed without saving preferences.
+
+These are local reference-implementation checks, not independent engine-renderer certification.
+The Blender preview is static; runtime content and input remain the engine's responsibility. A new
+remote GitHub Actions run has not yet been observed.
+
 ## P12 vertex-control materials — local verification
 
 - CI-equivalent Python unittest command (`test_container`, `test_draft4`, `test_skeleton_profiles`,

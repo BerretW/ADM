@@ -117,3 +117,18 @@
 - Added a Blender 5.2.4 headless CI job that verifies the official Linux archive against a pinned SHA-256 before running the integration tests.
 - Added a deterministic scene generator for all 20 official shader previews; Blender CI verifies it saves a non-empty `.blend`.
 - Independent-renderer interoperability and full shader-preview certification remain open; Skin, Fur and Fabric previews remain approximations.
+
+## Draft 0.4 revision P13 — interactive surfaces
+
+- Registered `adm.surface.interactive@1.0.0` and `ADM-INTERACTIVE-SURFACES-1` with typed runtime
+  brightness/emission, off and unlit controls, color/alpha rules and the mandatory portable PBR fallback.
+- Defined `ADM_interactive_surfaces_v1@1.0.0` with stable model-wide IDs and explicit node/primitive/UV
+  bindings, per-instance runtime identity, barycentric hit coordinates and advisory aspect ratios.
+- Added Blender selected-face authoring, static fallback preview, strict UV/reference validation and
+  import/export preservation, including shared material and shared-mesh node cases.
+- Preserved ordinary HDR `COLOR_0` on mixed-material screens; defined deterministic linear-space
+  bilinear sampling and clamped straight alpha. Fallback normal tangents use the appropriate UV set
+  and ADM handedness; unsupported or inconsistent texture UV mappings are reported, not guessed.
+- Added a two-screen binary fixture with a readable manifest, numerical expectations, malformed
+  fixtures and Blender/reference tests. Independent engine-renderer certification remains outstanding.
+- No binary container change; existing assets and shader meanings are unchanged.

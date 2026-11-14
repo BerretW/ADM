@@ -1,0 +1,189 @@
+{
+  "asset": {
+    "generator": "ADM interactive terminal reference fixture 1.0.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "display_unit",
+      "mesh": 0
+    },
+    {
+      "name": "display_unit",
+      "mesh": 0,
+      "translation": [
+        2,
+        0,
+        0
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "terminal_display",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "TEXCOORD_0": 1
+          },
+          "indices": 2,
+          "material": 1
+        },
+        {
+          "attributes": {
+            "POSITION": 3
+          },
+          "indices": 2,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "frame",
+      "baseColorFactor": [
+        0.1,
+        0.1,
+        0.1,
+        1
+      ]
+    },
+    {
+      "name": "screen",
+      "animationId": "screen_shared",
+      "shader": {
+        "id": "adm.surface.interactive",
+        "version": "1.0.0"
+      },
+      "shaderParameters": {
+        "brightness": 2.0,
+        "emissive_strength": 0.5,
+        "unlit": true
+      },
+      "baseColorFactor": [
+        0.8,
+        1,
+        0.5,
+        0.8
+      ],
+      "baseColorTexture": {
+        "index": 0
+      },
+      "metallicFactor": 0,
+      "roughnessFactor": 1,
+      "emissiveFactor": [
+        0,
+        0,
+        0
+      ],
+      "alphaMode": "BLEND"
+    }
+  ],
+  "images": [
+    {
+      "name": "fallback",
+      "bufferView": 4,
+      "mimeType": "image/png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": "F32",
+      "type": "VEC3",
+      "count": 4
+    },
+    {
+      "bufferView": 1,
+      "componentType": "F32",
+      "type": "VEC2",
+      "count": 4
+    },
+    {
+      "bufferView": 2,
+      "componentType": "U16",
+      "type": "SCALAR",
+      "count": 6
+    },
+    {
+      "bufferView": 3,
+      "componentType": "F32",
+      "type": "VEC3",
+      "count": 4
+    }
+  ],
+  "bufferViews": [
+    {
+      "chunkId": 1,
+      "byteOffset": 0,
+      "byteLength": 48
+    },
+    {
+      "chunkId": 2,
+      "byteOffset": 0,
+      "byteLength": 32
+    },
+    {
+      "chunkId": 3,
+      "byteOffset": 0,
+      "byteLength": 12
+    },
+    {
+      "chunkId": 4,
+      "byteOffset": 0,
+      "byteLength": 48
+    },
+    {
+      "chunkId": 5,
+      "byteOffset": 0,
+      "byteLength": 76
+    }
+  ],
+  "extensionsUsed": [
+    "ADM_interactive_surfaces_v1"
+  ],
+  "extensions": {
+    "ADM_interactive_surfaces_v1": {
+      "version": "1.0.0",
+      "surfaces": [
+        {
+          "surfaceId": "main_display",
+          "aspectRatio": 1.0,
+          "bindings": [
+            {
+              "node": 0,
+              "primitive": 0,
+              "texCoord": 0
+            }
+          ]
+        },
+        {
+          "surfaceId": "security_monitor_right",
+          "aspectRatio": 1.0,
+          "bindings": [
+            {
+              "node": 1,
+              "primitive": 0,
+              "texCoord": 0
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
