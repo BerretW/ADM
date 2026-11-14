@@ -23,7 +23,7 @@ from ..core.validate import validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.9.0 (ADM Draft 0.4 P9)"
+GENERATOR = "ADM Tools for Blender 1.9.1 (ADM Draft 0.4 P11)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -327,17 +327,30 @@ class ModelExporter:
             return self.mesh_cache[key]
         me = None
         obj_eval = None
+        edit_copy = None
         try:
+            in_edit_mode = obj.type == "MESH" and obj.data.is_editmode
+            if in_edit_mode and not obj.update_from_editmode():
+                raise ExportError(f"'{obj.name}': could not synchronize the mesh from Edit Mode")
             if use_eval:
                 dg = self.context.evaluated_depsgraph_get()
+                if in_edit_mode:
+                    dg.update()
                 obj_eval = obj.evaluated_get(dg)
                 me = obj_eval.to_mesh(preserve_all_data_layers=True, depsgraph=dg)
+            elif in_edit_mode:
+                edit_copy = obj.data.copy()
+                me = edit_copy
             else:
                 me = obj.data
+            if me is None:
+                raise ExportError(f"'{obj.name}': Blender could not produce a mesh for export")
             mesh = self._build_mesh(obj, me, arm, has_keys, collision)
         finally:
             if obj_eval is not None:
                 obj_eval.to_mesh_clear()
+            if edit_copy is not None:
+                bpy.data.meshes.remove(edit_copy)
         if mesh is None:
             result = None
         else:
@@ -407,7 +420,10 @@ class ModelExporter:
         for m in set(prim_mats.tolist()):
             if m >= 0:
                 need_uv |= _material_texcoords(self.mat.materials[m])
-        for i, layer in enumerate(uv_layers):
+        for layer in uv_layers:
+            if len(layer.uv) != nloops:
+                raise ExportError(f"'{obj.name}': UV map '{layer.name}' has {len(layer.uv)} corners; "
+                                  f"the mesh has {nloops}. Check the mesh and UV map before exporting")
             uv = _np_get(layer.uv, "vector", nloops, 2).astype(np.float64)
             uvs.append(cv.np_uv_to_adm(uv))
         if need_uv:

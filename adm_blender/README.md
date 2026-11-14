@@ -36,6 +36,7 @@ Vehicle and firearm profiles remain provisional, not certified built-ins.
 
 **Import and export:** use *File › Import/Export › ADM Model (.adm)* and *ADM Animation Library*.
 Drag & drop of `.adm` files also works.
+Exporting a mesh in Edit Mode uses its current edits and UVs without leaving Edit Mode.
 
 ### ADM Skeleton & Animation panel
 

@@ -116,6 +116,94 @@ def build_body(arm):
     return body
 
 
+def test_edit_mode_export(tmp):
+    from unittest.mock import patch
+
+    from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
+    from adm_blender.core.buffers import read_accessor
+    from adm_blender.core.validate import validate_file
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    objects = []
+    for name in ("EditShape", "EditModifier"):
+        bpy.ops.mesh.primitive_cube_add()
+        obj = bpy.context.active_object
+        obj.name = name
+        obj.data.name = name + "Mesh"
+        obj.data.uv_layers.new(name="UV1")
+        objects.append(obj)
+    shape, modified = objects
+    shape.shape_key_add(name="Basis")
+    key = shape.shape_key_add(name="Morph")
+    key.data[0].co.x += 0.25
+    modifier = modified.modifiers.new("Subdivision", "SUBSURF")
+    modifier.subdivision_type = "SIMPLE"
+    modifier.levels = 1
+    select(*objects, active=shape)
+    bpy.ops.object.mode_set(mode="EDIT")
+    for obj in objects:
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        bm.verts[0].co.x -= 0.25
+        uv0 = bm.loops.layers.uv.get("UVMap")
+        uv1 = bm.loops.layers.uv.get("UV1")
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv0].uv = (0.25, 0.75)
+                loop[uv1].uv = (0.6, 0.3)
+        bmesh.update_edit_mesh(obj.data)
+
+    mesh_count, key_count = len(bpy.data.meshes), len(bpy.data.shape_keys)
+    try:
+        for apply in (False, True):
+            exporter = ModelExporter(bpy.context, None, ExportOptions(selected_only=True, apply_modifiers=apply))
+            _data, report = exporter.export()
+            check(report.ok, f"edit-mode export valid (apply modifiers={apply}): {errs(report)}")
+            meshes = {mesh["name"]: mesh for mesh in report.doc["meshes"]}
+            for obj in objects:
+                mesh = meshes[obj.data.name]
+                primitive = mesh["primitives"][0]
+                attrs = primitive["attributes"]
+                for semantic, expected in (("TEXCOORD_0", (0.25, 0.25)), ("TEXCOORD_1", (0.6, 0.7))):
+                    values = read_accessor(report.doc, report.bin, attrs[semantic])
+                    check(values and all(all(abs(a - b) < 1e-5 for a, b in zip(value, expected))
+                                         for value in values),
+                          f"{obj.name} current edit-mode {semantic} exported (apply modifiers={apply})")
+                positions = read_accessor(report.doc, report.bin, attrs["POSITION"])
+                check(any(abs(p[0] + 1.25) < 1e-5 for p in positions),
+                      f"{obj.name} current edit-mode geometry exported (apply modifiers={apply})")
+                triangles = len(read_accessor(report.doc, report.bin, primitive["indices"])) // 3
+                expected_triangles = 48 if obj == modified and apply else 12
+                check(triangles == expected_triangles,
+                      f"{obj.name} modifier setting preserves topology: {triangles} triangles")
+            shape_mesh = meshes[shape.data.name]
+            check(shape_mesh.get("targetNames") == ["Morph"], "edit-mode export retains shape key")
+            delta_index = shape_mesh["primitives"][0]["targets"][0]["POSITION"]
+            deltas = read_accessor(report.doc, report.bin, delta_index)
+            check(any(abs(v[0] - 0.25) < 1e-5 for v in deltas), "edit-mode shape-key delta preserved")
+            check(all(obj.mode == "EDIT" for obj in objects), "export preserves multi-object Edit Mode")
+            check(len(bpy.data.meshes) == mesh_count and len(bpy.data.shape_keys) == key_count,
+                  "export releases temporary mesh and shape-key datablocks")
+
+        with patch.object(ModelExporter, "_build_mesh", side_effect=ExportError("forced export failure")):
+            try:
+                ModelExporter(bpy.context, None, ExportOptions(selected_only=True, apply_modifiers=False)).export()
+            except ExportError as exc:
+                check(str(exc) == "forced export failure", "edit-mode export surfaces failures")
+            else:
+                check(False, "edit-mode export must surface failures")
+        check(all(obj.mode == "EDIT" for obj in objects)
+              and len(bpy.data.meshes) == mesh_count and len(bpy.data.shape_keys) == key_count,
+              "failed edit-mode export preserves mode and releases temporary datablocks")
+
+        path = os.path.join(tmp, "edited.adm")
+        result = bpy.ops.export_scene.adm(filepath=path, scope="SELECTED", apply_modifiers=False)
+        check(result == {"FINISHED"} and validate_file(path).ok, "file export operator works in Edit Mode")
+        check(all(obj.mode == "EDIT" for obj in objects), "file export operator preserves Edit Mode")
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+
 def main(tmp):
     adm_blender.register()
     from adm_blender.blender import material_anim as MA
@@ -442,6 +530,7 @@ def main(tmp):
     check(rep.doc["modelComponents"][0]["socket"] == "prop.socket.back", "component socket round-trip")
     check(rep.doc["hitboxes"][0]["role"] == "torso", "hitbox role round-trip")
 
+    test_edit_mode_export(tmp)
     adm_blender.unregister()
 
 
