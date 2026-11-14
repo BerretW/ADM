@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 import struct
+import zlib
 
 from container import AdmError, ENTRY, HEADER, verify, verify_interactive
 
@@ -112,5 +113,27 @@ assert close(sample_srgb_bilinear(sampling["texelsSrgb"], (0.25, 0.75)), samplin
 assert close(sample_srgb_bilinear(sampling["texelsSrgb"], (-3.0, 4.0)), sampling["bottomLeftRgba"])
 image = manifest["images"][manifest["textures"][material["baseColorTexture"]["index"]]["source"]]
 image_view = manifest["bufferViews"][image["bufferView"]]
-assert chunks[image_view["chunkId"]].startswith(b"\x89PNG\r\n\x1a\n")
+start = image_view["byteOffset"]
+png = chunks[image_view["chunkId"]][start:start + image_view["byteLength"]]
+assert png.startswith(b"\x89PNG\r\n\x1a\n")
+offset, image_data, ended = 8, bytearray(), False
+while offset < len(png):
+    length = struct.unpack_from(">I", png, offset)[0]
+    tag = png[offset + 4:offset + 8]
+    payload = png[offset + 8:offset + 8 + length]
+    crc = struct.unpack_from(">I", png, offset + 8 + length)[0]
+    assert zlib.crc32(tag + payload) & 0xFFFFFFFF == crc
+    offset += length + 12
+    if tag == b"IHDR":
+        assert payload == struct.pack(">IIBBBBB", 2, 2, 8, 6, 0, 0, 0)
+    elif tag == b"IDAT":
+        image_data.extend(payload)
+    elif tag == b"IEND":
+        ended = True
+        break
+assert ended and offset == len(png)
+assert zlib.decompress(image_data) == bytes((
+    0, 255, 0, 0, 255, 0, 255, 0, 255,
+    0, 0, 0, 255, 255, 255, 255, 255, 255,
+))
 print("PASS interactive fixture: identity, shared mesh, hit mapping, bilinear linear RGB, alpha and fallback")

@@ -3,7 +3,7 @@
 ## P13 interactive surfaces — local verification
 
 - CI-equivalent Python unittest command (`test_container`, `test_draft4`, `test_skeleton_profiles`,
-  `test_gputex`, `test_shader_math`): **92 tests, 91 passed, 1 skipped**. Windows denied permission
+  `test_gputex`, `test_shader_math`): **93 tests, 92 passed, 1 skipped**. Windows denied permission
   to create the symlink for the existing external-image escape test.
 - `python adm-standard/tools/run_tests.py`: **25 passed, 0 failed**;
   `test_profiles.py`: **12 passed**. The interactive reference test verifies two stable IDs, shared
@@ -25,10 +25,14 @@
 - Blender 5.2.3 installed `adm_tools-1.10.0.zip` into an isolated temporary extension repository:
   **PASS**. The addon was enabled, the interactive material shader was selectable, and the surface
   assignment operator was registered. The temporary repository was removed without saving preferences.
+- The initial [GitHub Actions run](https://github.com/BerretW/ADM/actions/runs/43574909424) failed
+  fixture reproduction on Linux because the generated PNG depended on zlib's DEFLATE implementation.
+  The generator now uses a fixed, validated PNG payload. The reproduction check passes with both
+  zlib-ng and Blender's standard zlib, and a regression test simulates a different encoder.
 
 These are local reference-implementation checks, not independent engine-renderer certification.
-The Blender preview is static; runtime content and input remain the engine's responsibility. A new
-remote GitHub Actions run has not yet been observed.
+The Blender preview is static; runtime content and input remain the engine's responsibility. The pull
+request checks report the latest remote GitHub Actions results.
 
 ## P12 vertex-control materials — local verification
 

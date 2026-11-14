@@ -5,14 +5,18 @@ import argparse
 import json
 from pathlib import Path
 import struct
-import sys
 import tempfile
 
 TOOL_DIR = Path(__file__).resolve().parent
-ROOT = TOOL_DIR.parents[1]
-sys.path.insert(0, str(ROOT))
-from adm_blender.core.png import encode_png
 from container import create, verify
+
+# Fixed 2x2 RGBA PNG: red/green above blue/white. DEFLATE output varies across zlib backends.
+FALLBACK_PNG = bytes.fromhex(
+    "89504e470d0a1a0a"
+    "0000000d494844520000000200000002080600000072b60d24"
+    "0000001349444154789c63f8cfc0f01f0c1918fe83010049c809f71463329d"
+    "0000000049454e44ae426082"
+)
 
 
 def build(directory):
@@ -37,9 +41,7 @@ def build(directory):
     indices = accessor([0, 1, 2, 0, 2, 3], "U16", "SCALAR")
     frame_positions = accessor([(-0.2, -0.2, -0.1), (1.2, -0.2, -0.1),
                                 (1.2, 1.2, -0.1), (-0.2, 1.2, -0.1)], "F32", "VEC3")
-    png = encode_png(2, 2, bytes((255, 0, 0, 255, 0, 255, 0, 255,
-                                 0, 0, 255, 255, 255, 255, 255, 255)))
-    image_view = view(png, b"IMAG")
+    image_view = view(FALLBACK_PNG, b"IMAG")
     manifest = {
         "asset": {"generator": "ADM interactive terminal reference fixture 1.0.0"},
         "scene": 0, "scenes": [{"nodes": [0, 1]}],
