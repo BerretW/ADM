@@ -116,6 +116,7 @@ class ModelImporter:
                     missing_image_uris.append(image.get("uri", f"image:{image_index}"))
             vertex_controls = (m.get("extensions") or {}).get(K.VERTEX_CONTROL_EXT)
             if isinstance(vertex_controls, dict):
+                mat.adm.vertex_controls_enabled = True
                 params = vertex_controls.get("parameters", {})
                 mat.adm.tint_offset = params.get("tintOffset", 0.0)
                 mat.adm.normal_multiplier = params.get("normalMultiplier", 1.0)
@@ -138,6 +139,10 @@ class ModelImporter:
             self.materials.append(mat)
         self.plan_armatures()
         self.create_objects()
+        from .materials import refresh_shader_preview
+        for mat in self.materials:
+            if mat.adm.vertex_controls_enabled:
+                refresh_shader_preview(mat)
         self.metadata()
         return self.root
 

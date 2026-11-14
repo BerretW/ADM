@@ -2033,10 +2033,21 @@ class AnimValidator(_Base):
                     self.r.error("SHADER_ID", cp + ".target.shaderId", f"invalid shader id {sid!r}")
                 if not is_exact_semver(ver):
                     self.r.error("SHADER_VERSION", cp + ".target.shaderVersion", f"invalid exact SemVer {ver!r}")
-                if not isinstance(t["parameter"], str) or not PARAM_NAME_RE.match(t["parameter"]):
+                if (not isinstance(t["parameter"], str)
+                        or (not PARAM_NAME_RE.match(t["parameter"])
+                            and t["parameter"] not in K.VERTEX_CONTROL_PARAMS)):
                     self.r.error("SHADER_PARAM_NAME", cp + ".target.parameter", "invalid parameter name")
                 official = K.OFFICIAL_SHADERS.get((sid, ver)) if isinstance(sid, str) and isinstance(ver, str) else None
-                if official is not None:
+                vertex_control_parameter = t["parameter"] in K.VERTEX_CONTROL_PARAMS
+                vertex_control_declared = K.VERTEX_CONTROL_EXT in self.doc.get("extensionsRequired", [])
+                if vertex_control_parameter and not vertex_control_declared:
+                    self.r.error("CHANNEL_VERTEX_CONTROL_EXTENSION", cp + ".target.parameter",
+                                 f"{t['parameter']!r} requires {K.VERTEX_CONTROL_EXT} in extensionsRequired")
+                if vertex_control_parameter and vertex_control_declared:
+                    prm = K.VERTEX_CONTROL_PARAMS[t["parameter"]]
+                    want = K.SHADER_TYPE_TO_ACCESSOR[prm["type"]]
+                    bounds = (prm.get("minimum"), prm.get("maximum"))
+                elif official is not None:
                     prm = {q["name"]: q for q in official}.get(t["parameter"])
                     if prm is None or not prm.get("animatable"):
                         self.r.error("CHANNEL_SHADER_PARAMETER", cp + ".target.parameter",
@@ -2137,6 +2148,13 @@ def material_binding_issues(model_doc, anim_doc):
             if material_shader(m) != key:
                 out.append((sev, "BIND_SHADER_MISMATCH", p,
                             f"material uses {'@'.join(material_shader(m))}, channel needs {key[0]}@{key[1]}"))
+                continue
+            if t.get("parameter") in K.VERTEX_CONTROL_PARAMS:
+                vertex = (m.get("extensions") or {}).get(K.VERTEX_CONTROL_EXT)
+                if (K.VERTEX_CONTROL_EXT not in model_doc.get("extensionsRequired", [])
+                        or not isinstance(vertex, dict)):
+                    out.append((sev, "BIND_VERTEX_CONTROL_EXTENSION", p,
+                                f"the model and material must declare {K.VERTEX_CONTROL_EXT}"))
                 continue
             prm = registry.get(key, {}).get(t.get("parameter"))
             if prm is None or not prm.get("animatable") or prm.get("type") not in K.SHADER_NUMERIC_DIMS:

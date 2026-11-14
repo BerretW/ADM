@@ -325,7 +325,7 @@ class ADMShaderParamValue(PropertyGroup):
 
 def _preview_update(self, context):
     mat = self.id_data
-    if isinstance(mat, bpy.types.Material) and mat.adm.shader == "LAYERED":
+    if isinstance(mat, bpy.types.Material):
         from .materials import refresh_shader_preview
         refresh_shader_preview(mat)
 
@@ -422,6 +422,12 @@ class ADMMaterialProps(PropertyGroup):
         ("MULTIPLY", "Multiply", "Multiply base color and alpha by the palette entry"),
         ("REPLACE", "Replace", "Replace base RGB and preserve base alpha"),
     ], update=_preview_update)
+    vertex_controls_enabled: BoolProperty(
+        name="Enable Vertex Controls",
+        default=False,
+        update=_preview_update,
+        description="Interpret COLOR_0 as ADM vertex controls and expose their parameters to animation",
+    )
     tint_offset: FloatProperty(name="Tint Offset", default=0.0, min=-1024.0, max=1024.0)
     normal_multiplier: FloatProperty(name="Normal Multiplier", default=1.0, min=0.0, max=4.0)
     reflection_multiplier: FloatProperty(name="Reflection Multiplier", default=1.0, min=0.0, max=4.0)

@@ -1249,6 +1249,14 @@ class ADM_OT_material_key_param(bpy.types.Operator):
     def execute(self, context):
         mat = _active_material(context)
         a = mat.adm
+        from .material_anim import VERTEX_CONTROL_PROP_BY_PARAM
+        control_prop = VERTEX_CONTROL_PROP_BY_PARAM.get(self.name)
+        if control_prop is not None:
+            if not a.vertex_controls_enabled:
+                self.report({"ERROR"}, "Enable ADM Vertex Controls before keying these parameters")
+                return {"CANCELLED"}
+            mat.keyframe_insert(f"adm.{control_prop}")
+            return {"FINISHED"}
         if a.shader == "LAYERED" and self.name == "layer_factor":
             mat.keyframe_insert("adm.layer_factor")
             return {"FINISHED"}

@@ -33,6 +33,22 @@ class Draft4Tests(unittest.TestCase):
                 report = validate(path.read_bytes())
                 self.assertTrue(report.ok, report.format())
 
+    def test_vertex_control_animation_requires_extension(self):
+        path = FIXTURES / "shader_parameter_tracks.adm_anim"
+        doc, chunks = read_container(path.read_bytes(), K.ANIM_MAGIC)
+        target = next(ch["target"] for ch in doc["clips"][0]["channels"]
+                      if ch["target"]["kind"] == "shaderParameter")
+        target["parameter"] = "wetnessOffset"
+        doc["extensionsUsed"] = [K.VERTEX_CONTROL_EXT]
+        doc["extensionsRequired"] = [K.VERTEX_CONTROL_EXT]
+        report = validate_anim(write_container(K.ANIM_MAGIC, doc, chunks))
+        self.assertTrue(report.ok, report.format())
+
+        del doc["extensionsUsed"]
+        del doc["extensionsRequired"]
+        report = validate_anim(write_container(K.ANIM_MAGIC, doc, chunks))
+        self.assertIn("CHANNEL_VERTEX_CONTROL_EXTENSION", {e.code for e in report.errors})
+
     def test_noncore_requires_each_explicit_fallback_field(self):
         doc, chunks = read_container((FIXTURES / "shader_layered.adm").read_bytes(), K.ADM_MAGIC)
         for field in K.PBR_FALLBACK_FIELDS:

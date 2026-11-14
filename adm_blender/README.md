@@ -113,16 +113,23 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   `dirt_mask` darkens the color to 35 % where it is white. **Generate Mortar Mask** creates a packed
   running-bond mask (rows, columns, joint width, offset).
 - Skin, Fur and Fabric are Principled BSDF approximations (subsurface, anisotropy), and the panel says so.
+- **ADM Vertex Control** can be enabled per material. It interprets `COLOR_0`, samples the optional
+  one-row tint palette, and previews tint/normal/wetness. The wetness/reflection math is not fully
+  exact for metallic materials in Blender's Principled BSDF. `COLOR_1` values are preserved but do not
+  affect the preview.
 
 ### Material animation
 
 1. In the material panel, set the **Animation ID** (or *Auto*).
 2. Run **Link Material To Clip**, which adds a MATERIAL/NODETREE slot to the clip's Action.
-3. Key `layer_factor`, PBR values or shader parameters with the key button next to each parameter.
+3. Key `layer_factor`, PBR values, shader parameters or enabled ADM Vertex Control parameters with
+   the key button next to each parameter.
 
 The export writes `pbrParameter` and `shaderParameter` channels:
 - PBR channels only when their values change over the clip.
 - Shader parameters only when they have keyframes. Values are clamped to the parameter's min/max.
+- ADM Vertex Control targets use the extension's parameter names and the material's exact shader
+  identity. The `.adm_anim` file declares `ADM_vertex_control_v1` required.
 
 ### `model.any` libraries
 
@@ -150,9 +157,11 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
 - Export's **Embed Textures** option is enabled by default. When disabled, external images are written
   under a deterministic relative `textures/` path and validated against the ADM file's directory on
   import.
-- `ADM_vertex_control_v1` can serialize `COLOR_0`/`COLOR_1`, palette references, and material control
-  values. Those values do not yet drive viewport shading or animation, and per-shader `COLOR_1`
-  semantics remain open; see `adm-standard/SPEC_GAPS.md`.
+- `ADM_vertex_control_v1` can serialize `COLOR_0`/`COLOR_1`, palette references and material control
+  values. Enable **Enable Vertex Controls** on a material to preview and animate the four universal
+  controls. The export option must also enable **Vertex Controls** for the model. Tint, normal strength,
+  wetness color and roughness are previewed; metallic reflectivity is approximate, and `COLOR_1`
+  remains transport-only. See `adm-standard/SPEC_GAPS.md`.
 - Image export (the **Images** option in File > Export > ADM):
   - **PNG** (default) writes only PNG. JPEG, DDS, KTX2 and other sources are converted, so any
     engine can read the file.

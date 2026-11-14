@@ -38,11 +38,12 @@ The extension's optional material `parameters` object MAY contain these controls
 | `reflectionMultiplier` | `1` | `[0,4]` |
 | `wetnessOffset` | `0` | `[-1,1]` |
 
-An omitted value uses its default. In this revision these names are extension parameters, not
-registered members of each shader's `shaderParameters` schema. They MUST NOT be emitted as
-`shaderParameter` animation targets until the shader registry and animation binding rules register
-them for the exact shader identity. The values do not animate or rewrite vertex buffers in P10;
-this is an implementation/specification gap, not an implicit retargeting convention.
+An omitted value uses its default. These names are extension-level parameters; they are not members
+of each shader's `shaderParameters` schema. They MAY be targeted by ADM_ANIM `shaderParameter`
+channels using the material's exact `shaderId` and `shaderVersion` as the binding identity. Such an
+animation library MUST list `ADM_vertex_control_v1` in both `extensionsUsed` and `extensionsRequired`.
+The channels use scalar values and the bounds in this table. They animate the material parameter and
+MUST NOT rewrite `COLOR_0`.
 
 ## Tint palette
 
@@ -133,8 +134,11 @@ pending; the generic attribute transport does not claim shader-specific `COLOR_1
 
 ## Blender reference implementation status
 
-The P10 Blender add-on can transport `COLOR_0`/`COLOR_1`, the tint palette reference and the four
-extension-level parameter values through export/import. It does not yet evaluate the tint, normal,
-reflectivity or wetness equations in its viewport shader previews, and does not implement their
-animation binding. Therefore an exported file can be structurally valid while its controls are not
-visually realized by Blender; this is not renderer conformance.
+The Blender add-on transports `COLOR_0`/`COLOR_1`, the tint palette reference and the four
+extension-level parameter values through export/import. It supports ADM_ANIM binding and playback
+for these parameters by extension-defined name and exact shader identity. Vertex-control preview
+nodes apply the tint palette, normal-strength, wetness-color and wetness-roughness rules. The
+reflectivity preview is limited by Blender's Principled BSDF: it matches the dielectric approximation
+but does not implement the exact metallic F0 transformation. `COLOR_1` remains transport-only, and
+not every registered profile has an independently bake-tested renderer. These limitations are not
+full renderer or extension conformance.

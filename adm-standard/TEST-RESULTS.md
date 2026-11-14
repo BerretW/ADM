@@ -1,5 +1,51 @@
 # Draft 0.4 executed test report
 
+## P11 vertex-control preview and animation — local verification
+
+- CI-equivalent Python unittest command (`test_container`, `test_draft4`, `test_skeleton_profiles`,
+  `test_gputex`, `test_shader_math`): **85 passed, 1 skipped**. The skip is the Windows symlink
+  permission case described below.
+- Blender 5.2.3 `adm_blender/tests/test_shader_preview.py`: **PASS**. Cycles bakes verify palette
+  sampling, wetness albedo/roughness and that the animated material-property driver updates without
+  rebuilding nodes.
+- Blender 5.2.3 `adm_blender/tests/test_workflow.py`: **PASS**. Model and animation validation,
+  extension binding, COLOR_0/material setting import, and ADM_ANIM wetness channel values round-trip.
+- `python adm-standard/tools/run_tests.py`: **13 passed, 0 failed**.
+- `python adm-standard/tools/build_shader_registry.py --check`: **PASS**, all 20 profiles.
+- `py_compile` passed for all changed Python modules and tests.
+
+These are reference implementation tests. Metallic F0 preview remains approximate, `COLOR_1`
+semantics remain incomplete, and independent-reader renderer conformance is not claimed. A new
+GitHub Actions run on the updated branch has not yet been observed.
+
+## 2026-11-14 CI fixture-generator failure and local verification
+
+The failed GitHub Actions run [43532271476](https://github.com/BerretW/ADM/actions/runs/43532271476)
+at commit `d1748684ab` failed in all four Windows/Ubuntu × Python 3.11/3.14 jobs at
+`test_fixture_generator_is_self_contained`. The actual cause was
+`adm-standard/tools/build_fixtures.py` opening a developer-local `/mnt/data/ADM-1.0-shadery-a-animace.zip`
+that is not part of the repository; the script also ignored the test's `--output-dir`.
+
+The generator now rebuilds valid and profile containers from their checked-in JSON manifests and
+verified RAW chunk payloads, emits deterministic LF-terminated JSON, recreates the negative
+container fixtures, and honors `--output-dir`. It no longer needs the external ZIP.
+
+**Local verification (Windows, Python 3.14.7):**
+
+- `python -m unittest adm_blender.tests.test_container.ContainerTests.test_fixture_generator_is_self_contained -v`: 1 passed.
+- `python -m unittest adm_blender.tests.test_container -v`: 24 passed.
+- CI-equivalent core command (`test_container`, `test_draft4`, `test_skeleton_profiles`, `test_gputex`,
+  `test_shader_math`): 81 passed, 1 skipped. The skip is the symlink-escape test because this Windows
+  environment denied symlink creation; the test reports that permission reason. Linux CI is expected
+  to exercise the symlink case.
+- `python adm-standard/tools/run_tests.py`: 13 passed, 0 failed.
+- `python adm-standard/tools/build_shader_registry.py --check` and
+  `python adm-standard/tools/test_shader_registry.py`: passed (20 profiles).
+- `python adm-standard/tools/build_fixtures.py` followed by
+  `git diff --exit-code -- adm-standard/fixtures`: passed; regenerated fixture bytes are unchanged.
+- Python 3.11 was not installed locally. A post-fix GitHub Actions run across all four matrix entries
+  is still required; no green remote run is claimed here.
+
 **Command:** `python3 tools/run_tests.py`  
 **Environment:** Python 3, standard library; run on 2026-11-13.
 

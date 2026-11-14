@@ -297,10 +297,14 @@ class AnimImporter:
                       f"channel targets {key[0]}@{key[1]}; skipped")
             return None
         prm = self.registry.get(key, {}).get(p)
-        if prm is None or not prm.get("animatable"):
+        is_vertex_control = p in K.VERTEX_CONTROL_PARAMS and mat.adm.vertex_controls_enabled
+        if not is_vertex_control and (prm is None or not prm.get("animatable")):
             self.warn(f"clip '{clip_id}': shader {key[0]}@{key[1]} has no animatable parameter '{p}'; skipped")
             return None
-        return [("MATERIAL", dp, idx, comp, 1.0) for dp, idx, comp in mat_anim.shader_write_targets(mat, p, ncomp)]
+        targets = mat_anim.shader_write_targets(mat, p, ncomp)
+        if not targets:
+            return None
+        return [("MATERIAL", dp, idx, comp, 1.0) for dp, idx, comp in targets]
 
     def _sampler(self, clip, si):
         s = clip["samplers"][si]

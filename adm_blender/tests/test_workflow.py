@@ -97,6 +97,9 @@ def build_body(arm):
     for v in sk.data:
         v.co += Vector((0, 0, 0.02))
     body.data.uv_layers.active.name = "UVMap"
+    color0 = body.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
+    for color in color0.data:
+        color.color = (0.25, 0.75, 0.5, 0.4)
     # textured material
     img = bpy.data.images.new("albedo", 8, 8, alpha=True)
     img.pixels = [0.5] * (8 * 8 * 4)
@@ -117,11 +120,11 @@ def main(tmp):
     adm_blender.register()
     from adm_blender.blender import material_anim as MA
     from adm_blender.blender.export_adm import ExportOptions, ModelExporter, export_model
-    from adm_blender.blender.export_anim import AnimExporter
+    from adm_blender.blender.export_anim import AnimExporter, channelbag_fcurves
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
     from adm_blender.blender.import_anim import AnimImportOptions, import_library
     from adm_blender.core import constants as K
-    from adm_blender.core.validate import validate_adm_resolved, validate_file
+    from adm_blender.core.validate import material_binding_issues, validate_adm_resolved, validate_file
     spec = importlib.util.spec_from_file_location("adm_reference_container",
                                                   os.path.join(REPO, "adm-standard", "tools", "container.py"))
     reference = importlib.util.module_from_spec(spec)
@@ -135,6 +138,7 @@ def main(tmp):
     print("== authoring")
     arm = build_rig()
     body = build_body(arm)
+    body.data.materials[0].adm.vertex_controls_enabled = True
     select(arm, body, active=arm)
     check(bpy.ops.adm.create_model_root(name="Hero") == {"FINISHED"}, "create_model_root")
     root = bpy.data.objects["Hero"]
@@ -225,9 +229,13 @@ def main(tmp):
           f"animation id {paint.adm.animation_id!r}")
     paint.adm.params["glossy"].use = True
     paint.adm.params["glossy"].value_bool = True
+    paint.adm.vertex_controls_enabled = True
+    paint.adm.tint_offset = 0.25
+    paint.adm.normal_multiplier = 0.75
+    paint.adm.reflection_multiplier = 1.5
 
     print("== model export")
-    exp = ModelExporter(bpy.context, root, ExportOptions())
+    exp = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True))
     data, rep = exp.export()
     print("   notes:", exp.warnings)
     check(rep.ok, f"model valid {errs(rep)}")
@@ -246,10 +254,19 @@ def main(tmp):
     check(doc["hitboxes"][0]["id"] == "torso", "hitbox exported")
     check(any(d["id"] == "studio.paint" for d in doc.get("shaderDefinitions", [])), "shader definition embedded")
     pm = next(m for m in doc["materials"] if m["name"] == "Paint")
+    paint_vertex = pm["extensions"][K.VERTEX_CONTROL_EXT]
+    check(paint_vertex["parameters"] == {
+        "tintOffset": 0.25,
+        "normalMultiplier": 0.75,
+        "reflectionMultiplier": 1.5,
+        "wetnessOffset": 0.0,
+    }, "vertex-control parameters exported")
     check(all(field in pm for field in ("baseColorFactor", "metallicFactor", "roughnessFactor",
                                        "emissiveFactor", "alphaMode")), "explicit non-core PBR fallback")
     check(pm.get("shaderParameters") == {"glossy": True} and pm.get("animationId") == "paint",
           f"paint material {pm}")
+    check(any("COLOR_0" in p["attributes"] for m in doc["meshes"] for p in m["primitives"]),
+          "COLOR_0 exported under the required vertex-control extension")
     check(len(doc.get("colliders", [])) >= 1 or any("collider" in n for n in map(str, doc.get("nodes", []))),
           "collider exported")
     model_path = os.path.join(tmp, "hero.adm")
@@ -257,7 +274,7 @@ def main(tmp):
         fh.write(data)
     external_path = os.path.join(tmp, "hero_external.adm")
     external_exp, external_report = export_model(
-        bpy.context, external_path, root, ExportOptions(embed_textures=False)
+        bpy.context, external_path, root, ExportOptions(embed_textures=False, vertex_controls=True)
     )
     check(external_report.ok, f"external-texture model valid {errs(external_report)}")
     external_image = external_report.doc["images"][0]
@@ -304,6 +321,8 @@ def main(tmp):
         sc.frame_set(f)
         paint.adm.params["wear"].value_f = w
         check(bpy.ops.adm.material_key_param(name="wear") == {"FINISHED"}, f"key wear @{f}")
+        paint.adm.wetness_offset = w
+        paint.keyframe_insert("adm.wetness_offset", frame=f)
         bsdf.inputs["Roughness"].default_value = 0.2 + 0.6 * w
         bsdf.inputs["Roughness"].keyframe_insert("default_value", frame=f)
     kinds = sorted(s.target_id_type for s in act.slots)
@@ -319,10 +338,14 @@ def main(tmp):
             or c["target"].get("parameter")) for c in chans}
     print("   channels:", sorted(got))
     for want in (("bone", "leftUpperArm"), ("morph", "smile"), ("shaderParameter", "wear"),
-                 ("pbrParameter", "roughnessFactor")):
+                 ("shaderParameter", "wetnessOffset"), ("pbrParameter", "roughnessFactor")):
         check(want in got, f"channel {want}")
     check(("shaderParameter", "tint") not in got, "unkeyed shader param not exported")
     sem_path = os.path.join(tmp, "hero_moves.adm_anim")
+    check(K.VERTEX_CONTROL_EXT in rep.doc["extensionsRequired"],
+          "vertex-control animation declares its required extension")
+    bind_issues = material_binding_issues(doc, rep.doc)
+    check(not bind_issues, f"vertex-control animation binds to exported material {bind_issues}")
     with open(sem_path, "wb") as fh:
         fh.write(data)
 
@@ -379,18 +402,41 @@ def main(tmp):
     paint2 = bpy.data.materials.get("Paint")
     check(paint2 is not None and paint2.adm.shader == "CUSTOM" and paint2.adm.custom_shader == "studio.paint@1.0.0",
           "custom shader material imported")
+    check(paint2 is not None and paint2.adm.vertex_controls_enabled
+          and tuple(round(v, 6) for v in (
+              paint2.adm.tint_offset, paint2.adm.normal_multiplier,
+              paint2.adm.reflection_multiplier, paint2.adm.wetness_offset
+          )) == (0.25, 0.75, 1.5, 0.0), "vertex-control material parameters imported")
+    body2 = bpy.data.objects.get("Body")
+    imported_color0 = body2.data.color_attributes.get("COLOR_0") if body2 is not None else None
+    check(imported_color0 is not None, "COLOR_0 survives model import")
+    if imported_color0 is not None:
+        check(all(abs(a - b) < 1e-6 for a, b in zip(imported_color0.data[0].color, (0.25, 0.75, 0.5, 0.4))),
+              f"COLOR_0 values round-trip {tuple(imported_color0.data[0].color)}")
+    skin2 = bpy.data.materials.get("Skin")
+    check(skin2 is not None and any(n.name == "ADM Preview COLOR_0" for n in skin2.node_tree.nodes),
+          "imported vertex-control preview resolves COLOR_0 after mesh creation")
     check(bpy.context.scene.adm_anim.shaders.get("studio.paint@1.0.0") is not None, "shader def imported")
     for pth, label in ((sem_path, "semantic"), (exact_path, "exact"), (any_path, "model.any")):
         imp, slib = import_library(bpy.context, pth, AnimImportOptions(armature=arm2))
         print(f"   {label} warnings:", imp.warnings)
         check(not imp.warnings, f"{label} import clean")
+        if label == "semantic":
+            imported_action = slib.clips[0].action
+            imported_slot, _ = MA.material_slots(imported_action, paint2)
+            wetness_curves = [fc for fc in channelbag_fcurves(imported_action, imported_slot)
+                              if fc.data_path == "adm.wetness_offset"]
+            values = [round(point.co.y, 6) for fc in wetness_curves for point in fc.keyframe_points]
+            check(len(values) >= 2 and values[0] == 0.0 and values[-1] == 1.0
+                  and all(a <= b for a, b in zip(values, values[1:])),
+                  f"vertex-control animation values round-trip {values}")
         exp = AnimExporter(bpy.context, slib)
         data, rep = exp.export()
         check(rep is not None and rep.ok, f"{label} re-export valid {errs(rep)}")
         n0 = len(next(c for c in [validate_file(pth).doc["clips"][0]])["channels"])
         n1 = len(rep.doc["clips"][0]["channels"])
         check(n0 == n1, f"{label} channel count {n0} -> {n1}")
-    data, rep = ModelExporter(bpy.context, root2, ExportOptions()).export()
+    data, rep = ModelExporter(bpy.context, root2, ExportOptions(vertex_controls=True)).export()
     check(rep.ok, f"re-imported model re-export valid {errs(rep)}")
     check(rep.doc["physicalMaterials"] == doc["physicalMaterials"], "physical coefficients round-trip")
     check(rep.doc["modelComponents"][0]["socket"] == "prop.socket.back", "component socket round-trip")
@@ -403,8 +449,12 @@ if __name__ == "__main__":
     try:
         with tempfile.TemporaryDirectory(prefix="adm_wf_") as tmp:
             main(tmp)
-    except Exception:
+    except Exception as exc:
         traceback.print_exc()
+        report = getattr(exc, "report", None)
+        if report is not None:
+            for issue in report.errors:
+                print("   validation:", issue)
         FAILS.append("exception")
     print("RESULT:", "PASS" if not FAILS else f"FAIL ({len(FAILS)}): {FAILS}")
     sys.stdout.flush()

@@ -15,6 +15,12 @@ from ..core import constants as K
 from .materials import ALPHA_CLIP_NODE, _color_inputs, _from, principled_of, trace
 
 PARAM_PATH_RE = re.compile(r'^adm\.params\[(?:"(.+)"|(\d+))\]\.(value_f|value_vec)$')
+VERTEX_CONTROL_PROP_BY_PARAM = {
+    "tintOffset": "tint_offset",
+    "normalMultiplier": "normal_multiplier",
+    "reflectionMultiplier": "reflection_multiplier",
+    "wetnessOffset": "wetness_offset",
+}
 
 
 def param_name_from_path(mat, data_path):
@@ -181,6 +187,9 @@ def shader_param_values(mat, registry):
             out[name] = [float(d)] if n == 1 else [float(x) for x in d]
         else:
             out[name] = [v.value_f] if n == 1 else list(v.value_vec[:n])
+    if a.vertex_controls_enabled:
+        for name, prop in VERTEX_CONTROL_PROP_BY_PARAM.items():
+            out[name] = [float(getattr(a, prop))]
     return out
 
 
@@ -189,6 +198,9 @@ def animated_shader_params(mat, fcurves):
     for fc in fcurves:
         if fc.data_path == "adm.layer_factor":
             names.add("layer_factor")
+        for name, prop in VERTEX_CONTROL_PROP_BY_PARAM.items():
+            if fc.data_path == f"adm.{prop}":
+                names.add(name)
         name = param_name_from_path(mat, fc.data_path)
         if name:
             names.add(name)
@@ -291,6 +303,11 @@ def pbr_write_targets(mat, param):
 def shader_write_targets(mat, param, n):
     """``(data_path, array_index, component)`` for a shader parameter on ``Material.adm``."""
     a = mat.adm
+    prop = VERTEX_CONTROL_PROP_BY_PARAM.get(param)
+    if prop is not None:
+        if not a.vertex_controls_enabled:
+            return None
+        return [(f"adm.{prop}", 0, 0)]
     if a.shader == "LAYERED" and param == "layer_factor":
         return [("adm.layer_factor", 0, 0)]
     v = a.params.get(param)

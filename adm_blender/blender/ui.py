@@ -1087,10 +1087,19 @@ def draw_material(lay, context, mat):
     controls = lay.box()
     controls.label(text="ADM Vertex Control", icon="COLOR")
     controls.label(text="Serialized when Export > Vertex Controls is enabled", icon="INFO")
+    controls.prop(p, "vertex_controls_enabled")
     controls.template_ID(p, "vertex_tint_palette", new="image.new", open="image.open")
     controls.prop(p, "vertex_tint_mode")
     for field in ("tint_offset", "normal_multiplier", "reflection_multiplier", "wetness_offset"):
-        controls.prop(p, field)
+        row = controls.row(align=True)
+        row.prop(p, field)
+        key = row.operator("adm.material_key_param", text="", icon="KEYFRAME_HLT")
+        key.name = {
+            "tint_offset": "tintOffset",
+            "normal_multiplier": "normalMultiplier",
+            "reflection_multiplier": "reflectionMultiplier",
+            "wetness_offset": "wetnessOffset",
+        }[field]
 
     draw_texture_slots(lay, context, mat)
 
