@@ -492,6 +492,11 @@ class ModelExporter:
         colors1 = None
         if not collision and self.opts.export_colors:
             if self.opts.vertex_controls:
+                from .vertex_colors import DEFAULTS, VertexColorError, validate_layers
+                try:
+                    validate_layers(me)
+                except VertexColorError as exc:
+                    raise ExportError(str(exc)) from exc
                 ca = me.color_attributes.get("COLOR_0")
                 ca1 = me.color_attributes.get("COLOR_1")
             else:
@@ -507,11 +512,17 @@ class ModelExporter:
                 if self.opts.vertex_controls or not has_interactive:
                     colors = np.clip(colors, 0.0, 1.0)
                 columns.append(colors[tri_loops])
+            elif self.opts.vertex_controls:
+                colors = np.tile(DEFAULTS["COLOR_0"], (nloops, 1))
+                columns.append(colors[tri_loops])
             if ca1 is not None:
                 n = nverts if ca1.domain == "POINT" else nloops
                 col = _np_get(ca1.data, "color", n, 4).astype(np.float64)
                 colors1 = col[loop_vert] if ca1.domain == "POINT" else col
                 colors1 = np.clip(colors1, 0.0, 1.0)
+                columns.append(colors1[tri_loops])
+            elif self.opts.vertex_controls:
+                colors1 = np.tile(DEFAULTS["COLOR_1"], (nloops, 1))
                 columns.append(colors1[tri_loops])
         normal_mapped = any(m >= 0 and "normalTexture" in self.mat.materials[m] for m in set(prim_mats.tolist()))
         want_tangents = normals is not None and uvs and (

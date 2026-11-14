@@ -360,6 +360,27 @@ def _shader_update(self, context):
     refresh_shader_preview(self.id_data)
 
 
+def _vertex_controls_update(self, context):
+    if self.vertex_controls_enabled:
+        from .vertex_colors import sync_control_meshes
+        sync_control_meshes(self.id_data)
+    _preview_update(self, context)
+
+
+def _vertex_palette_update(self, context):
+    from .vertex_colors import VertexColorError, refresh_palette
+    try:
+        refresh_palette(self.id_data)
+    except VertexColorError as exc:
+        print(f"ADM Tint Palette: {exc}")
+    _preview_update(self, context)
+
+
+class ADMTintPaletteEntry(PropertyGroup):
+    name: StringProperty()
+    color: FloatVectorProperty(size=4, subtype="COLOR", min=0.0, soft_max=1.0)
+
+
 class ADMLayerRecord(PropertyGroup):
     base_color: FloatVectorProperty(name="Base Color", size=4, subtype="COLOR", min=0.0, max=1.0,
                                     default=(1.0, 1.0, 1.0, 1.0), update=_preview_update)
@@ -427,7 +448,9 @@ class ADMMaterialProps(PropertyGroup):
     layer_mask_uv: IntProperty(name="Mask UV", min=0, max=1, update=_preview_update)
     layers_required: BoolProperty(name="Require Layered Rendering",
                                   description="List ADM_material_layers_v1 under extensionsRequired")
-    vertex_tint_palette: PointerProperty(name="Tint Palette", type=bpy.types.Image, update=_preview_update)
+    vertex_tint_palette: PointerProperty(name="Tint Palette", type=bpy.types.Image, update=_vertex_palette_update)
+    tint_palette_entries: CollectionProperty(type=ADMTintPaletteEntry, options={"SKIP_SAVE"})
+    active_tint_entry: IntProperty(name="Palette Entry", min=0, options={"SKIP_SAVE"})
     vertex_tint_mode: EnumProperty(name="Tint Mode", default="MULTIPLY", items=[
         ("MULTIPLY", "Multiply", "Multiply base color and alpha by the palette entry"),
         ("REPLACE", "Replace", "Replace base RGB and preserve base alpha"),
@@ -435,7 +458,7 @@ class ADMMaterialProps(PropertyGroup):
     vertex_controls_enabled: BoolProperty(
         name="Enable Vertex Controls",
         default=False,
-        update=_preview_update,
+        update=_vertex_controls_update,
         description="Interpret COLOR_0 as ADM vertex controls and expose their parameters to animation",
     )
     tint_offset: FloatProperty(name="Tint Offset", default=0.0, min=-1024.0, max=1024.0)
@@ -531,6 +554,20 @@ class ADMRoleName(PropertyGroup):
 
 
 class ADMWindowProps(PropertyGroup):
+    vertex_color_layer: EnumProperty(name="Layer", items=[
+        ("COLOR_0", "COLOR_0", "Tint / normal strength / reflectivity / wetness"),
+        ("COLOR_1", "COLOR_1", "Reserved channels; no shading effect in current official profiles"),
+    ])
+    vertex_color_scope: EnumProperty(name="Faces", default="ALL", items=[
+        ("ALL", "All Faces", "Modify the whole active mesh"),
+        ("SELECTED", "Selected Faces", "Modify selected, visible faces, including live Edit Mode selection"),
+    ])
+    vertex_color_channel: EnumProperty(name="Channel", items=[
+        ("RGBA", "All Channels", "Write all four channels"),
+        *[(c, c, f"Write only {c}; preserve the other channels") for c in "RGBA"],
+    ])
+    vertex_color_values: FloatVectorProperty(
+        name="Linear Values", size=4, min=0.0, max=1.0, default=(0.0, 1.0, 1.0, 0.0))
     report: CollectionProperty(type=ADMReportItem)
     active_report: IntProperty()
     report_title: StringProperty()
@@ -548,7 +585,7 @@ CLASSES = (
     ADMFaceBinding, ADMExpressionBinding, ADMExpression, ADMLodLevel,
     ADMPhysicalMaterial, ADMModelComponent, ADMHitbox, ADMObjectProps,
     ADMBoneProps, ADMIKChain, ADMSkeletonProps,
-    ADMShaderParamDef, ADMShaderDef, ADMShaderParamValue, ADMLayerRecord, ADMMaterialProps,
+    ADMShaderParamDef, ADMShaderDef, ADMShaderParamValue, ADMTintPaletteEntry, ADMLayerRecord, ADMMaterialProps,
     ADMAnimEvent, ADMAnimClip, ADMAnimLibrary, ADMSceneProps,
     ADMReportItem, ADMRoleName, ADMWindowProps,
 )

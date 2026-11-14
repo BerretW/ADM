@@ -546,11 +546,17 @@ class ADM_OT_convert_materials(bpy.types.Operator):
     bl_label = "Convert Materials To ADM"
     bl_options = {"REGISTER", "UNDO"}
 
+    vertex_controls: BoolProperty(name="Initialize ADM Vertex Controls", default=True,
+                                  description="Create neutral COLOR_0/COLOR_1, preserving ordinary color layers")
+
     def execute(self, context):
         mats = {s.material for o in context.selected_objects for s in getattr(o, "material_slots", []) if s.material}
         if not mats and context.active_object is not None:
             mats = {s.material for s in context.active_object.material_slots if s.material}
         n = sum(1 for m in mats if convert_to_adm_material(m))
+        if self.vertex_controls:
+            for mat in mats:
+                mat.adm.vertex_controls_enabled = True
         self.report({"INFO"}, f"converted {n} of {len(mats)} material(s) (others were already ADM-ready)")
         return {"FINISHED"}
 
