@@ -104,6 +104,16 @@
 - Added Blender viewport application of `COLOR_0` tint-palette sampling, normal strength, wetness color and roughness for Core, layered, custom-fallback and profile preview materials when enabled.
 - Added exact-name extension-level `shaderParameter` animation targets for `tintOffset`, `normalMultiplier`, `reflectionMultiplier` and `wetnessOffset`; `.adm_anim` requires the extension when those channels are present, and model/material binding is validated.
 - Added round-trip workflow assertions for exported `COLOR_0`, material control settings, animation bindings and sampled wetness values.
-- Added Cycles bake tests for wetness albedo/roughness and live driver updates.
+- Added Cycles bake tests for wetness albedo/roughness, live driver updates, and exact dielectric/metallic F0 node outputs.
 - Blender's Principled BSDF cannot match the exact metallic F0 equation; reflectivity remains approximate for metallic materials. Per-profile `COLOR_1` semantics and independent renderer conformance remain open.
 - No binary container change.
+
+## Draft 0.4 revision P12 — exact F0 preview and Core 20 COLOR_1 contract
+
+- Vertex-control preview now mixes dielectric and metallic Principled lobes at the material metallic factor, encoding effective dielectric F0 as IOR and metallic F0 as the lobe base color.
+- Added Blender Cycles bake checks for the effective dielectric and metallic F0 node outputs.
+- Defined `COLOR_1` as reserved/no-effect with `(0,0,0,0)` missing default for each of the 20 registered Core profiles. Blender preserves explicit values through export/import and tests that changing them does not affect the preview.
+- Added Blender F-Curve checks for material animation interpolation at endpoints and midpoints for STEP, LINEAR and CUBICSPLINE.
+- Added a Blender 5.2.4 headless CI job that verifies the official Linux archive against a pinned SHA-256 before running the integration tests.
+- Added a deterministic scene generator for all 20 official shader previews; Blender CI verifies it saves a non-empty `.blend`.
+- Independent-renderer interoperability and full shader-preview certification remain open; Skin, Fur and Fabric previews remain approximations.

@@ -150,7 +150,7 @@ A node is a transform and may refer to a mesh and skin. A node with morphable me
 | TANGENT | F32 VEC4 | normalized xyz tangent, w = +1 or −1 |
 | TEXCOORD_0, TEXCOORD_1 | F32 VEC2 | UV coordinates, top-left convention |
 | COLOR_0 | U8 normalized VEC4 **or** F32 VEC4 | linear RGBA vertex color; with required `ADM_vertex_control_v1`, vertex controls |
-| COLOR_1 | U8 normalized VEC4 **or** F32 VEC4 | valid only with required `ADM_vertex_control_v1`; shader-specific controls |
+| COLOR_1 | U8 normalized VEC4 **or** F32 VEC4 | valid only with required `ADM_vertex_control_v1`; reserved with no shading effect for all Core 20 profiles (see extension table) |
 | JOINTS_0 | U8/U16 non-normalized VEC4 | indices into associated skin's `joints` array |
 | WEIGHTS_0 | F32 VEC4 **or** U8/U16 normalized VEC4 | 4 skin influences |
 

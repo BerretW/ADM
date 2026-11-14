@@ -1679,7 +1679,12 @@ def refresh_shader_preview(mat):
             from . import shader_preview
             bsdf = _from(out.inputs["Surface"])
             if bsdf is not None:
-                shader_preview.apply_vertex_controls(mat, bsdf.node)
+                controlled = shader_preview.apply_vertex_controls(mat, bsdf.node)
+                if controlled != bsdf.node:
+                    for link in list(out.inputs["Surface"].links):
+                        mat.node_tree.links.remove(link)
+                    mat.node_tree.links.new(controlled.outputs.get("Shader") or controlled.outputs["BSDF"],
+                                            out.inputs["Surface"])
     else:
         from . import shader_preview
         if mat.adm.shader in shader_preview.BUILDERS or mat.adm.vertex_controls_enabled:

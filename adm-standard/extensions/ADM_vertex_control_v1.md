@@ -129,16 +129,47 @@ operations are defined by the exact registered shader profile. Missing `COLOR_1`
 documented default. A reader MUST report unsupported `COLOR_1` behavior and MUST NOT guess a
 cross-profile interpretation.
 
-The initial Core 20 per-shader `COLOR_1` table and executable renderer conformance fixtures are
-pending; the generic attribute transport does not claim shader-specific `COLOR_1` conformance.
+For every profile in the Core 20 table below, all four channels are reserved and MUST NOT affect
+shading. The missing-attribute default is `(0,0,0,0)`. Writers and readers MAY preserve explicit
+channel values for round-trip editing, but renderers MUST ignore them for these profile versions.
+This intentionally reserves future per-profile behavior for a new profile version; readers MUST NOT
+infer effects from textures, similarly named parameters, or another shader's `COLOR_1` contract.
+
+| Registered shader profile | R | G | B | A | Missing default | Rendering effect |
+|---|---|---|---|---|---|---|
+| `adm.pbr.metallic_roughness@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.pbr.layered@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.surface.cutout@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.surface.emissive@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.surface.decal@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.surface.glass@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.surface.foliage@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.terrain.four_layer@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.vehicle.paint@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.character.skin@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.animal.fur@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.animal.feather@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.animal.scales@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.building.concrete@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.building.brick@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.building.roof@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.nature.bark@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.nature.rock@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.nature.water@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+| `adm.surface.fabric@1.0.0` | reserved | reserved | reserved | reserved | `(0,0,0,0)` | none |
+
+These neutral contracts close the Core 20 channel mapping without inventing behavior from existing
+shader parameters. A profile not listed above has no defined `COLOR_1` behavior; a reader MUST report
+that unsupported behavior rather than guess.
 
 ## Blender reference implementation status
 
 The Blender add-on transports `COLOR_0`/`COLOR_1`, the tint palette reference and the four
 extension-level parameter values through export/import. It supports ADM_ANIM binding and playback
 for these parameters by extension-defined name and exact shader identity. Vertex-control preview
-nodes apply the tint palette, normal-strength, wetness-color and wetness-roughness rules. The
-reflectivity preview is limited by Blender's Principled BSDF: it matches the dielectric approximation
-but does not implement the exact metallic F0 transformation. `COLOR_1` remains transport-only, and
-not every registered profile has an independently bake-tested renderer. These limitations are not
-full renderer or extension conformance.
+nodes apply the tint palette, normal-strength, wetness-color, wetness-roughness and F0 rules. For F0,
+the preview mixes dielectric and metallic Principled lobes at the material metallic factor: the
+dielectric lobe receives an IOR derived from the exact effective scalar F0, while the metallic lobe
+uses the exact effective RGB F0 as its base color. Blender Cycles bake tests verify both node paths.
+`COLOR_1` remains transport-only, and the bake tests do not establish interoperability with an
+independent renderer. These limitations are not full renderer or extension conformance.

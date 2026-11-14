@@ -1,22 +1,30 @@
 # Draft 0.4 executed test report
 
-## P11 vertex-control preview and animation — local verification
+## P12 vertex-control materials — local verification
 
 - CI-equivalent Python unittest command (`test_container`, `test_draft4`, `test_skeleton_profiles`,
   `test_gputex`, `test_shader_math`): **85 passed, 1 skipped**. The skip is the Windows symlink
   permission case described below.
 - Blender 5.2.3 `adm_blender/tests/test_shader_preview.py`: **PASS**. Cycles bakes verify palette
-  sampling, wetness albedo/roughness and that the animated material-property driver updates without
-  rebuilding nodes.
+  sampling, wetness albedo/roughness, live driver updates, and exact dielectric/metallic F0 node
+  outputs. It also verifies that changing reserved `COLOR_1` values does not affect the preview.
+  The F0 sample produced metallic RGB `(0.10817, 0.20615, 0.30414)` and dielectric F0 `0.02586`.
 - Blender 5.2.3 `adm_blender/tests/test_workflow.py`: **PASS**. Model and animation validation,
-  extension binding, COLOR_0/material setting import, and ADM_ANIM wetness channel values round-trip.
+  extension binding, COLOR_0/COLOR_1/material-setting export/import, ADM_ANIM wetness values
+  round-trip, and imported material STEP/LINEAR/CUBICSPLINE interpolation endpoints/midpoints.
+- Blender 5.2.3 `test_fixtures.py`, `test_material_slots.py`, `test_texture_formats.py`, and
+  `test_skeleton_blender.py`: **PASS**. The CI workflow now runs these with the shader-preview and
+  workflow tests under Blender 5.2.4 after verifying the downloaded archive checksum; remote Actions
+  execution has not yet been observed.
+- Blender 5.2.3 `build_material_test_scene.py`: **PASS**, generated and saved a 20-swatch Core shader
+  preview scene; the temporary `.blend` was verified non-empty and removed after the check.
 - `python adm-standard/tools/run_tests.py`: **13 passed, 0 failed**.
 - `python adm-standard/tools/build_shader_registry.py --check`: **PASS**, all 20 profiles.
 - `py_compile` passed for all changed Python modules and tests.
 
-These are reference implementation tests. Metallic F0 preview remains approximate, `COLOR_1`
-semantics remain incomplete, and independent-reader renderer conformance is not claimed. A new
-GitHub Actions run on the updated branch has not yet been observed.
+These are reference implementation tests. Core 20 `COLOR_1` semantics are explicitly reserved with no
+shading effect; independent-reader renderer conformance is not claimed. A new GitHub Actions run on
+the updated branch has not yet been observed.
 
 ## 2026-11-14 CI fixture-generator failure and local verification
 

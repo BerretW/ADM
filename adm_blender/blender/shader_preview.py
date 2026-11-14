@@ -249,7 +249,8 @@ class _Graph:
     def output(self, bsdf):
         out = self.new("ShaderNodeOutputMaterial", "Output")
         out.location = (self.x0, self.y0)
-        self.nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+        surface = bsdf.outputs.get("BSDF") or bsdf.outputs[0]
+        self.nt.links.new(surface, out.inputs["Surface"])
         out.is_active_output = True
         return out
 
@@ -604,10 +605,36 @@ def _socket_source(g, socket):
     return _from(socket) if socket.is_linked else socket.default_value
 
 
+def _set_input(g, socket, value):
+    for link in list(socket.links):
+        g.nt.links.remove(link)
+    if isinstance(value, bpy.types.NodeSocket):
+        g.nt.links.new(value, socket)
+    else:
+        socket.default_value = value
+
+
+def _copy_principled(g, source, name):
+    target = g.new("ShaderNodeBsdfPrincipled", name)
+    for attr in ("distribution", "subsurface_method"):
+        if hasattr(source, attr) and hasattr(target, attr):
+            setattr(target, attr, getattr(source, attr))
+    for input_socket in source.inputs:
+        target_socket = target.inputs.get(input_socket.name)
+        if target_socket is None:
+            continue
+        if input_socket.is_linked:
+            for link in input_socket.links:
+                g.nt.links.new(link.from_socket, target_socket)
+        elif hasattr(input_socket, "default_value") and hasattr(target_socket, "default_value"):
+            target_socket.default_value = input_socket.default_value
+    return target
+
+
 def _apply_vertex_controls(g, bsdf):
     a = g.a
     if not a.vertex_controls_enabled:
-        return
+        return bsdf
 
     color0 = _vertex_color(g)
     red, green, blue, alpha = color0
@@ -627,6 +654,9 @@ def _apply_vertex_controls(g, bsdf):
     base_color = _socket_source(g, bsdf.inputs["Base Color"])
     base_parts = g.new("ShaderNodeSeparateColor", "Base Color Channels")
     g.link(base_color, base_parts.inputs[0])
+    base_metallic = _socket_source(g, bsdf.inputs["Metallic"])
+    base_ior = _socket_source(g, bsdf.inputs["IOR"])
+    base_specular = _socket_source(g, bsdf.inputs["Specular IOR Level"])
     base_alpha = _socket_source(g, bsdf.inputs["Alpha"])
     palette_alpha = 1.0
     palette_rgb = None
@@ -653,6 +683,7 @@ def _apply_vertex_controls(g, bsdf):
                            for name, value in zip(("Red", "Green", "Blue"), palette_rgb))
         base_alpha = g.math("MULTIPLY", base_alpha, palette_alpha)
 
+    tinted_base_color = g.combine(tinted_rgb)
     wetness = g.math("ADD", alpha, wetness_offset, clamp=True)
     color_scale = g.math("SUBTRACT", 1.0, g.math("MULTIPLY", wetness, 0.15))
     g.link(g.combine(tuple(g.math("MULTIPLY", component, color_scale) for component in tinted_rgb)),
@@ -671,15 +702,36 @@ def _apply_vertex_controls(g, bsdf):
             scaled_strength = g.math("MULTIPLY", normal_strength, base_strength, clamp=True)
             g.link(scaled_strength, node.inputs["Strength"])
 
-    specular = bsdf.inputs.get("Specular IOR Level")
-    if specular is not None:
-        base_f0 = g.math("MULTIPLY", _socket_source(g, specular), 0.08)
-        reflected_f0 = g.math("MULTIPLY", base_f0,
-                              g.math("MULTIPLY", blue, reflection_multiplier, clamp=True))
-        water_f0 = ((1.333 - 1.0) / (1.333 + 1.0)) ** 2
-        wet_f0 = g.mix("FLOAT", reflected_f0,
-                       g.math("MULTIPLY_ADD", reflected_f0, (1.0 - water_f0) ** 2, water_f0), wetness)
-        g.link(g.math("DIVIDE", wet_f0, 0.08, clamp=True), specular)
+    reflectivity = g.math("MULTIPLY", blue, reflection_multiplier, clamp=True)
+    ior_ratio = g.math("DIVIDE", g.math("SUBTRACT", base_ior, 1.0), g.math("ADD", base_ior, 1.0))
+    dielectric_f0 = g.math("MULTIPLY", g.math("POWER", ior_ratio, 2.0),
+                           g.math("MULTIPLY", base_specular, 2.0), clamp=True)
+    dielectric_reflectance = g.math("MULTIPLY", dielectric_f0, reflectivity, clamp=True)
+    metal_reflectance = g.vmath("SCALE", tinted_base_color)
+    g.link(reflectivity, metal_reflectance.node.inputs["Scale"])
+
+    water_f0 = ((1.333 - 1.0) / (1.333 + 1.0)) ** 2
+    coat_scale = (1.0 - water_f0) ** 2
+    dielectric_coat = g.math("MULTIPLY_ADD", dielectric_reflectance, coat_scale, water_f0)
+    dielectric_wet_f0 = g.mix("FLOAT", dielectric_reflectance, dielectric_coat, wetness)
+    metal_coat = g.vmath("MULTIPLY_ADD", metal_reflectance, (coat_scale,) * 3, (water_f0,) * 3)
+    metal_wet_f0 = g.mix("VECTOR", metal_reflectance, metal_coat, wetness)
+
+    dielectric = _copy_principled(g, bsdf, "Dielectric F0")
+    metal = _copy_principled(g, bsdf, "Metallic F0")
+    f0_root = g.math("SQRT", dielectric_wet_f0)
+    dielectric_ior = g.math("DIVIDE", g.math("ADD", 1.0, f0_root),
+                            g.math("SUBTRACT", 1.0, f0_root))
+    _set_input(g, dielectric.inputs["Metallic"], 0.0)
+    _set_input(g, dielectric.inputs["IOR"], dielectric_ior)
+    _set_input(g, dielectric.inputs["Specular IOR Level"], 0.5)
+    _set_input(g, metal.inputs["Metallic"], 1.0)
+    _set_input(g, metal.inputs["Base Color"], metal_wet_f0)
+    mix = g.new("ShaderNodeMixShader", "Metallic F0 Mix")
+    g.link(base_metallic, mix.inputs["Fac"])
+    g.link(dielectric.outputs["BSDF"], mix.inputs[1])
+    g.link(metal.outputs["BSDF"], mix.inputs[2])
+    return mix
 
 
 BUILDERS = {
@@ -697,12 +749,12 @@ def build(mat):
         return None
     g = _Graph(mat)
     bsdf = fn(g) if fn is not None else g.bsdf()
-    _apply_vertex_controls(g, bsdf)
+    bsdf = _apply_vertex_controls(g, bsdf)
     return g.output(bsdf)
 
 
 def apply_vertex_controls(mat, bsdf):
     """Apply the shared vertex-control preview to an already-built preview BSDF."""
     if mat.node_tree is None or not mat.adm.vertex_controls_enabled:
-        return
-    _apply_vertex_controls(_Graph(mat), bsdf)
+        return bsdf
+    return _apply_vertex_controls(_Graph(mat), bsdf)
