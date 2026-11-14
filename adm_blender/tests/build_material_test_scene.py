@@ -1,4 +1,4 @@
-"""Generate a reproducible Blender scene containing all registered Core 20 shader previews.
+"""Generate a scene with all 20 v2 shader profiles at five COLOR_1 mask levels.
 
 Run: blender -b --factory-startup --python adm_blender/tests/build_material_test_scene.py -- output.blend
 """
@@ -27,7 +27,7 @@ def add_label(text, location):
     data = bpy.data.curves.new(f"Label_{text}", "FONT")
     data.body = text
     data.align_x = "CENTER"
-    data.size = 0.22
+    data.size = 0.13
     obj = bpy.data.objects.new(f"Label_{text}", data)
     bpy.context.scene.collection.objects.link(obj)
     obj.location = location
@@ -50,20 +50,26 @@ def main(output):
     palette = make_image("Core20_Tint_Palette", (4, 1), lambda x, _y:
                          ((0.8, 0.2, 0.1, 1.0), (0.1, 0.7, 0.2, 1.0),
                           (0.1, 0.3, 0.9, 1.0), (0.8, 0.7, 0.1, 1.0))[x])
-    samples = [(key, kind) for key, kind in K.OFFICIAL_SHADER_KINDS.items() if key != K.SHADER_INTERACTIVE]
-    for index, (key, kind) in enumerate(samples):
-        x = (index % 5 - 2) * 2.4
-        y = (1.5 - index // 5) * 2.4
-        bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, radius=0.85, location=(x, y, 0.85))
+    samples = sorted(
+        (key, kind) for key, kind in K.OFFICIAL_SHADER_KINDS.items()
+        if key[1] == K.SHADER_PROFILE_V2 and kind != "INTERACTIVE"
+    )
+    mask_levels = (0.0, 0.25, 0.5, 0.75, 1.0)
+    variants = [(key, kind, mask) for key, kind in samples for mask in mask_levels]
+    columns = 10
+    for index, (key, kind, mask) in enumerate(variants):
+        x = (index % columns - (columns - 1) / 2) * 1.55
+        y = (len(variants) // columns / 2 - index // columns - 0.5) * 1.55
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=20, ring_count=10, radius=0.52, location=(x, y, 0.52))
         obj = bpy.context.object
-        obj.name = f"MaterialTest_{kind}"
-        obj.data.name = f"MaterialTestMesh_{kind}"
+        obj.name = f"MaterialTest_{kind}_{mask:.2f}"
+        obj.data.name = f"MaterialTestMesh_{kind}_{mask:.2f}"
         color0 = obj.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
         color0.data.foreach_set("color", np.tile((0.25, 1.0, 1.0, 0.25), len(color0.data)).ravel())
         color1 = obj.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
-        color1.data.foreach_set("color", np.tile((0.9, 0.1, 0.7, 0.3), len(color1.data)).ravel())
+        color1.data.foreach_set("color", np.tile((mask,) * 4, len(color1.data)).ravel())
 
-        mat = bpy.data.materials.new(f"MaterialTest_{kind}")
+        mat = bpy.data.materials.new(f"MaterialTest_{kind}_{mask:.2f}")
         obj.data.materials.append(mat)
         materials.convert_to_adm_material(mat)
         fallback = materials.principled_of(mat)
@@ -71,6 +77,7 @@ def main(output):
         fallback.inputs["Metallic"].default_value = 0.15
         fallback.inputs["Roughness"].default_value = 0.45
         mat.adm.shader = kind
+        mat.adm.shader_version = key[1]
         materials.sync_official_shader_params(mat, key)
         schema = {parameter["name"]: parameter for parameter in K.OFFICIAL_SHADERS[key]}
         for value in mat.adm.params:
@@ -89,19 +96,19 @@ def main(output):
                 value.value_vec = vector
         mat.adm.vertex_tint_palette = palette
         mat.adm.vertex_controls_enabled = True
-        add_label(kind, (x, y - 1.1, 0.02))
+        add_label(f"{kind} {mask:.2f}", (x, y - 0.7, 0.01))
 
-    bpy.ops.mesh.primitive_plane_add(size=13.0, location=(0.0, 0.0, 0.0))
+    bpy.ops.mesh.primitive_plane_add(size=18.0, location=(0.0, 0.0, 0.0))
     bpy.context.object.name = "MaterialTest_Floor"
-    bpy.ops.object.light_add(type="AREA", location=(0.0, -4.0, 10.0))
-    bpy.context.object.data.energy = 2200
+    bpy.ops.object.light_add(type="AREA", location=(0.0, -6.0, 18.0))
+    bpy.context.object.data.energy = 4200
     bpy.context.object.data.shape = "DISK"
     bpy.context.object.data.size = 8.0
-    bpy.ops.object.camera_add(location=(0.0, -9.0, 12.0))
+    bpy.ops.object.camera_add(location=(0.0, -20.0, 28.0))
     camera = bpy.context.object
     from mathutils import Vector
     camera.rotation_euler = (Vector((0.0, 0.0, 0.0)) - camera.location).to_track_quat("-Z", "Y").to_euler()
-    camera.data.lens = 40
+    camera.data.lens = 35
     scene.camera = camera
     scene.render.filepath = "//ADM_Core20_Material_Test_Scene.png"
     if scene.world is None:
@@ -111,7 +118,8 @@ def main(output):
     output = os.path.abspath(output)
     os.makedirs(os.path.dirname(output), exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=output)
-    print(f"Generated {len(samples)} shader swatches: {output}")
+    print(f"Generated {len(samples)} v2 profiles × {len(mask_levels)} mask levels "
+          f"({len(variants)} swatches): {output}")
 
 
 if __name__ == "__main__":

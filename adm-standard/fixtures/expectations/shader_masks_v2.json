@@ -1,0 +1,176 @@
+{
+  "fixture": "ADM_SHADER_VERTEX_MASKS_V2",
+  "version": 1,
+  "maskSamples": [
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "profiles": [
+    {
+      "id": "adm.pbr.metallic_roughness@2.0.0",
+      "operations": ["surface", "surface", "surface", "factor"]
+    },
+    {
+      "id": "adm.pbr.layered@2.0.0",
+      "operations": ["layer", "layer", "layer", "layer"]
+    },
+    {
+      "id": "adm.surface.cutout@2.0.0",
+      "operations": ["factor", "factor", "surface", "surface"]
+    },
+    {
+      "id": "adm.surface.emissive@2.0.0",
+      "operations": ["factor", "color", "multiply", "coverage"]
+    },
+    {
+      "id": "adm.surface.decal@2.0.0",
+      "operations": ["factor", "surface", "surface", "surface"]
+    },
+    {
+      "id": "adm.surface.glass@2.0.0",
+      "operations": ["factor", "factor", "surface", "color"]
+    },
+    {
+      "id": "adm.surface.foliage@2.0.0",
+      "operations": ["factor", "surface", "factor", "surface"]
+    },
+    {
+      "id": "adm.terrain.four_layer@2.0.0",
+      "operations": ["layer", "layer", "layer", "layer"]
+    },
+    {
+      "id": "adm.vehicle.paint@2.0.0",
+      "operations": ["factor", "surface", "surface", "factor"]
+    },
+    {
+      "id": "adm.character.skin@2.0.0",
+      "operations": ["factor", "normal", "factor", "surface"]
+    },
+    {
+      "id": "adm.animal.fur@2.0.0",
+      "operations": ["factor", "surface", "factor", "normal"]
+    },
+    {
+      "id": "adm.animal.feather@2.0.0",
+      "operations": ["surface", "color", "normal", "factor"]
+    },
+    {
+      "id": "adm.animal.scales@2.0.0",
+      "operations": ["contrast", "factor", "factor", "surface"]
+    },
+    {
+      "id": "adm.building.concrete@2.0.0",
+      "operations": ["surface", "surface", "surface", "surface"]
+    },
+    {
+      "id": "adm.building.brick@2.0.0",
+      "operations": ["surface", "surface", "surface", "surface"]
+    },
+    {
+      "id": "adm.building.roof@2.0.0",
+      "operations": ["surface", "surface", "surface", "surface"]
+    },
+    {
+      "id": "adm.nature.bark@2.0.0",
+      "operations": ["surface", "normal", "surface", "surface"]
+    },
+    {
+      "id": "adm.nature.rock@2.0.0",
+      "operations": ["surface", "surface", "surface", "surface"]
+    },
+    {
+      "id": "adm.nature.water@2.0.0",
+      "operations": ["surface", "color", "factor", "factor"]
+    },
+    {
+      "id": "adm.surface.fabric@2.0.0",
+      "operations": ["normal", "surface", "surface", "surface"]
+    }
+  ],
+  "vectors": {
+    "surfaceOverlay": {
+      "mask": 0.5,
+      "strength": 0.5,
+      "baseColor": [0.2, 0.4, 0.6, 0.8],
+      "overlayColor": [0.8, 0.2, 0.1],
+      "textureSrgb": [0.5370987305, 0.7353569831, 1.0],
+      "textureAlpha": 0.4,
+      "baseMetallic": 0.2,
+      "overlayMetallic": 0.8,
+      "baseRoughness": 0.7,
+      "overlayRoughness": 0.9,
+      "expected": {
+        "effectiveMask": 0.25,
+        "baseColor": [0.2, 0.325, 0.475, 0.68],
+        "metallic": 0.35,
+        "roughness": 0.75
+      }
+    },
+    "surfaceOverlayWithoutTexture": {
+      "baseAlpha": 0.8,
+      "textureAlpha": null,
+      "effectiveMask": 0.25,
+      "expectedAlpha": 0.8
+    },
+    "factor": {
+      "current": 0.2,
+      "target": 0.8,
+      "effectiveMask": 0.25,
+      "expected": 0.35
+    },
+    "multiply": {
+      "current": 2.0,
+      "target": 3.0,
+      "effectiveMask": 0.25,
+      "expected": 3.0
+    },
+    "coverage": {
+      "current": 2.0,
+      "effectiveMask": 0.4,
+      "expected": 0.8
+    },
+    "contrast": {
+      "baseColor": [0.2, 0.8, 0.5],
+      "value": 1.5,
+      "effectiveMask": 0.5,
+      "expected": [0.125, 0.875, 0.5]
+    },
+    "normal": {
+      "base": [0.0, 0.0, 1.0],
+      "textureRgb": [1.0, 0.5, 0.5],
+      "effectiveMask": 0.5,
+      "expected": [0.7071067812, 0.0, 0.7071067812]
+    },
+    "layerWeights": {
+      "mask": [0.25, 0.5, 0.75, 1.0],
+      "strength": [0.5, 1.0, 0.5, 0.25],
+      "blendMask": [1.0, 0.5, 1.0, 0.25],
+      "expectedWeights": [
+        0.1538461538,
+        0.3076923077,
+        0.4615384615,
+        0.0769230769
+      ],
+      "layerColors": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0]
+      ],
+      "expectedColor": [0.2307692308, 0.3846153846, 0.5384615384]
+    },
+    "zeroLayerWeights": {
+      "expectedWeights": [1.0, 0.0, 0.0, 0.0]
+    },
+    "color1ThenColor0Wetness": {
+      "color1Color": [0.2, 0.325, 0.475],
+      "wetnessMask": 0.5,
+      "wetnessOffset": 0.25,
+      "expectedWetness": 0.75,
+      "expectedColor": [0.1775, 0.2884375, 0.4215625]
+    }
+  }
+}

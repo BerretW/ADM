@@ -94,7 +94,8 @@ def check(m):
  return id
 
 count=0
-for file in sorted(P.glob('*.adm')):
+for name in ('vehicle_car_minimal', 'weapon_firearm_minimal', 'weapon_magazine_attachment'):
+ file=P/(name+'.adm')
  verify(file)
  m=json.loads(file.with_suffix('.json').read_text());print('PASS PROFILE',file.name,check(m));count+=1
 v=json.loads((P/'vehicle_car_minimal.json').read_text())

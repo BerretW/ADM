@@ -492,7 +492,7 @@ class MaterialExporter:
             out.setdefault("extensions", {})[K.VERTEX_CONTROL_EXT] = vc
             self.extensions_used.add(K.VERTEX_CONTROL_EXT)
             self.extensions_required.add(K.VERTEX_CONTROL_EXT)
-        if mat.adm.shader != "CORE":
+        if mat.adm.shader != "CORE" or mat.adm.shader_version == K.SHADER_PROFILE_V2:
             defaults = {"baseColorFactor": [1.0, 1.0, 1.0, 1.0], "metallicFactor": 1.0,
                         "roughnessFactor": 1.0, "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE"}
             for key, value in defaults.items():
@@ -533,9 +533,10 @@ class MaterialExporter:
                 raise ShaderExportError(f"material '{mat.name}': animationId '{aid}' is used by another material")
             self._animation_ids.add(aid)
             out["animationId"] = aid
-        if a.shader == "CORE":
+        key = a.shader_key()
+        if a.shader == "CORE" and a.shader_version == "1.0.0":
             return
-        if a.shader == "LAYERED":
+        if a.shader == "LAYERED" and a.shader_version == "1.0.0":
             out["shader"] = {"id": K.SHADER_LAYERED[0], "version": K.SHADER_LAYERED[1]}
             if a.layer_factor != 0.0:
                 out["shaderParameters"] = {"layer_factor": _c01(a.layer_factor)}
@@ -547,31 +548,39 @@ class MaterialExporter:
             if a.layers_required:
                 self.extensions_required.add(K.LAYERS_EXT)
             return
-        if a.shader == "CUTOUT":
+        if a.shader == "CUTOUT" and a.shader_version == "1.0.0":
             if a.alpha_mode != "MASK":
                 raise ShaderExportError(
                     f"material '{mat.name}': adm.surface.cutout@1.0.0 requires Alpha Mode MASK")
             out["shader"] = {"id": K.SHADER_CUTOUT[0], "version": K.SHADER_CUTOUT[1]}
             return
-        if a.shader == "EMISSIVE":
+        if a.shader == "CUTOUT" and a.alpha_mode != "MASK":
+            raise ShaderExportError(f"material '{mat.name}': {key[0]}@{key[1]} requires Alpha Mode MASK")
+        if a.shader == "EMISSIVE" and a.shader_version == "1.0.0":
             emission = out.get("emissiveFactor", [0.0, 0.0, 0.0])
             if not any(float(x) > 0.0 for x in emission):
                 raise ShaderExportError(
                     f"material '{mat.name}': adm.surface.emissive@1.0.0 requires nonzero emissive output")
             out["shader"] = {"id": K.SHADER_EMISSIVE[0], "version": K.SHADER_EMISSIVE[1]}
             return
-        if a.shader == "DECAL":
+        if a.shader == "EMISSIVE":
+            emission = out.get("emissiveFactor", [0.0, 0.0, 0.0])
+            if not any(float(x) > 0.0 for x in emission):
+                raise ShaderExportError(
+                    f"material '{mat.name}': {key[0]}@{key[1]} requires nonzero emissive output")
+        if a.shader == "DECAL" and a.shader_version == "1.0.0":
             if a.alpha_mode != "BLEND":
                 raise ShaderExportError(
                     f"material '{mat.name}': adm.surface.decal@1.0.0 requires Alpha Mode BLEND")
             out["shader"] = {"id": K.SHADER_DECAL[0], "version": K.SHADER_DECAL[1]}
             return
-        key = a.shader_key()
-        if key in (K.SHADER_GLASS, K.SHADER_WATER) and a.alpha_mode != "BLEND":
+        if a.shader == "DECAL" and a.alpha_mode != "BLEND":
             raise ShaderExportError(f"material '{mat.name}': {key[0]}@{key[1]} requires Alpha Mode BLEND")
-        if key == K.SHADER_FOLIAGE and (a.alpha_mode != "MASK" or mat.use_backface_culling):
+        if a.shader in ("GLASS", "WATER") and a.alpha_mode != "BLEND":
+            raise ShaderExportError(f"material '{mat.name}': {key[0]}@{key[1]} requires Alpha Mode BLEND")
+        if a.shader == "FOLIAGE" and (a.alpha_mode != "MASK" or mat.use_backface_culling):
             raise ShaderExportError(
-                f"material '{mat.name}': adm.surface.foliage@1.0.0 requires Mask alpha and double-sided rendering")
+                f"material '{mat.name}': {key[0]}@{key[1]} requires Mask alpha and double-sided rendering")
         if key in K.OFFICIAL_SHADERS:
             out["shader"] = {"id": key[0], "version": key[1]}
             defs = {p["name"]: p for p in K.OFFICIAL_SHADERS[key]}
@@ -997,7 +1006,8 @@ def apply_shader(mat, m, scene, resolve_image):
     """Read ADM shader fields of material dict ``m`` into ``mat.adm`` and rebuild the viewport preview."""
     with quiet_param_updates():
         _apply_shader(mat, m, scene, resolve_image)
-    if mat.adm.shader != "CORE" or mat.adm.vertex_controls_enabled:
+    if mat.adm.shader != "CORE" or mat.adm.vertex_controls_enabled \
+            or mat.adm.shader_version == K.SHADER_PROFILE_V2:
         refresh_shader_preview(mat)
 
 
@@ -1006,6 +1016,7 @@ def _apply_shader(mat, m, scene, resolve_image):
     a.animation_id = m.get("animationId", "")
     sh = m.get("shader")
     key = (sh["id"], sh["version"]) if isinstance(sh, dict) else K.SHADER_CORE
+    a.shader_version = key[1]
     sp = m.get("shaderParameters", {}) or {}
     if key == K.SHADER_CORE:
         a.shader = "CORE"
@@ -1713,33 +1724,39 @@ def _build_layered_preview(mat):
 def refresh_shader_preview(mat):
     """Rebuild the viewport preview for the material's selected ADM shader.
 
-    CORE: the material's own Principled BSDF chain (created if missing). LAYERED: deterministic
-    two-layer preview of adm.pbr.layered@1.0.0. CUSTOM: the portable PBR fallback (SHADER_FALLBACK),
-    because custom shader definitions carry no executable rendering code.
+    Version 1 keeps the original fallback and layered preview. Version 2 uses the registered
+    COLOR_1 profile graph; custom shader definitions keep their portable PBR fallback.
     """
     if mat is None or mat.node_tree is None:
         return
     remove_shader_preview(mat)
+    window = bpy.context.window_manager.adm if bpy.context.window_manager else None
+    mask_preview = window is not None and window.vertex_color_preview
     if mat.adm.shader == "CORE":
         convert_to_adm_material(mat)
-        if mat.adm.vertex_controls_enabled:
+        if mat.adm.vertex_controls_enabled or mat.adm.shader_version == K.SHADER_PROFILE_V2 or mask_preview:
             from . import shader_preview
             shader_preview.build(mat)
     elif mat.adm.shader == "LAYERED":
-        out = _build_layered_preview(mat)
-        if mat.adm.vertex_controls_enabled and out is not None:
+        if mat.adm.shader_version == K.SHADER_PROFILE_V2 or mask_preview:
             from . import shader_preview
-            bsdf = _from(out.inputs["Surface"])
-            if bsdf is not None:
-                controlled = shader_preview.apply_vertex_controls(mat, bsdf.node)
-                if controlled != bsdf.node:
-                    for link in list(out.inputs["Surface"].links):
-                        mat.node_tree.links.remove(link)
-                    mat.node_tree.links.new(controlled.outputs.get("Shader") or controlled.outputs["BSDF"],
-                                            out.inputs["Surface"])
+            shader_preview.build(mat)
+        else:
+            out = _build_layered_preview(mat)
+            if mat.adm.vertex_controls_enabled and out is not None:
+                from . import shader_preview
+                bsdf = _from(out.inputs["Surface"])
+                if bsdf is not None:
+                    controlled = shader_preview.apply_vertex_controls(mat, bsdf.node)
+                    if controlled != bsdf.node:
+                        for link in list(out.inputs["Surface"].links):
+                            mat.node_tree.links.remove(link)
+                        mat.node_tree.links.new(controlled.outputs.get("Shader") or controlled.outputs["BSDF"],
+                                                out.inputs["Surface"])
     else:
         from . import shader_preview
-        if mat.adm.shader in shader_preview.BUILDERS or mat.adm.vertex_controls_enabled:
+        if mat.adm.shader in shader_preview.BUILDERS or mat.adm.vertex_controls_enabled \
+                or mat.adm.shader_version == K.SHADER_PROFILE_V2 or mask_preview:
             convert_to_adm_material(mat)
             shader_preview.build(mat)
 

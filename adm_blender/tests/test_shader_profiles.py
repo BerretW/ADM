@@ -23,7 +23,7 @@ def main(tmp):
     adm_blender.register()
     from adm_blender.core import constants as K
     from adm_blender.blender import materials as M
-    from adm_blender.blender.export_adm import ExportOptions, ModelExporter
+    from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
 
     bpy.ops.wm.read_homefile(use_empty=True)
@@ -37,6 +37,7 @@ def main(tmp):
 
     for key, kind in K.OFFICIAL_SHADER_KINDS.items():
         mat.adm.shader = kind
+        mat.adm.shader_version = key[1]
         if kind == "INTERACTIVE":
             bpy.context.view_layer.objects.active = cube
             cube.select_set(True)
@@ -65,21 +66,43 @@ def main(tmp):
             stream.write(data)
         ModelImporter(bpy.context, path, ImportOptions()).run()
         imported = next((candidate for candidate in bpy.data.materials
-                         if candidate != mat and candidate.adm.shader == kind), None)
+                         if candidate != mat and candidate.adm.shader_key() == key), None)
         check(imported is not None, f"{kind}: import restores profile")
-        if imported is not None and kind == "LAYERED":
+        if imported is not None and key == K.SHADER_LAYERED:
             check(abs(imported.adm.layer_factor) < 1e-6, "LAYERED: layer factor restored")
         elif imported is not None and key in K.OFFICIAL_SHADERS:
             expected_params = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             actual_params = {p.name for p in imported.adm.params}
             check(actual_params == expected_params, f"{kind}: typed parameter schema restored")
-        if kind not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
+        if key[1] == K.SHADER_PROFILE_V2 or kind not in (
+                "CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
             check(not any("portable PBR fallback" in warning for warning in exporter.warnings),
                   f"{kind}: has a profile preview, no fallback warning")
-            if imported is not None and kind != "INTERACTIVE":
+            if imported is not None and (key[1] == K.SHADER_PROFILE_V2 or kind != "INTERACTIVE"):
                 out = next((n for n in imported.node_tree.nodes
                             if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
                 check(out is not None and M.is_preview_node(out), f"{kind}: imported material shows profile preview")
+
+    mat.adm.shader = "CORE"
+    mat.adm.shader_version = K.SHADER_PROFILE_V2
+    color1 = cube.data.color_attributes.get("COLOR_1")
+    if color1 is None:
+        color1 = cube.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+    color1.data.foreach_set("color", [0.25, 0.5, 0.75, 1.0] * len(color1.data))
+    try:
+        ModelExporter(bpy.context, root, ExportOptions(vertex_controls=False)).export()
+        check(False, "v2 COLOR_1 export rejects disabled ADM Vertex Controls")
+    except ExportError as exc:
+        check("COLOR_1 masks" in str(exc) and "export option" in str(exc),
+              "v2 COLOR_1 export reports the required ADM Vertex Controls option")
+    data, report = ModelExporter(
+        bpy.context, root, ExportOptions(vertex_controls=True)
+    ).export()
+    check(report.ok, "v2 COLOR_1 export validates with ADM Vertex Controls enabled")
+    check("ADM_vertex_control_v1" in report.doc.get("extensionsRequired", []),
+          "v2 COLOR_1 export requires the vertex-control extension")
+    attrs = report.doc["meshes"][0]["primitives"][0]["attributes"]
+    check("COLOR_1" in attrs, "v2 COLOR_1 export includes the authored mask attribute")
 
     adm_blender.unregister()
 

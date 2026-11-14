@@ -367,7 +367,17 @@ def main(tmp):
                                     (ExportOptions(vertex_controls=True, export_colors=False),
                                      "Vertex Colors are disabled")):
         changed_exporter = ModelExporter(bpy.context, root, changed_options)
-        changed_exporter.export()
+        try:
+            changed_exporter.export()
+        except ExportError as exc:
+            if exc.report is not None:
+                print(f"Unexpected validation errors for {changed_options.__dict__}: {exc.report.format()}")
+            raise
+        if not changed_options.vertex_controls:
+            check(not any("COLOR_1" in primitive["attributes"]
+                          for mesh in changed_exporter.doc["meshes"]
+                          for primitive in mesh["primitives"]),
+                  "disabled vertex controls omit COLOR_1")
         check(any(phrase in warning for warning in changed_exporter.warnings),
               f"warn before omitting interactive controls: {phrase}")
 

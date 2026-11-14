@@ -103,6 +103,8 @@ SHADER_ROCK = ("adm.nature.rock", "1.0.0")
 SHADER_WATER = ("adm.nature.water", "1.0.0")
 SHADER_FABRIC = ("adm.surface.fabric", "1.0.0")
 SHADER_INTERACTIVE = ("adm.surface.interactive", "1.0.0")
+SHADER_PROFILE_V2 = "2.0.0"
+SHADER_MASK_CHANNELS = ("R", "G", "B", "A")
 LAYERS_EXT = "ADM_material_layers_v1"
 VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
 TINT_PALETTE_MAX_HEIGHT = 5
@@ -325,6 +327,213 @@ OFFICIAL_SHADERS = {
 # TEXTURE parameters that carry sRGB-encoded albedo; every other TEXTURE parameter is linear data.
 SHADER_COLOR_TEXTURES = frozenset({"detail_texture", "layer0_texture", "layer1_texture", "layer2_texture",
                                    "layer3_texture"})
+
+COLOR1_CONTRACTS = {
+    "CORE": (
+        {"label": "Detail blend", "op": "surface", "color": [0.72, 0.72, 0.72], "roughness": 0.6},
+        {"label": "Dirt mask", "op": "surface", "color": [0.18, 0.14, 0.1], "roughness": 0.95},
+        {"label": "Edge wear", "op": "surface", "color": [0.82, 0.82, 0.82], "roughness": 0.3},
+        {"label": "Clearcoat", "op": "factor", "target": "Coat Weight", "value": 0.5},
+    ),
+    "LAYERED": tuple({"label": f"Layer {i + 1}", "op": "layer", "index": i} for i in range(4)),
+    "CUTOUT": (
+        {"label": "Cutout variation", "op": "factor", "target": "Alpha", "value": 0.0},
+        {"label": "Edge fade", "op": "factor", "target": "Alpha", "value": 1.0},
+        {"label": "Detail mask", "op": "surface", "color": [0.8, 0.8, 0.8], "roughness": 0.7},
+        {"label": "Damage", "op": "surface", "color": [0.28, 0.22, 0.18], "roughness": 0.9},
+    ),
+    "EMISSIVE": (
+        {"label": "Emission intensity", "op": "factor", "target": "Emission Strength", "value": 1.0},
+        {"label": "Color blend", "op": "color", "target": "Emission Color", "color": [1.0, 0.8, 0.55]},
+        {"label": "Flicker influence", "op": "multiply", "target": "Emission Strength", "value": 0.0,
+         "animatable": True},
+        {"label": "Emissive coverage", "op": "coverage", "target": "Emission Strength"},
+    ),
+    "DECAL": (
+        {"label": "Opacity", "op": "factor", "target": "Alpha", "value": 0.0},
+        {"label": "Dirt blend", "op": "surface", "color": [0.18, 0.14, 0.1], "roughness": 0.95},
+        {"label": "Wear", "op": "surface", "color": [0.8, 0.8, 0.8], "roughness": 0.3},
+        {"label": "Detail blend", "op": "surface", "color": [0.72, 0.72, 0.72], "roughness": 0.6},
+    ),
+    "GLASS": (
+        {"label": "Local opacity", "op": "factor", "target": "Alpha", "value": 0.5},
+        {"label": "Frosting", "op": "factor", "target": "Roughness", "value": 0.65},
+        {"label": "Dirt", "op": "surface", "color": [0.2, 0.18, 0.14], "roughness": 0.9},
+        {"label": "Tint variation", "op": "color", "target": "Base Color", "color": [0.7, 0.85, 1.0]},
+    ),
+    "FOLIAGE": (
+        {"label": "Translucency", "op": "factor", "target": "Subsurface Weight", "value": 0.35},
+        {"label": "Color variation", "op": "surface", "color": [0.38, 0.62, 0.2], "roughness": 0.75},
+        {"label": "Dryness", "op": "factor", "target": "Roughness", "value": 0.95},
+        {"label": "Detail mask", "op": "surface", "color": [0.72, 0.72, 0.72], "roughness": 0.6},
+    ),
+    "TERRAIN_4": tuple({"label": f"Layer {i + 1}", "op": "layer", "index": i} for i in range(4)),
+    "VEHICLE_PAINT": (
+        {"label": "Metallic flakes", "op": "factor", "target": "Metallic", "value": 0.8},
+        {"label": "Dirt", "op": "surface", "color": [0.16, 0.13, 0.1], "roughness": 0.95},
+        {"label": "Scratches", "op": "surface", "color": [0.75, 0.75, 0.75], "roughness": 0.35},
+        {"label": "Clearcoat", "op": "factor", "target": "Coat Weight", "value": 0.8},
+    ),
+    "SKIN": (
+        {"label": "Subsurface", "op": "factor", "target": "Subsurface Weight", "value": 0.35},
+        {"label": "Detail normals", "op": "normal"},
+        {"label": "Roughness variation", "op": "factor", "target": "Roughness", "value": 0.55},
+        {"label": "Scar/detail", "op": "surface", "color": [0.35, 0.08, 0.06], "roughness": 0.8},
+    ),
+    "FUR": (
+        {"label": "Fur density", "op": "factor", "target": "Anisotropic", "value": 0.7},
+        {"label": "Color variation", "op": "surface", "color": [0.65, 0.48, 0.32], "roughness": 0.55},
+        {"label": "Roughness variation", "op": "factor", "target": "Roughness", "value": 0.75},
+        {"label": "Detail", "op": "normal"},
+    ),
+    "FEATHER": (
+        {"label": "Color variation", "op": "surface", "color": [0.4, 0.55, 0.8], "roughness": 0.55},
+        {"label": "Iridescence", "op": "color", "target": "Emission Color", "color": [0.25, 0.35, 0.7]},
+        {"label": "Detail", "op": "normal"},
+        {"label": "Wear", "op": "factor", "target": "Roughness", "value": 0.9},
+    ),
+    "SCALES": (
+        {"label": "Scale contrast", "op": "contrast", "value": 1.8},
+        {"label": "Reflectivity variation", "op": "factor", "target": "Specular IOR Level", "value": 0.8},
+        {"label": "Roughness variation", "op": "factor", "target": "Roughness", "value": 0.65},
+        {"label": "Detail", "op": "surface", "color": [0.72, 0.72, 0.72], "roughness": 0.6},
+    ),
+    "CONCRETE": (
+        {"label": "Dirt", "op": "surface", "color": [0.2, 0.17, 0.13], "roughness": 0.95},
+        {"label": "Damage", "op": "surface", "color": [0.45, 0.38, 0.3], "roughness": 0.9},
+        {"label": "Moisture stains", "op": "surface", "color": [0.16, 0.17, 0.18], "roughness": 0.28},
+        {"label": "Secondary texture", "op": "surface", "color": [1.0, 1.0, 1.0], "roughness": 0.8},
+    ),
+    "BRICK": (
+        {"label": "Mortar variation", "op": "surface", "color": [0.58, 0.54, 0.48], "roughness": 0.9},
+        {"label": "Dirt", "op": "surface", "color": [0.18, 0.14, 0.1], "roughness": 0.95},
+        {"label": "Wear", "op": "surface", "color": [0.78, 0.74, 0.68], "roughness": 0.55},
+        {"label": "Moss", "op": "surface", "color": [0.08, 0.2, 0.04], "roughness": 0.95},
+    ),
+    "ROOF": (
+        {"label": "Dirt", "op": "surface", "color": [0.18, 0.14, 0.1], "roughness": 0.95},
+        {"label": "Wear", "op": "surface", "color": [0.78, 0.74, 0.68], "roughness": 0.55},
+        {"label": "Moss", "op": "surface", "color": [0.08, 0.2, 0.04], "roughness": 0.95},
+        {"label": "Secondary texture", "op": "surface", "color": [1.0, 1.0, 1.0], "roughness": 0.8},
+    ),
+    "BARK": (
+        {"label": "Moss", "op": "surface", "color": [0.08, 0.2, 0.04], "roughness": 0.95},
+        {"label": "Cracks/detail", "op": "normal"},
+        {"label": "Color variation", "op": "surface", "color": [0.4, 0.26, 0.12], "roughness": 0.8},
+        {"label": "Secondary texture", "op": "surface", "color": [1.0, 1.0, 1.0], "roughness": 0.8},
+    ),
+    "ROCK": (
+        {"label": "Moss", "op": "surface", "color": [0.08, 0.2, 0.04], "roughness": 0.95},
+        {"label": "Dirt", "op": "surface", "color": [0.2, 0.16, 0.12], "roughness": 0.95},
+        {"label": "Snow", "op": "surface", "color": [0.92, 0.95, 1.0], "roughness": 0.75},
+        {"label": "Secondary texture", "op": "surface", "color": [1.0, 1.0, 1.0], "roughness": 0.8},
+    ),
+    "WATER": (
+        {"label": "Foam", "op": "surface", "color": [0.9, 0.95, 1.0], "roughness": 0.85},
+        {"label": "Depth tint influence", "op": "color", "target": "Base Color", "color": [0.02, 0.12, 0.24]},
+        {"label": "Surface variation", "op": "factor", "target": "Roughness", "value": 0.3},
+        {"label": "Shoreline", "op": "factor", "target": "Alpha", "value": 0.25},
+    ),
+    "FABRIC": (
+        {"label": "Fiber detail", "op": "normal"},
+        {"label": "Dirt", "op": "surface", "color": [0.2, 0.16, 0.12], "roughness": 0.95},
+        {"label": "Wear", "op": "surface", "color": [0.78, 0.74, 0.68], "roughness": 0.6},
+        {"label": "Secondary texture", "op": "surface", "color": [1.0, 1.0, 1.0], "roughness": 0.8},
+    ),
+}
+
+for _key, _kind in tuple(OFFICIAL_SHADER_KINDS.items()):
+    if _kind == "INTERACTIVE":
+        continue
+    _v2_key = (_key[0], SHADER_PROFILE_V2)
+    _params = list(OFFICIAL_SHADERS[_key])
+    if _kind == "LAYERED":
+        _params = [
+            *[
+                _texture_param(f"layer{i}_texture", f"Albedo texture for PBR layer {i + 1}.")
+                for i in range(4)
+            ],
+            *[
+                _shader_param(f"layer{i}_base_color", "VEC4", [1.0, 1.0, 1.0, 1.0],
+                              f"Linear base color factor for layer {i + 1}.",
+                              [0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0])
+                for i in range(4)
+            ],
+            *[
+                _shader_param(f"layer{i}_metallic", "F32", 0.0,
+                              f"Metallic factor for layer {i + 1}.", 0.0, 1.0)
+                for i in range(4)
+            ],
+            *[
+                _shader_param(f"layer{i}_roughness", "F32", 0.8,
+                              f"Roughness factor for layer {i + 1}.", 0.0, 1.0)
+                for i in range(4)
+            ],
+            *[
+                _shader_param(f"layer{i}_emissive", "VEC3", [0.0, 0.0, 0.0],
+                              f"Linear emissive factor for layer {i + 1}.",
+                              [0.0, 0.0, 0.0], None)
+                for i in range(4)
+            ],
+            *[
+                _shader_param(f"layer{i}_normal", "TEXTURE", None,
+                              f"Optional tangent-space normal map for layer {i + 1}.")
+                for i in range(4)
+            ],
+            _shader_param("uv_scale", "VEC4", [1.0, 1.0, 1.0, 1.0], "Per-layer UV tiling multiplier.",
+                          [0.001, 0.001, 0.001, 0.001], [1000.0, 1000.0, 1000.0, 1000.0]),
+        ]
+    for _i, _effect in enumerate(COLOR1_CONTRACTS[_kind]):
+        _channel = SHADER_MASK_CHANNELS[_i]
+        _params.append(_shader_param(
+            f"color1_{_channel.lower()}_strength", "F32", 1.0,
+            f"Strength for the COLOR_1.{_channel} mask ({_effect['label']}).", 0.0, 1.0))
+        if _effect["op"] == "surface":
+            _params.extend([
+                _shader_param(f"color1_{_channel.lower()}_color", "VEC3", _effect["color"],
+                              f"Linear overlay color for COLOR_1.{_channel} ({_effect['label']}).",
+                              [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+                _shader_param(f"color1_{_channel.lower()}_metallic", "F32",
+                              _effect.get("metallic", 0.0),
+                              f"Overlay metallic factor for COLOR_1.{_channel}.", 0.0, 1.0),
+                _shader_param(f"color1_{_channel.lower()}_roughness", "F32", _effect["roughness"],
+                              f"Overlay roughness for COLOR_1.{_channel}.", 0.0, 1.0),
+                _texture_param(f"color1_{_channel.lower()}_texture",
+                               f"Optional sRGB albedo overlay for COLOR_1.{_channel}."),
+                _texture_param(f"color1_{_channel.lower()}_normal",
+                               f"Optional linear tangent-space normal overlay for COLOR_1.{_channel}."),
+            ])
+        elif _effect["op"] in ("factor", "multiply", "contrast"):
+            maximum = 4.0 if _effect["op"] in ("multiply", "contrast") \
+                or _effect.get("target") == "Emission Strength" else 1.0
+            _params.append(_shader_param(
+                f"color1_{_channel.lower()}_value", "F32", _effect["value"],
+                f"Target value for COLOR_1.{_channel} ({_effect['label']}).",
+                0.0, maximum, _effect.get("animatable", False)))
+        elif _effect["op"] == "color":
+            _params.append(_shader_param(
+                f"color1_{_channel.lower()}_color", "VEC3", _effect["color"],
+                f"Linear target color for COLOR_1.{_channel} ({_effect['label']}).",
+                [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]))
+        elif _effect["op"] == "normal":
+            _params.append(_texture_param(
+                f"color1_{_channel.lower()}_normal",
+                f"Optional linear tangent-space normal detail for COLOR_1.{_channel}."))
+    OFFICIAL_SHADERS[_v2_key] = _params
+    OFFICIAL_SHADER_KINDS[_v2_key] = _kind
+
+OFFICIAL_SHADER_IDS = {kind: key[0] for key, kind in OFFICIAL_SHADER_KINDS.items()}
+OFFICIAL_SHADER_V2_KEYS = {
+    kind: (shader_id, SHADER_PROFILE_V2) for kind, shader_id in OFFICIAL_SHADER_IDS.items()
+    if kind != "INTERACTIVE"
+}
+SHADER_COLOR_TEXTURES = frozenset(
+    set(SHADER_COLOR_TEXTURES) | {
+        p["name"] for key, params in OFFICIAL_SHADERS.items() if key[1] == SHADER_PROFILE_V2
+        for p in params if p["type"] == "TEXTURE" and p["name"].endswith("_texture")
+    }
+)
+
 # pbrParameter animation targets: name -> (accessor type, minimum, maximum)
 PBR_PARAMETERS = {
     "baseColorFactor": ("VEC4", 0.0, 1.0),

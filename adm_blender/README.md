@@ -71,8 +71,13 @@ the actual Blender color attributes, not a separate color system.
   Control attributes use **FLOAT_COLOR / CORNER**: existing POINT or BYTE_COLOR controls are
   converted with their linear values preserved. Unrelated color attributes are left alone.
 - **Reset Defaults** writes `COLOR_0=(0,1,1,0)` and `COLOR_1=(0,0,0,0)`. These mean tint entry 0,
-  full normal strength, full base reflectivity and a dry surface. `COLOR_1` is reserved and has no
-  shading effect for current official profiles, including Interactive Surface.
+  full normal strength, full base reflectivity and a dry surface. Zero `COLOR_1` disables every
+  `2.0.0` mask; `COLOR_1` remains reserved with no effect for `1.0.0` profiles and Interactive Surface.
+- Select **Profile Version 2.0.0 (COLOR_1)** on an official shader to activate its four registered
+  channel effects. In an ADM Model Root, **Initialize Shader Masks** creates a missing `COLOR_1`
+  without overwriting authored values. The panel names each channel, supports Fill/Clear/Invert and
+  channel painting, and **Preview Mask** displays the selected layer/channel directly. Per-channel
+  strengths and the profile's other mask parameters are edited in the material's shader parameters.
 - Choose **All Faces**, **Selected Faces** or **This Material Faces** (every face using the active
   material, regardless of selection), then edit one R/G/B/A channel or all four and click
   **Apply Channels**. Edit Mode uses its live face selection without switching modes. A single-channel
@@ -88,8 +93,10 @@ the actual Blender color attributes, not a separate color system.
 - With **ADM Vertex Controls** enabled for export, both layers are serialized, using their exact
   standard defaults if missing on the evaluated mesh; exporting never modifies the source mesh.
   Import preserves explicit values and initializes omitted optional controls to their standard defaults.
-  The export dialog preselects vertex controls when its scope contains enabled materials unless an
-  explicit setting/preset overrides it. Scripted exports must pass `vertex_controls=True`.
+  The export dialog preselects vertex controls when its scope contains enabled materials or a
+  `COLOR_1` attribute unless an explicit setting/preset overrides it. Exporting an authored v2
+  `COLOR_1` with that option disabled is rejected rather than silently dropping or reinterpreting it.
+  Scripted exports must pass `vertex_controls=True` to include the masks.
 
 ### ADM Skeleton & Animation panel
 
@@ -188,7 +195,8 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   top row of the 1–5 px high tint palette, and previews tint/normal/wetness. Dielectric and metallic F0 are represented
   by separate Principled lobes mixed at the material metallic factor; the effective dielectric F0 is
   encoded as IOR and metallic F0 as the lobe base color. Cycles tests bake both node outputs.
-  `COLOR_1` is reserved for all Core 20 profiles: its values are preserved but do not affect shading.
+  Core 20 `1.0.0` profiles preserve but ignore `COLOR_1`; their compatible `2.0.0` versions use the
+  registered shader-specific mask effects described above.
 
 ### Interactive display surfaces
 
@@ -265,8 +273,8 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
 - `ADM_vertex_control_v1` can serialize `COLOR_0`/`COLOR_1`, palette references and material control
   values. Enable **Enable Vertex Controls** on a material to preview and animate the four universal
   controls. The export option must also enable **Vertex Controls** for the model. Tint, normal strength,
-  wetness color, roughness and dielectric/metallic F0 are previewed; `COLOR_1` is reserved and
-  transport-only for Core 20 profiles.
+  wetness color, roughness and dielectric/metallic F0 are previewed. Core 20 `1.0.0` profiles keep
+  `COLOR_1` reserved; the additive `2.0.0` profiles apply the registered `COLOR_1` masks.
   The F0 preview has Blender bake coverage but no independent renderer interoperability test. See
   `adm-standard/SPEC_GAPS.md`.
 - Image export (the **Images** option in File > Export > ADM):

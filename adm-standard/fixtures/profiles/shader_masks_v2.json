@@ -1,0 +1,117 @@
+{
+  "asset": {
+    "generator": "ADM shader masks v2 conformance fixture"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "ShaderMasksV2",
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "COLOR_0": 2,
+            "COLOR_1": 3
+          },
+          "indices": 1,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "bufferViews": [
+    {
+      "byteOffset": 0,
+      "byteLength": 60,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 60,
+      "byteLength": 12,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 72,
+      "byteLength": 80,
+      "chunkId": 1
+    },
+    {
+      "byteOffset": 152,
+      "byteLength": 80,
+      "chunkId": 1
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": "F32",
+      "type": "VEC3",
+      "count": 5
+    },
+    {
+      "bufferView": 1,
+      "componentType": "U16",
+      "type": "SCALAR",
+      "count": 6
+    },
+    {
+      "bufferView": 2,
+      "componentType": "F32",
+      "type": "VEC4",
+      "count": 5
+    },
+    {
+      "bufferView": 3,
+      "componentType": "F32",
+      "type": "VEC4",
+      "count": 5
+    }
+  ],
+  "materials": [
+    {
+      "name": "COLOR_1 v2 fixture",
+      "shader": {
+        "id": "adm.pbr.metallic_roughness",
+        "version": "2.0.0"
+      },
+      "shaderParameters": {
+        "color1_r_strength": 1.0,
+        "color1_g_strength": 1.0,
+        "color1_b_strength": 1.0,
+        "color1_a_strength": 1.0
+      },
+      "baseColorFactor": [
+        0.2,
+        0.4,
+        0.6,
+        1.0
+      ],
+      "metallicFactor": 0.2,
+      "roughnessFactor": 0.7,
+      "emissiveFactor": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "alphaMode": "OPAQUE"
+    }
+  ],
+  "extensionsUsed": [
+    "ADM_vertex_control_v1"
+  ],
+  "extensionsRequired": [
+    "ADM_vertex_control_v1"
+  ]
+}

@@ -13,15 +13,18 @@ from adm_blender.core.validate import param_value_error
 registry_path = root / "adm-standard" / "shaders" / "registry.json"
 registry = json.loads(registry_path.read_text(encoding="utf-8"))
 entries = registry["shaders"]
-assert registry["registryVersion"] == "1.0.0"
-assert len(entries) == 21
+assert registry["registryVersion"] == "1.1.0"
+assert len(entries) == 41
 assert len(entries) == len({(entry["id"], entry["version"]) for entry in entries})
 assert all(re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", entry["id"]) for entry in entries)
-assert all(entry["version"] == "1.0.0" for entry in entries)
+assert sum(entry["version"] == "1.0.0" for entry in entries) == 21
+assert sum(entry["version"] == K.SHADER_PROFILE_V2 for entry in entries) == 20
 assert {(entry["id"], entry["version"]) for entry in entries} == set(K.OFFICIAL_SHADERS)
 assert { (entry["id"], entry["version"]): entry["parameters"] for entry in entries } == K.OFFICIAL_SHADERS
 assert set(K.OFFICIAL_SHADER_KINDS) == set(K.OFFICIAL_SHADERS)
-assert set(K.OFFICIAL_SHADER_KEYS.values()) == set(K.OFFICIAL_SHADER_KINDS)
+assert set(K.OFFICIAL_SHADER_KEYS.values()) == {
+    key for key in K.OFFICIAL_SHADER_KINDS if key[1] == "1.0.0"
+}
 for entry in entries:
     relative_path = entry["contract"].split("#", 1)[0]
     contract = (root / "adm-standard" / "shaders" / relative_path).resolve()

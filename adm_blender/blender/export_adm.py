@@ -25,7 +25,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.17.0 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.18.0 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -501,11 +501,26 @@ class ModelExporter:
                 ca = me.color_attributes.get("COLOR_0")
                 ca1 = me.color_attributes.get("COLOR_1")
             else:
-                ca = me.color_attributes.get(obj.data.color_attributes.active_color_name) \
-                    if obj.type == "MESH" and obj.data.color_attributes.active_color_name else None
-                if ca is None and me.color_attributes.active_color is not None:
-                    ca = me.color_attributes.active_color
+                ca1 = me.color_attributes.get("COLOR_1")
+                if ca1 is not None:
+                    v2_materials = [
+                        slot.material for slot in obj.material_slots if slot.material is not None
+                        and slot.material.adm.shader_version == K.SHADER_PROFILE_V2
+                    ]
+                    if v2_materials:
+                        names = ", ".join(sorted({material.name for material in v2_materials}))
+                        raise ExportError(
+                            f"'{obj.name}': COLOR_1 masks for {names} require the ADM Vertex Controls "
+                            "export option")
+                    self.warn(f"'{obj.name}': COLOR_1 was not exported because ADM Vertex Controls "
+                              "are disabled")
                 ca1 = None
+                active_name = obj.data.color_attributes.active_color_name if obj.type == "MESH" else ""
+                ca = me.color_attributes.get(active_name) if active_name != "COLOR_1" else None
+                if ca is None and me.color_attributes.active_color is not None:
+                    active = me.color_attributes.active_color
+                    if active.name != "COLOR_1":
+                        ca = active
             if ca is not None:
                 n = nverts if ca.domain == "POINT" else nloops
                 col = _np_get(ca.data, "color", n, 4).astype(np.float64)
