@@ -21,7 +21,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, REPO)
 
 import bpy  # noqa: E402
-from mathutils import Euler, Quaternion, Vector  # noqa: E402
+from mathutils import Euler, Matrix, Quaternion, Vector  # noqa: E402
 
 import adm_blender  # noqa: E402
 from adm_blender.core import constants as K  # noqa: E402
@@ -176,10 +176,25 @@ def main(tmp):
     from adm_blender.blender.import_anim import AnimImportOptions, check_library_compat, import_library
     from adm_blender.blender.operators import ensure_role_names
     from adm_blender.core import ik as IK
+    from adm_blender.core.mathutil import IDENTITY, mat_mul, node_local_matrix
     from adm_blender.core import skeleton as SK
     from adm_blender.core import skeleton_profiles as SP
     from adm_blender.core.buffers import read_accessor_np
     from adm_blender.core.validate import validate_file
+
+    def node_world_matrix(doc, index):
+        parents = [None] * len(doc["nodes"])
+        for parent, node in enumerate(doc["nodes"]):
+            for child in node.get("children", []):
+                parents[child] = parent
+        chain = []
+        while index is not None:
+            chain.append(node_local_matrix(doc["nodes"][index]))
+            index = parents[index]
+        result = list(IDENTITY)
+        for local in reversed(chain):
+            result = mat_mul(result, local)
+        return result
 
     bpy.ops.wm.read_homefile(use_empty=True)
     ensure_role_names()
@@ -211,6 +226,11 @@ def main(tmp):
 
     check(bpy.ops.adm.normalize_corrections() == {"FINISHED"}, "normalize_corrections")
     check(not R.correction_issues(armA), "corrections normalized")
+    correction_bone = armA.data.bones["LeftHand"]
+    correction = tuple(correction_bone.adm.reference_correction)
+    correction_bone.adm.reference_correction = tuple(-v for v in correction)
+    check(not R.correction_issues(armA), "correction quaternion sign is equivalent")
+    correction_bone.adm.reference_correction = correction
     bpy.ops.object.mode_set(mode="OBJECT")
     check(bpy.ops.adm.skin_fix() == {"FINISHED"}, "skin_fix")
     check(not codes(R.skin_issues(armA)) & {"SKIN_INFLUENCES", "SKIN_NOT_NORMALIZED"}, "skin fixed")
@@ -377,6 +397,9 @@ def main(tmp):
             ok = (o.matrix_world.translation - head).length < 1e-6 and \
                 ang_deg(o.matrix_world.to_quaternion(), rootA.matrix_world.to_quaternion()) < 1e-3
         check(ok, f"socket {t['name']} on {t['role']}")
+    authored_socket = socks["back.backpack"]
+    authored_socket.matrix_world = Matrix.Translation(Vector((0.04, 0.03, -0.02))) @ authored_socket.matrix_world
+    bpy.context.view_layer.update()
 
     # ------------------------------------------------------------------ export -> import
     print("== skeleton export")
@@ -386,9 +409,36 @@ def main(tmp):
     doc = rep.doc
     prof = doc["skeletonProfiles"][0]
     check(prof["id"] == "humanoid.vrm1" and prof["referencePose"] == "T", "profile + reference pose declared")
+    check(doc["extensions"][K.HUMANOID_SOCKETS_EXT] == {"version": K.HUMANOID_SOCKETS_VERSION}
+          and K.HUMANOID_SOCKETS_EXT in doc["extensionsRequired"],
+          "humanoid socket capability declared and required")
     node_name = {i: n.get("name") for i, n in enumerate(doc["nodes"])}
     check({node_name[i]: r for r, i in prof["roles"].items()} == rolesA, "roles exported by node")
     check(set(prof.get("referenceCorrection", {})) == set(rolesA.values()), "normalized corrections exported")
+
+    print("== serialized rest corrections")
+    scaled_arm, scaled_roles = build_humanoid("ScaledRest", helper=False)
+    scaled_arm.data.adm.profile = SP.HUMANOID
+    scaled_arm.data.adm.export_profile = True
+    for bone_name, role in scaled_roles.items():
+        scaled_arm.data.bones[bone_name].adm.role = role
+    scaled_arm.scale = (1.0, 1.15, 0.85)
+    scaled_body = add_body(scaled_arm, "")
+    select(scaled_arm, scaled_body, active=scaled_arm)
+    R.apply_normalized_corrections(scaled_arm)
+    check(not R.correction_issues(scaled_arm), "scaled rig corrections match serialized local rotations")
+    try:
+        scaled_data, scaled_report = ModelExporter(
+            bpy.context, None, ExportOptions(selected_only=True)).export()
+        check(scaled_report.ok, "scaled humanoid exports with valid serialized corrections")
+    except ExportError as exc:
+        check(False, f"scaled humanoid export: {exc}")
+    scaled_arm_data = scaled_arm.data
+    bpy.data.objects.remove(scaled_body, do_unlink=True)
+    bpy.data.objects.remove(scaled_arm, do_unlink=True)
+    if scaled_arm_data.users == 0:
+        bpy.data.armatures.remove(scaled_arm_data)
+
     missing_correction = deepcopy(doc)
     missing_role = next(iter(missing_correction["skeletonProfiles"][0]["referenceCorrection"]))
     del missing_correction["skeletonProfiles"][0]["referenceCorrection"][missing_role]
@@ -407,6 +457,47 @@ def main(tmp):
     hand_node = prof["roles"]["leftHand"]
     check("hand.left" in att and att["hand.left"] in doc["nodes"][hand_node].get("children", []),
           "hand.left socket is a child of the leftHand joint")
+    check(SP.HUMANOID_SOCKET_NAMES <= set(att), "all registered humanoid equipment sockets exported")
+    missing_socket_ext = deepcopy(doc)
+    missing_socket_ext["extensions"].pop(K.HUMANOID_SOCKETS_EXT)
+    socket_ext_report = validate_adm(write_container(K.ADM_MAGIC, missing_socket_ext, rep.bin))
+    check("HUMANOID_SOCKET_EXTENSION" in {e.code for e in socket_ext_report.errors},
+          "standard socket without extension is rejected")
+    optional_socket_ext = deepcopy(doc)
+    optional_socket_ext["extensionsRequired"].remove(K.HUMANOID_SOCKETS_EXT)
+    optional_report = validate_adm(write_container(K.ADM_MAGIC, optional_socket_ext, rep.bin))
+    check("HUMANOID_SOCKET_REQUIRED" in {e.code for e in optional_report.errors},
+          "humanoid socket capability cannot be optional")
+    empty_socket_ext = deepcopy(doc)
+    empty_socket_ext["attachments"] = [a for a in empty_socket_ext["attachments"]
+                                       if a["name"] not in SP.HUMANOID_SOCKET_NAMES]
+    empty_report = validate_adm(write_container(K.ADM_MAGIC, empty_socket_ext, rep.bin))
+    check("HUMANOID_SOCKET_EMPTY" in {e.code for e in empty_report.errors},
+          "socket capability without a registered attachment is rejected")
+    bad_socket_parent = deepcopy(doc)
+    next(a for a in bad_socket_parent["attachments"] if a["name"] == "hand.right.grip")["node"] = \
+        prof["roles"]["leftHand"]
+    parent_report = validate_adm(write_container(K.ADM_MAGIC, bad_socket_parent, rep.bin))
+    check("HUMANOID_SOCKET_PARENT" in {e.code for e in parent_report.errors},
+          "socket on the wrong role is rejected")
+    bad_socket_fallback = deepcopy(doc)
+    next(a for a in bad_socket_fallback["attachments"] if a["name"] == "back.backpack")["node"] = \
+        prof["roles"]["spine"]
+    fallback_report = validate_adm(write_container(K.ADM_MAGIC, bad_socket_fallback, rep.bin))
+    check("HUMANOID_SOCKET_PARENT" in {e.code for e in fallback_report.errors},
+          "lower-priority fallback is rejected when the primary role is mapped")
+    bad_socket_version = deepcopy(doc)
+    bad_socket_version["extensions"][K.HUMANOID_SOCKETS_EXT]["version"] = "2.0.0"
+    version_report = validate_adm(write_container(K.ADM_MAGIC, bad_socket_version, rep.bin))
+    check("HUMANOID_SOCKET_VERSION" in {e.code for e in version_report.errors},
+          "unknown socket extension version is rejected")
+    bad_socket_frame = deepcopy(doc)
+    socket_node = att["back.backpack"]
+    bad_socket_frame["nodes"][socket_node].pop("matrix", None)
+    bad_socket_frame["nodes"][socket_node]["rotation"] = [0.0, 0.0, 0.70710678, 0.70710678]
+    frame_report = validate_adm(write_container(K.ADM_MAGIC, bad_socket_frame, rep.bin))
+    check("HUMANOID_SOCKET_FRAME" in {e.code for e in frame_report.errors},
+          "noncanonical socket frame is rejected")
     skin = doc["skins"][prof["skin"]]
     ibm0 = read_accessor_np(doc, rep.bin, skin["inverseBindMatrices"])
     joints0 = [node_name[j] for j in skin["joints"]]
@@ -597,10 +688,20 @@ def main(tmp):
         for g in set(w) | set(w1[p2]):
             wdev = max(wdev, abs(w.get(g, 0.0) - w1[p2].get(g, 0.0)))
     check(missing == 0 and wdev < 2e-3, f"skin weights preserved (missing {missing}, max dev {wdev:.1e})")
-    socks2 = {o.adm.attachment_name: o.parent_bone for o in bpy.data.objects if o.adm.adm_type == "ATTACHMENT"}
+    socket_objs2 = {o.adm.attachment_name: o for o in bpy.data.objects if o.adm.adm_type == "ATTACHMENT"}
+    socks2 = {name: o.parent_bone for name, o in socket_objs2.items()}
     check(socks2.get("hand.left") == "LeftHand", f"socket parent preserved {socks2.get('hand.left')}")
+    check(SP.HUMANOID_SOCKET_NAMES <= set(socks2), "all equipment socket names survive import")
     data2, rep2 = ModelExporter(bpy.context, root2, ExportOptions()).export()
     check(rep2.ok, "re-export valid")
+    check(rep2.doc["extensions"][K.HUMANOID_SOCKETS_EXT] == {"version": K.HUMANOID_SOCKETS_VERSION}
+          and SP.HUMANOID_SOCKET_NAMES <= {a["name"] for a in rep2.doc.get("attachments", [])},
+          "socket extension round-trips")
+    att2 = {a["name"]: a["node"] for a in rep2.doc.get("attachments", [])}
+    backpack_frame0 = node_world_matrix(doc, att["back.backpack"])
+    backpack_frame2 = node_world_matrix(rep2.doc, att2["back.backpack"])
+    backpack_frame_dev = max(abs(a - b) for a, b in zip(backpack_frame0, backpack_frame2))
+    check(backpack_frame_dev < POS_TOL, f"authored backpack socket frame survives round-trip ({backpack_frame_dev:.2e})")
     p2 = rep2.doc["skeletonProfiles"][0]
     n2 = {i: n.get("name") for i, n in enumerate(rep2.doc["nodes"])}
     skin2 = rep2.doc["skins"][p2["skin"]]

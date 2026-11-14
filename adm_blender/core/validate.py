@@ -18,7 +18,8 @@ from . import constants as K
 from . import gputex
 from .buffers import read_accessor_flat, read_accessor_np, read_view
 from .container import (AdmFormatError, DEFAULT_LIMITS, MAX_CHUNK, ResourceLimitError, read_container)
-from .mathutil import (IDENTITY, det3, mat_mul, mat_translation, node_local_matrix, vcross, vlen, vsub)
+from .mathutil import (IDENTITY, det3, mat_col3, mat_mul, mat_translation, node_local_matrix,
+                       reference_correction_from_nodes, vcross, vlen, vsub)
 from .rigid import rig_id_from_document
 from . import skeleton as SK
 from . import skeleton_profiles as SP
@@ -439,6 +440,7 @@ class AdmValidator(_Base):
         self.check_colliders()
         self.check_lods()
         self.check_attachments()
+        self.check_humanoid_sockets()
         self.check_physical_metadata()
         self.check_physical_surfaces()
         self.check_interactive_surfaces()
@@ -1354,21 +1356,9 @@ class AdmValidator(_Base):
                         q = rc[role]
                         if not _is_vec(q, 4) or not _is_int(node) or node >= len(self.nodes):
                             continue
-                        chain = []
-                        current = node
-                        while current is not None:
-                            chain.append(current)
-                            current = self.parent[current]
-                        rest = (0.0, 0.0, 0.0, 1.0)
-                        for current in reversed(chain):
-                            local = self.nodes[current].get("rotation", [0.0, 0.0, 0.0, 1.0])
-                            x, y, z, w = rest
-                            a, b, c, d = local
-                            rest = (w*a + x*d + y*c - z*b,
-                                    w*b - x*c + y*d + z*a,
-                                    w*c + x*b - y*a + z*d,
-                                    w*d - x*a - y*b - z*c)
-                        expected = (-rest[0], -rest[1], -rest[2], rest[3])
+                        expected = reference_correction_from_nodes(self.nodes, self.parent, node)
+                        if expected is None:
+                            continue
                         err = min(max(abs(a - b) for a, b in zip(q, expected)),
                                   max(abs(a + b) for a, b in zip(q, expected)))
                         if err > 1e-4:
@@ -1864,6 +1854,77 @@ class AdmValidator(_Base):
                 self.r.error("ATTACHMENT_DUPLICATE", p + ".name", f"duplicate attachment {a['name']!r}")
             names.add(a["name"])
             self.index(a["node"], len(self.nodes), p + ".node", "nodes")
+
+    def check_humanoid_sockets(self):
+        used = self.doc.get("extensionsUsed", [])
+        required = self.doc.get("extensionsRequired", [])
+        ext_root = self.doc.get("extensions", {})
+        ext = ext_root.get(K.HUMANOID_SOCKETS_EXT) if isinstance(ext_root, dict) else None
+        attachments = [a for a in self.array("attachments") if isinstance(a, dict)]
+        standard = {name: (role, tuple(fallback)) for name, role, fallback in SP.HUMANOID_SOCKET_TEMPLATES}
+        bound = {a.get("name"): a for a in attachments if a.get("name") in standard}
+        path = f"extensions.{K.HUMANOID_SOCKETS_EXT}"
+
+        if bound and ext is None:
+            self.r.error("HUMANOID_SOCKET_EXTENSION", "attachments",
+                         f"standard humanoid sockets require {K.HUMANOID_SOCKETS_EXT}")
+            return
+        if ext is None:
+            if ((isinstance(used, list) and K.HUMANOID_SOCKETS_EXT in used)
+                    or (isinstance(required, list) and K.HUMANOID_SOCKETS_EXT in required)):
+                self.r.error("HUMANOID_SOCKET_EMPTY", path,
+                             "declared capability requires its version marker and at least one registered socket")
+            return
+        if not isinstance(used, list) or K.HUMANOID_SOCKETS_EXT not in used:
+            self.r.error("HUMANOID_SOCKET_EXTENSION", path,
+                         f"{K.HUMANOID_SOCKETS_EXT} must be listed in extensionsUsed")
+        if not isinstance(required, list) or K.HUMANOID_SOCKETS_EXT not in required:
+            self.r.error("HUMANOID_SOCKET_REQUIRED", path,
+                         f"{K.HUMANOID_SOCKETS_EXT} must be listed in extensionsRequired")
+        if not isinstance(ext, dict) or set(ext) != {"version"}:
+            self.r.error("HUMANOID_SOCKET_SCHEMA", path, "must contain only the required version field")
+        elif ext.get("version") != K.HUMANOID_SOCKETS_VERSION:
+            self.r.error("HUMANOID_SOCKET_VERSION", path + ".version",
+                         f"must be {K.HUMANOID_SOCKETS_VERSION!r}")
+        if not bound:
+            self.r.error("HUMANOID_SOCKET_EMPTY", path,
+                         "requires at least one attachment using a registered humanoid socket name")
+
+        humanoid_roles = {}
+        for i, prof in enumerate(self.array("skeletonProfiles")):
+            if isinstance(prof, dict) and prof.get("id") == SP.HUMANOID:
+                roles = prof.get("roles")
+                if isinstance(roles, dict):
+                    humanoid_roles = roles
+                    break
+        if not humanoid_roles:
+            self.r.error("HUMANOID_SOCKET_PROFILE", path,
+                         f"standard sockets require a {SP.HUMANOID!r} skeleton profile")
+            return
+
+        for name, attachment in bound.items():
+            role, fallback = standard[name]
+            accepted = (role,) + fallback
+            expected_role = next((candidate for candidate in accepted if candidate in humanoid_roles), None)
+            node = attachment.get("node")
+            apath = f"attachments.{name}"
+            if not _is_int(node) or node >= len(self.nodes):
+                continue
+            ancestors = {node}
+            ancestor = self.parent[node]
+            while ancestor is not None:
+                ancestors.add(ancestor)
+                ancestor = self.parent[ancestor]
+            if expected_role is None or humanoid_roles[expected_role] not in ancestors:
+                self.r.error("HUMANOID_SOCKET_PARENT", apath,
+                             f"must be attached to the first mapped role in {accepted!r} ({expected_role!r}) "
+                             "or one of its descendants")
+            frame = self.world[node] if node < len(self.world) else None
+            if frame is not None:
+                expected_axes = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                if any(vlen(vsub(mat_col3(frame, axis), expected_axes[axis])) > 1e-4 for axis in range(3)):
+                    self.r.error("HUMANOID_SOCKET_FRAME", apath,
+                                 "socket model-space frame must have unit scale and +X right, +Y up, -Z forward")
 
 
 # ------------------------------------------------------------------------------------------------

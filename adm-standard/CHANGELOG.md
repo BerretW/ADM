@@ -1,5 +1,21 @@
 # Changelog
 
+## Draft 0.4 revision P14 — humanoid equipment sockets
+
+- Added the normative `ADM_humanoid_sockets_v1@1.0.0` extension and `ADM-HUMANOID-SOCKETS-1`
+  capability with 20 named weapon and gear mount points on `humanoid.vrm1`; retained the four earlier
+  generic anchors for compatibility.
+- Defined role ancestry, model-space mount-frame axes, authored per-model socket positions and
+  accessory `mount.root` composition. The capability does not add bones or change animation
+  compatibility, and does not define inventory or gameplay behavior.
+- Updated the skeleton-profile registry to `0.4-P14`.
+
+## Blender Tools 1.14.0 — 2026-11-14
+
+- Blender creates editable socket placeholders from the profile template and preserves names and
+  transforms through ADM export/import. The validator rejects undeclared, incompatible-version,
+  mis-parented or misoriented standardized sockets.
+
 ## Blender Tools 1.13.0 — 2026-11-14
 
 - Added **Generate LODs**: Decimate (Collapse) LOD1…LODn of the active mesh into an ADM LOD group,

@@ -62,10 +62,14 @@ The specification governs the data format; engine scheduling, gameplay behavior,
 
 Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_tests.py`.
 
-## Skeleton profile registry (P4)
+## Skeleton profile registry and sockets (P14)
 
 - `profiles/skeleton-profiles.json`: machine-readable registry of roles, parents, required flags, pose checks, and IK/socket templates, with each profile's `status`.
 - `profiles/humanoid.vrm1.md`: VRM 1.0 humanoid. Role data, ADM-REF-NORM-1 corrections and reference-pose rules are normative. Tests `HUM-001..006`.
+- `extensions/ADM_humanoid_sockets_v1.md`: normative equipment socket names, role ancestry,
+  model-space frames and `mount.root` composition for `ADM-HUMANOID-SOCKETS-1`.
+- `fixtures/expectations/humanoid_sockets.expected.json`: exact registry-to-socket-name expectation used
+  by the reference tests.
 - `profiles/animal.quadruped.v1.md`: generic quadruped, canine, feline and equine. **PROVISIONAL, not registered, not certifiable.** Tests `QDR-001..004`.
 - `SPEC_GAPS.md`: resolved ambiguity dispositions plus the deliberately retained approval and certification blockers.
 

@@ -21,7 +21,7 @@ import re
 
 from . import constants as K
 
-REGISTRY_VERSION = "0.4-P4"
+REGISTRY_VERSION = "0.4-P14"
 
 NORMATIVE = "NORMATIVE"
 EXACT_ONLY = "EXACT_ONLY"
@@ -31,6 +31,30 @@ PROVISIONAL = "PROVISIONAL"
 DEFAULT_POSE_TOLERANCE_DEG = 25.0
 
 LEFT, RIGHT, UP, DOWN, FORWARD, BACK = (-1, 0, 0), (1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, -1), (0, 0, 1)
+
+HUMANOID_SOCKET_TEMPLATES = (
+    ("hand.right.grip", "rightHand", ()),
+    ("hand.left.support", "leftHand", ()),
+    ("weapon.primary.back", "chest", ("spine",)),
+    ("weapon.secondary.back", "chest", ("spine",)),
+    ("weapon.sling", "chest", ("upperChest", "spine")),
+    ("weapon.holster.hip.left", "leftUpperLeg", ("hips",)),
+    ("weapon.holster.hip.right", "rightUpperLeg", ("hips",)),
+    ("weapon.holster.thigh.left", "leftUpperLeg", ()),
+    ("weapon.holster.thigh.right", "rightUpperLeg", ()),
+    ("weapon.knife.chest.left", "chest", ("spine",)),
+    ("weapon.knife.chest.right", "chest", ("spine",)),
+    ("head.helmet", "head", ()),
+    ("head.nvg", "head", ()),
+    ("head.face", "head", ()),
+    ("head.ear.left", "head", ()),
+    ("head.ear.right", "head", ()),
+    ("torso.plate_carrier", "chest", ("upperChest", "spine")),
+    ("torso.chest_rig", "chest", ("upperChest", "spine")),
+    ("back.backpack", "chest", ("upperChest", "spine")),
+    ("waist.belt", "hips", ()),
+)
+HUMANOID_SOCKET_NAMES = frozenset(name for name, _role_name, _fallback in HUMANOID_SOCKET_TEMPLATES)
 
 
 def _role(parent, required=False, needs_parent=False, description=""):
@@ -87,6 +111,10 @@ def _humanoid():
         "localAxes": "UNCONSTRAINED",
         "ikTemplates": ik,
         "socketTemplates": [
+            {"name": name, "role": role, **({"fallback": list(fallback)} if fallback else {})}
+            for name, role, fallback in HUMANOID_SOCKET_TEMPLATES
+        ] + [
+            # Retained generic anchors for compatibility with existing Draft 0.4 assets.
             {"name": "hand.left", "role": "leftHand"}, {"name": "hand.right", "role": "rightHand"},
             {"name": "head", "role": "head"}, {"name": "spine.back", "role": "chest", "fallback": ["spine"]},
         ],

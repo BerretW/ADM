@@ -41,6 +41,8 @@ Supported authoring includes meshes, skins, morph targets, semantic skeleton pro
 IK descriptors, LODs, attachment sockets, shader parameter definitions/tracks, model components,
 physical materials, per-triangle collision surfaces, stable interactive display surfaces, and
 bone-linked hitboxes. External texture sidecars are optional; embedded textures remain the default.
+`ADM-HUMANOID-SOCKETS-1` standardizes equipment attachment frames without changing humanoid skeleton
+roles or animation compatibility.
 
 ### Important limits
 

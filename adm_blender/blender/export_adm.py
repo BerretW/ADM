@@ -19,6 +19,7 @@ from ..core import skeleton as SK
 from ..core import skeleton_profiles as SP
 from ..core.buffers import BinBuilder
 from ..core.container import AdmFormatError, write_container
+from ..core.mathutil import reference_correction_from_nodes
 from ..core.rigid import rig_id_from_document
 from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
@@ -919,9 +920,10 @@ class ModelExporter:
                     roles.append({"role": role, "node": rec.index, "profile": prof})
         return atts, roles
 
-    def _profiles(self):
+    def _profiles(self, node_dicts):
         profiles = []
         rigid_requests = []
+        node_parents = [rec.parent for rec in self.nodes]
         for arm_name in sorted(self.arm_joints):
             arm = self.context.view_layer.objects.get(arm_name) or bpy.data.objects[arm_name]
             sk = arm.data.adm
@@ -930,27 +932,29 @@ class ModelExporter:
             pid = sk.profile_id.strip()
             roles = {}
             corr = {}
-            from .rig import normalized_correction
             for bone in arm.data.bones:
                 r = bone.adm.role.strip()
                 if not r:
                     continue
                 if r in roles:
                     raise ExportError(f"armature '{arm.name}': role '{r}' assigned to more than one bone")
-                roles[r] = self.bone_node[(arm.name, bone.name)]
+                node = self.bone_node[(arm.name, bone.name)]
+                roles[r] = node
                 if pid == "humanoid.vrm1":
-                    q = normalized_correction(arm, bone)
+                    q = reference_correction_from_nodes(node_dicts, node_parents, node)
+                    if q is None:
+                        raise ExportError(f"armature '{arm.name}' bone '{bone.name}': cannot calculate "
+                                          "reference correction from serialized rest transforms")
                     if bone.adm.use_reference_correction:
                         stored = Quaternion(bone.adm.reference_correction)
                         stored.normalize()
-                        actual = tuple(stored)
-                        expected = tuple(q)
-                        error = min(max(abs(a - b) for a, b in zip(actual, expected)),
-                                    max(abs(a + b) for a, b in zip(actual, expected)))
+                        actual = cv.quat_to_adm(stored)
+                        error = min(max(abs(a - b) for a, b in zip(actual, q)),
+                                    max(abs(a + b) for a, b in zip(actual, q)))
                         if error > 1e-4:
-                            raise ExportError(f"armature '{arm.name}' bone '{bone.name}': reference correction "
-                                              "does not match the normative inverse rest rotation")
-                    corr[r] = cv.quat_to_adm(q)
+                            self.warn(f"armature '{arm.name}' bone '{bone.name}': stored reference correction "
+                                      "differs from serialized rest rotation; exported correction was recomputed")
+                    corr[r] = [cv.f32(v) for v in q]
                 elif bone.adm.use_reference_correction:
                     q = Quaternion(bone.adm.reference_correction)
                     corr[r] = cv.quat_to_adm(q)
@@ -1083,10 +1087,17 @@ class ModelExporter:
             self.build_graph()
             self.build_content()
             colliders = self._colliders()
-            profiles, rigid_requests = self._profiles()
             nodes = self._node_dicts()
+            profiles, rigid_requests = self._profiles(nodes)
         lods = self._lod_groups()
         attachments, comp_roles = self._attachments_roles()
+        humanoid_socket_names = SP.HUMANOID_SOCKET_NAMES
+        humanoid_sockets_used = any(a["name"] in humanoid_socket_names for a in attachments)
+        if humanoid_sockets_used:
+            if not any(p.get("id") == SP.HUMANOID for p in profiles):
+                raise ExportError(f"{K.HUMANOID_SOCKETS_CAPABILITY} sockets require a humanoid.vrm1 profile")
+            self.mat.extensions_used.add(K.HUMANOID_SOCKETS_EXT)
+            self.mat.extensions_required.add(K.HUMANOID_SOCKETS_EXT)
         physical, components, hitboxes = self._physical_components()
         faces, exprs = self._face_and_expressions()
         iks = self._ik_chains()
@@ -1114,10 +1125,15 @@ class ModelExporter:
         for key, val in optional:
             if val:
                 doc[key] = val
+        extensions = {}
         if surfaces:
-            doc["extensions"] = {K.INTERACTIVE_SURFACES_EXT: {
+            extensions[K.INTERACTIVE_SURFACES_EXT] = {
                 "version": K.INTERACTIVE_SURFACES_VERSION, "surfaces": surfaces,
-            }}
+            }
+        if humanoid_sockets_used:
+            extensions[K.HUMANOID_SOCKETS_EXT] = {"version": K.HUMANOID_SOCKETS_VERSION}
+        if extensions:
+            doc["extensions"] = extensions
         doc["accessors"] = self.b.accessors
         doc["bufferViews"] = self.b.buffer_views
         bin_bytes = self.b.bytes()

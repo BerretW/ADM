@@ -1,5 +1,5 @@
 {
-  "registryVersion": "0.4-P4",
+  "registryVersion": "0.4-P14",
   "specification": "ADM 1.0 Draft 0.4",
   "coordinateSystem": {
     "up": [
@@ -430,6 +430,120 @@
         }
       ],
       "socketTemplates": [
+        {
+          "name": "hand.right.grip",
+          "role": "rightHand"
+        },
+        {
+          "name": "hand.left.support",
+          "role": "leftHand"
+        },
+        {
+          "name": "weapon.primary.back",
+          "role": "chest",
+          "fallback": [
+            "spine"
+          ]
+        },
+        {
+          "name": "weapon.secondary.back",
+          "role": "chest",
+          "fallback": [
+            "spine"
+          ]
+        },
+        {
+          "name": "weapon.sling",
+          "role": "chest",
+          "fallback": [
+            "upperChest",
+            "spine"
+          ]
+        },
+        {
+          "name": "weapon.holster.hip.left",
+          "role": "leftUpperLeg",
+          "fallback": [
+            "hips"
+          ]
+        },
+        {
+          "name": "weapon.holster.hip.right",
+          "role": "rightUpperLeg",
+          "fallback": [
+            "hips"
+          ]
+        },
+        {
+          "name": "weapon.holster.thigh.left",
+          "role": "leftUpperLeg"
+        },
+        {
+          "name": "weapon.holster.thigh.right",
+          "role": "rightUpperLeg"
+        },
+        {
+          "name": "weapon.knife.chest.left",
+          "role": "chest",
+          "fallback": [
+            "spine"
+          ]
+        },
+        {
+          "name": "weapon.knife.chest.right",
+          "role": "chest",
+          "fallback": [
+            "spine"
+          ]
+        },
+        {
+          "name": "head.helmet",
+          "role": "head"
+        },
+        {
+          "name": "head.nvg",
+          "role": "head"
+        },
+        {
+          "name": "head.face",
+          "role": "head"
+        },
+        {
+          "name": "head.ear.left",
+          "role": "head"
+        },
+        {
+          "name": "head.ear.right",
+          "role": "head"
+        },
+        {
+          "name": "torso.plate_carrier",
+          "role": "chest",
+          "fallback": [
+            "upperChest",
+            "spine"
+          ]
+        },
+        {
+          "name": "torso.chest_rig",
+          "role": "chest",
+          "fallback": [
+            "upperChest",
+            "spine"
+          ]
+        },
+        {
+          "name": "back.backpack",
+          "role": "chest",
+          "fallback": [
+            "upperChest",
+            "spine"
+          ]
+        },
+        {
+          "name": "waist.belt",
+          "role": "hips"
+        },
         {
           "name": "hand.left",
           "role": "leftHand"

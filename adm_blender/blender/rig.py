@@ -20,7 +20,7 @@ from .rolemap import auto_map
 FIX_NORMALIZE_CORRECTIONS = "NORMALIZE_CORRECTIONS"
 FIX_LIMIT_WEIGHTS = "LIMIT_WEIGHTS"
 MAX_INFLUENCES = 4
-CORRECTION_TOL_DEG = 0.01
+CORRECTION_TOL = 1e-4
 
 
 # --------------------------------------------------------------------------------------------------
@@ -78,10 +78,42 @@ def chains_adm(arm):
 # normalized reference corrections (ADM-REF-NORM, see adm-standard/profiles/humanoid.vrm1.md)
 # --------------------------------------------------------------------------------------------------
 def normalized_correction(arm, bone):
-    """Blender-space correction = inverse rest rotation of the joint in model space."""
-    q = (model_matrix(arm) @ bone.matrix_local).to_quaternion()
+    """Inverse rest rotation using the local rotations that ADM serializes."""
+    root = find_model_root(arm)
+    if root == arm:
+        root = None
+    objects = []
+    obj = arm
+    while obj is not None and obj != root:
+        objects.append(obj)
+        obj = obj.parent
+
+    q = Quaternion((1.0, 0.0, 0.0, 0.0))
+    for obj in reversed(objects):
+        if obj.parent is None:
+            local = model_matrix(obj)
+        elif obj.parent_type == "BONE" and obj.parent.type == "ARMATURE" \
+                and obj.parent_bone in obj.parent.data.bones:
+            parent_world = obj.parent.matrix_world @ obj.parent.data.bones[obj.parent_bone].matrix_local
+            local = parent_world.inverted_safe() @ obj.matrix_world
+        else:
+            local = obj.parent.matrix_world.inverted_safe() @ obj.matrix_world
+        fields = cv.node_transform_fields(local)
+        q = q @ cv.quat_from_adm(fields.get("rotation", (0.0, 0.0, 0.0, 1.0)))
+
+    chain = []
+    current = bone
+    while current is not None:
+        chain.append(current)
+        current = current.parent
+    for current in reversed(chain):
+        local = (current.parent.matrix_local.inverted_safe() @ current.matrix_local
+                 if current.parent else current.matrix_local.copy())
+        fields = cv.node_transform_fields(local, force_trs=True)
+        q = q @ cv.quat_from_adm(fields.get("rotation", (0.0, 0.0, 0.0, 1.0)))
     q.normalize()
-    return q.inverted()
+    correction = q.inverted()
+    return -correction if correction.w < 0 else correction
 
 
 def effective_correction(bone):
@@ -106,8 +138,11 @@ def correction_issues(arm):
     bad = []
     for b in arm.data.bones:
         if b.adm.role.strip():
-            d = effective_correction(b).rotation_difference(normalized_correction(arm, b))
-            if math.degrees(d.angle) > CORRECTION_TOL_DEG:
+            actual = tuple(effective_correction(b))
+            expected = tuple(normalized_correction(arm, b))
+            error = min(max(abs(a - e) for a, e in zip(actual, expected)),
+                        max(abs(a + e) for a, e in zip(actual, expected)))
+            if error > CORRECTION_TOL:
                 bad.append(b)
     if not bad:
         return []
@@ -534,7 +569,8 @@ def create_profile_sockets(context, arm):
     """Create attachment empties for the profile's socket templates.
 
     The socket frame is axis-aligned with the ADM reference pose (identity rotation in model space) at
-    the role joint origin, so it is portable between rigs whose bone rolls differ.
+    the role joint origin, so it is portable between rigs whose bone rolls differ. These are authoring
+    placeholders: body proportions vary, so move each marker to the actual mount point before export.
     """
     from .export_adm import find_model_root as _root  # noqa: F401 (keeps import local for clarity)
     rb = role_bone_map(arm)

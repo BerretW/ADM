@@ -278,7 +278,7 @@ class ADM_OT_ik_reset(_ArmOp, bpy.types.Operator):
 
 
 class ADM_OT_create_profile_sockets(_ArmOp, bpy.types.Operator):
-    """Create the profile's attachment sockets (hand.left, hand.right, head, ...) on mapped role bones"""
+    """Create profile socket placeholders on mapped role bones; position them before export"""
     bl_idname = "adm.create_profile_sockets"
     bl_label = "Create Profile Sockets"
     bl_options = {"REGISTER", "UNDO"}

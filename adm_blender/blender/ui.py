@@ -439,9 +439,16 @@ def draw_sockets(layout, context, arm):
     col = layout.column(align=True)
     for t in templates:
         ok = t["name"] in present
-        col.label(text=f"{t['name']}  →  {t['role']}", icon="CHECKMARK" if ok else "DOT")
+        label = f"{t['name']}  →  {t['role']}"
+        if pid == SP.HUMANOID and t["name"] not in SP.HUMANOID_SOCKET_NAMES:
+            label += " (legacy)"
+        col.label(text=label, icon="CHECKMARK" if ok else "DOT")
     for name in sorted(set(present) - {t["name"] for t in templates}):
         col.label(text=f"{name} (custom)", icon="EMPTY_ARROWS")
+    if pid == SP.HUMANOID:
+        layout.label(text="Generated markers start at bone origins; move them to the authored mount points.",
+                     icon="INFO")
+        layout.label(text="Standard frame: +X right, +Y up, -Z forward.")
     row = layout.row(align=True)
     row.operator("adm.create_profile_sockets", icon="EMPTY_ARROWS")
     row.operator("adm.create_attachment", icon="ADD", text="Custom")

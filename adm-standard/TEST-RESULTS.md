@@ -1,5 +1,19 @@
 # Draft 0.4 executed test report
 
+## `ADM-HUMANOID-SOCKETS-1` / Blender Tools 1.14.0 — local verification
+
+- CI Python suite: **95 passed, 1 skipped** (the existing Windows symlink-permission case).
+  The socket registry fixture matches all 20 standardized names, roles and ordered fallbacks.
+- Standard kit: `run_tests.py` **25 passed**; interactive-surface reference tests, shader registry
+  checks (21 profiles), interactive fixture check and fixture regeneration/reproducibility: **PASS**.
+- Blender 5.2.3: `test_skeleton_blender.py`, `test_workflow.py`, `test_fixtures.py`,
+  `test_interactive_blender.py` and `test_material_slots.py`: **PASS**. The socket checks cover all
+  template markers, extension declarations, wrong-role and fallback rejection, missing/optional
+  capability rejection, unknown version, invalid frame, and export/import of an authored offset
+  (serialized world-matrix deviation `2.00e-7`).
+- No independent engine/reader certification is available. The socket positions remain authored per
+  character; slot identifiers do not guarantee gear fit or define inventory/gameplay behavior.
+
 ## Blender 1.13.0 automatic LOD generator — local verification
 
 - Blender 5.2.3 `test_lod_generator.py`: **PASS**. Four levels at 0/15/40/100 m inside the model

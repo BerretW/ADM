@@ -3,6 +3,7 @@
 Run: python -m unittest adm_blender.tests.test_skeleton_profiles -v
 """
 
+import json
 import math
 from pathlib import Path
 import unittest
@@ -91,6 +92,32 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(defs["upperChest"].get("needsParent"))
         self.assertTrue(defs["leftThumbDistal"].get("needsParent"))
         self.assertFalse(defs["leftIndexProximal"].get("needsParent", False))
+
+    def test_humanoid_equipment_socket_registry(self):
+        templates = SP.socket_templates(SP.HUMANOID)
+        sockets = {item["name"]: item for item in templates}
+        self.assertEqual(set(SP.HUMANOID_SOCKET_NAMES), set(sockets) - {
+            "hand.left", "hand.right", "head", "spine.back"})
+        self.assertEqual(len(SP.HUMANOID_SOCKET_NAMES), 20)
+        for name in SP.HUMANOID_SOCKET_NAMES:
+            socket = sockets[name]
+            self.assertIn(socket["role"], SP.roles(SP.HUMANOID), name)
+            self.assertTrue(set(socket.get("fallback", ())) <= set(SP.roles(SP.HUMANOID)), name)
+        self.assertEqual(sockets["hand.right.grip"]["role"], "rightHand")
+        self.assertEqual(sockets["hand.left.support"]["role"], "leftHand")
+        self.assertEqual(sockets["back.backpack"]["role"], "chest")
+        expected = json.loads((STANDARD / "fixtures" / "expectations" /
+                               "humanoid_sockets.expected.json").read_text(encoding="utf-8"))
+        actual = {
+            "extension": K.HUMANOID_SOCKETS_EXT,
+            "version": K.HUMANOID_SOCKETS_VERSION,
+            "capability": K.HUMANOID_SOCKETS_CAPABILITY,
+            "sockets": [
+                {key: value for key, value in sockets[name].items() if key in ("name", "role", "fallback")}
+                for name, _role_name, _fallback in SP.HUMANOID_SOCKET_TEMPLATES
+            ],
+        }
+        self.assertEqual(actual, expected)
 
     def test_animal_profiles_are_provisional_and_specialised(self):
         for pid in ("animal.generic_quadruped.v1", "animal.canine.v1", "animal.feline.v1", "animal.equine.v1"):

@@ -110,13 +110,24 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
   - validate pole, length and bone-hierarchy rules.
 
   Blender IK limits, stretch, rotation targets and other constraints are reported as unsupported and are not exported.
-- **Sockets:** create attachment sockets from profile templates (hands, head, back…).
+- **Sockets:** create attachment placeholders from the humanoid profile. `ADM-HUMANOID-SOCKETS-1`
+  includes right-hand grip and left support-hand grip, back/sling/holster/knife points, helmet/NVG/
+  face/ear mounts, plate carrier, chest rig, backpack and belt. Markers start at role joint origins:
+  move them to the actual mount points before export. The standard frame is +X right, +Y up, -Z
+  forward; export/import preserves the authored transform. Older generic anchors (`hand.left`,
+  `hand.right`, `head`, `spine.back`) remain supported but do not claim the capability.
 - **Skinning check:** unweighted vertices, weights that don't sum to 1, and non-skin bone groups.
 - **Animation libraries:**
   - import a library and run a compatibility test against the rig (`EXACT`, `SEMANTIC`, `PROVISIONAL_SEMANTIC`, `INCOMPATIBLE`);
   - no automatic retarget between different profiles (e.g. canine→equine).
 
 Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `referenceCorrection` and `rigId`. It is blocked only by structural errors (missing or duplicate roles, wrong hierarchy). Pose deviations only warn. Open spec questions are listed in [SPEC_GAPS.md](../adm-standard/SPEC_GAPS.md).
+
+The `ADM_humanoid_sockets_v1` extension declares standardized humanoid attachment names and their
+role ancestry; it does not add bones or affect existing animation libraries. A gear/weapon asset can
+provide an ordinary `mount.root` attachment for frame composition. Slot compatibility, inventory,
+weapon animation and equipment fit remain engine responsibilities. See the
+[socket contract](../adm-standard/extensions/ADM_humanoid_sockets_v1.md).
 
 ### Material textures (Sollumz-style)
 

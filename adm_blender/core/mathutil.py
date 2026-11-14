@@ -42,6 +42,41 @@ def node_local_matrix(node):
                       node.get("scale", (1, 1, 1)))
 
 
+def reference_correction_from_nodes(nodes, parents, node_index):
+    """Return ADM-REF-NORM-1 correction from serialized local node rotations."""
+    if type(node_index) is not int or not 0 <= node_index < len(nodes) or len(parents) != len(nodes):
+        return None
+    chain = []
+    seen = set()
+    current = node_index
+    while current is not None:
+        if type(current) is not int or not 0 <= current < len(nodes) or current in seen:
+            return None
+        seen.add(current)
+        chain.append(current)
+        current = parents[current]
+
+    rest = (0.0, 0.0, 0.0, 1.0)
+    for index in reversed(chain):
+        local = nodes[index].get("rotation", (0.0, 0.0, 0.0, 1.0))
+        if (not isinstance(local, (tuple, list)) or len(local) != 4
+                or any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in local)):
+            return None
+        x, y, z, w = rest
+        a, b, c, d = local
+        rest = (w*a + x*d + y*c - z*b,
+                w*b - x*c + y*d + z*a,
+                w*c + x*b - y*a + z*d,
+                w*d - x*a - y*b - z*c)
+    length = math.sqrt(sum(v * v for v in rest))
+    if not math.isfinite(length) or length <= 1e-12:
+        return None
+    correction = (-rest[0] / length, -rest[1] / length, -rest[2] / length, rest[3] / length)
+    if correction[3] < 0:
+        correction = tuple(-v for v in correction)
+    return correction
+
+
 def det3(m):
     a, b, c = m[0], m[4], m[8]
     d, e, f = m[1], m[5], m[9]

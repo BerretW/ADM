@@ -54,9 +54,21 @@ Verification (reference toolkit test `test_skeleton_blender.py`): source rig at 
 
 The templates only pre-fill §20 `ikChains`; the file always stores explicit node indices and a model-space pole. ADM-IK-1 requires direct parent→child links. If a twist helper sits between `leftUpperArm` and `leftLowerArm`, the template does not apply, and the tool reports `IK_NOT_DIRECT`. Joint limits, stretch, pole angle and chains of three or more segments are outside ADM-IK-1 (§20). Tools MUST report such DCC constraint settings as unsupported and MUST NOT export them as ADM IK.
 
-## H6. Socket templates (PROPOSED names)
+## H6. Equipment sockets
 
-`hand.left`→`leftHand`, `hand.right`→`rightHand`, `head`→`head`, `spine.back`→`chest` (fallback `spine`). Sockets are ordinary §24 attachments parented to the role joint. They have their origin at the joint and their rotation equal to the model frame in the reference pose (identity in ADM model space), so a prop held at `hand.right` has the same orientation on any compliant humanoid regardless of bone roll.
+The registry includes authoring templates for `ADM-HUMANOID-SOCKETS-1`: hand grips, primary and
+secondary back slots, sling, left/right hip and thigh holsters, chest knives, helmet/NVG/face/ear
+mounts, plate carrier, chest rig, backpack, and belt. The exact names and per-slot role ancestry are
+normative in [`../extensions/ADM_humanoid_sockets_v1.md`](../extensions/ADM_humanoid_sockets_v1.md).
+The older generic names `hand.left`, `hand.right`, `head` and `spine.back` remain ordinary
+attachments and do not claim the capability.
+
+Each standardized socket is a §24 attachment on its required role node or a descendant, in the
+unit-scale ADM model frame (+X right, +Y up, −Z forward). The marker's position is authored for each
+model; a skeleton template can only create a placeholder at a role joint origin. Authors must move
+it to the actual mount point and preserve its transform through export/import. Accessory composition
+uses the `mount.root` attachment frame as defined by the extension. Slot meaning does not define
+equipment compatibility, gameplay, or fit across different body proportions.
 
 ## H7. Facial channels
 
