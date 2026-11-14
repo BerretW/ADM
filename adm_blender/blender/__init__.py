@@ -3,7 +3,9 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import file_io, operators, props, skeleton_ops, ui, vertex_colors
+from . import file_io, lod_gen, operators, props, skeleton_ops, ui, vertex_colors
+
+CLASSES = operators.CLASSES + skeleton_ops.CLASSES + vertex_colors.CLASSES + lod_gen.CLASSES
 
 
 @persistent
@@ -13,7 +15,7 @@ def _load_post(_dummy):
 
 def register():
     props.register()
-    for c in operators.CLASSES + skeleton_ops.CLASSES + vertex_colors.CLASSES:
+    for c in CLASSES:
         bpy.utils.register_class(c)
     file_io.register()
     ui.register()
@@ -31,6 +33,6 @@ def unregister():
         bpy.app.timers.unregister(operators.ensure_role_names)
     ui.unregister()
     file_io.unregister()
-    for c in reversed(operators.CLASSES + skeleton_ops.CLASSES + vertex_colors.CLASSES):
+    for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)
     props.unregister()

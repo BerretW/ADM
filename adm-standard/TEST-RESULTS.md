@@ -1,5 +1,16 @@
 # Draft 0.4 executed test report
 
+## Blender 1.13.0 automatic LOD generator — local verification
+
+- Blender 5.2.3 `test_lod_generator.py`: **PASS**. Four levels at 0/15/40/100 m inside the model
+  root; non-screen triangles follow 0.5/0.25/0.1 (3200 → 1699/949/499); interactive screen triangles,
+  surface IDs, both materials, `COLOR_0`, skin weights are preserved on every level; shape keys with
+  a relative chain are transferred to LOD1–LOD2 (cone morph error < 0.03, relative delta exact) and
+  dropped on LOD3; the exported model validates with one LOD group and one `surfaceId` bound on four
+  nodes; regeneration replaces generated levels; non-decreasing ratios are rejected.
+- All other Blender integration tests and the Python unittest suite (94 tests, 1 skip): **PASS**.
+- `adm_tools-1.13.0.zip`: extension validation and an isolated install that runs Generate LODs: **PASS**.
+
 ## Blender 1.12.0 / `ADM_vertex_control_v1` 1.1.0 multi-row tint palettes — local verification
 
 - Python unittest suite: **PASS**, 94 tests (1 skip). `test_tint_palette_height_one_to_five` accepts

@@ -72,6 +72,7 @@ jobs:
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_shader_profiles.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_interactive_blender.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_workflow.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_lod_generator.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_fixtures.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_material_slots.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_texture_formats.py
