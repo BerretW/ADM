@@ -10,12 +10,15 @@ from bpy_extras import anim_utils
 from mathutils import Matrix, Quaternion
 
 from ..core import constants as K
+from ..core.component_animation import component_track_issues, sample_track_values
 from ..core import skeleton as SK
 from ..core.buffers import read_accessor_np
 from ..core.validate import validate_anim
 from . import convert as cv
 from . import material_anim as mat_anim
 from .export_adm import compute_rig_id, find_model_root, rig_id_matches
+from .component_profiles import (component_model_binding, component_rest_issues,
+                                 restore_component_transform, snapshot_component_transform)
 from .export_anim import EXPR_PREFIX, morph_meshes
 from .import_adm import ImportError_
 from .materials import scene_shader_registry
@@ -24,6 +27,7 @@ from .materials import scene_shader_registry
 class AnimImportOptions:
     def __init__(self, **kw):
         self.armature = None
+        self.model_root = None
         self.frame_start = 1
         self.strict = True        # refuse incompatible profile / rigId instead of warning
         self.allow_provisional = True  # same-profile SEMANTIC binding for PROVISIONAL (animal) profiles
@@ -142,18 +146,22 @@ class AnimImporter:
         lib = self.doc["library"]
         arm = self.opts.armature
         self.model_any = lib["targetProfile"] == K.MODEL_ANY_PROFILE
-        if arm is not None and arm.type != "ARMATURE":
+        self.component_target = lib["targetProfile"] in ("vehicle.car.v1", "weapon.firearm.v1")
+        if self.component_target or (arm is not None and arm.type != "ARMATURE"):
             arm = None
-        if arm is None and not self.model_any:
+        if arm is None and not self.model_any and not self.component_target:
             raise ImportError_("select the target armature (rig) before importing an animation library")
         self.arm = arm
+        self.model_root = self.opts.model_root
         self.binding = lib["binding"]
+        if self.component_target:
+            self._check_component_compat(lib)
         if (arm is not None and lib.get("motionScale") == "SOURCE_HEIGHT"
                 and (not arm.data.adm.use_target_height or not math.isfinite(arm.data.adm.target_height)
                      or arm.data.adm.target_height <= 0)):
             raise ImportError_("library motionScale SOURCE_HEIGHT requires a finite positive target height "
                                "on the rig; no unscaled fallback is permitted")
-        if not self.model_any:
+        if not self.model_any and not self.component_target:
             self._check_compat(lib)
         self._prepare_targets(lib)
 
@@ -165,8 +173,11 @@ class AnimImporter:
         slib.title = lib["title"]
         slib.description = lib["description"]
         slib.language = lib["language"]
-        slib.target = "MODEL_ANY" if self.model_any else "RIG"
+        slib.target = "MODEL_ANY" if self.model_any else "COMPONENTS" if self.component_target else "RIG"
         slib.armature = arm
+        slib.model_root = self.model_root if self.component_target else None
+        if self.component_target:
+            slib.component_profile = lib["targetProfile"]
         slib.binding = self.binding
         slib.tags = ", ".join(lib.get("tags", []))
         slib.author = lib.get("author", "")
@@ -205,7 +216,10 @@ class AnimImporter:
             actions.append(action)
         slib.active_clip = 0
         if self.opts.set_active and actions:
-            assign_action(self.arm, actions[0])
+            assign_action(None if self.component_target else self.arm, actions[0],
+                          model_root=self.model_root if self.component_target else None)
+            if self.component_target:
+                assign_component_actions(self.components, actions[0])
         return slib
 
     # ----------------------------------------------------------------------------------------------
@@ -226,14 +240,53 @@ class AnimImporter:
             for r in reasons[:-1]:
                 self.warn(r)
 
+    def _check_component_compat(self, lib):
+        if self.binding != "SEMANTIC":
+            raise ImportError_("mechanical component animations require SEMANTIC binding")
+        root = self.model_root
+        if root is None or root.type != "EMPTY" or root.adm.adm_type != "MODEL":
+            raise ImportError_("select the matching model root before importing component animation")
+        try:
+            self.component_metadata, self.components = component_model_binding(root, lib["targetProfile"])
+        except ValueError as exc:
+            raise ImportError_(f"target model is incompatible: {exc}") from exc
+        profile_id = lib["targetProfile"]
+        for clip in self.doc["clips"]:
+            for channel in clip["channels"]:
+                target = channel["target"]
+                if target["kind"] != "component":
+                    continue
+                role = target["role"]
+                if role not in self.components:
+                    if channel.get("optional"):
+                        self.warn(f"clip '{clip['id']}': optional component role {role!r} is absent")
+                    else:
+                        raise ImportError_(f"clip '{clip['id']}': target model has no component role {role!r}")
+                times, values, tangents_in, tangents_out, interpolation = self._sampler(
+                    clip, channel["sampler"])
+                try:
+                    samples = sample_track_values(
+                        times, values, interpolation, tangents_in, tangents_out,
+                        rotation=channel["path"] == "rotation")
+                except ValueError as exc:
+                    raise ImportError_(f"clip '{clip['id']}' component {role!r}: {exc}") from exc
+                issues = component_track_issues(
+                    profile_id, self.component_metadata, role, channel["path"], samples)
+                if issues:
+                    raise ImportError_(f"clip '{clip['id']}' component {role!r}: {'; '.join(issues)}")
+
     def _prepare_targets(self, lib):
         arm = self.arm
         self.bones = {}
         self.rest_rot = {}
         self.morph_keys = {}
+        self.component_rest = {}
         self.motion_scale = 1.0
         self.materials = {}
-        for mat in bpy.data.materials:
+        materials = ({slot.material for obj in self.model_root.children_recursive
+                      for slot in obj.material_slots if slot.material is not None}
+                     if self.component_target else bpy.data.materials)
+        for mat in materials:
             aid = mat.adm.animation_id.strip()
             if aid:
                 if aid in self.materials:
@@ -241,10 +294,45 @@ class AnimImporter:
                     continue
                 self.materials[aid] = mat
         if arm is None:
-            for o in morph_meshes(None):
+            meshes = ([o for o in self.model_root.children_recursive if o.type == "MESH"]
+                      if self.component_target else morph_meshes(None))
+            for o in meshes:
+                if o.data.shape_keys is None:
+                    continue
                 key = o.data.shape_keys
                 for kb in key.key_blocks[1:]:
                     self.morph_keys.setdefault(kb.name, []).append((key, kb.name, 1.0))
+            if self.component_target:
+                scene = self.context.scene
+                root = self.model_root
+                frame_saved = scene.frame_current
+                saved = []
+                component_states = {obj: snapshot_component_transform(obj) for obj in self.components.values()}
+                try:
+                    for role, obj in self.components.items():
+                        ad = obj.animation_data
+                        if ad is not None:
+                            saved.append((ad, ad.action, ad.action_slot if ad.action else None, ad.use_nla))
+                            ad.use_nla = False
+                            ad.action = None
+                    self.context.view_layer.update()
+                    rest_issues = component_rest_issues(root, self.components)
+                    if rest_issues:
+                        raise ImportError_("target model has invalid component rest transforms: "
+                                           + "; ".join(rest_issues))
+                    for role, obj in self.components.items():
+                        location, rotation, _scale = obj.matrix_basis.decompose()
+                        self.component_rest[role] = (location.copy(), rotation.copy())
+                finally:
+                    for ad, action, slot, use_nla in reversed(saved):
+                        ad.action = action
+                        if action is not None and slot is not None:
+                            ad.action_slot = slot
+                        ad.use_nla = use_nla
+                    for obj, state in component_states.items():
+                        restore_component_transform(obj, state)
+                    scene.frame_set(frame_saved)
+                    self.context.view_layer.update()
             return
         if self.binding == "SEMANTIC" and not self.model_any:
             for b in arm.data.bones:
@@ -332,6 +420,12 @@ class AnimImporter:
                 slot = action.slots.new(id_type="OBJECT", name=arm.name)
                 cbs["arm"] = anim_utils.action_ensure_channelbag_for_slot(action, slot)
             return cbs["arm"]
+
+        def component_cb(obj):
+            if obj.name not in cbs:
+                slot = action.slots.new(id_type="OBJECT", name=obj.name)
+                cbs[obj.name] = anim_utils.action_ensure_channelbag_for_slot(action, slot)
+            return cbs[obj.name]
 
         key_cbs = {}
 
@@ -439,6 +533,22 @@ class AnimImporter:
                     fc = fcurve(mat_cb(mat, id_kind), dpath, idx, "ADM " + tgt["parameter"])
                     _fill(fc, frames, v[:, comp] * scale, None if tin is None else tin[:, comp] * scale,
                           None if tout is None else tout[:, comp] * scale, interp, fps)
+            elif kind == "component":
+                obj = self.components.get(tgt["role"])
+                if obj is None:
+                    continue
+                rest_t, rest_q = self.component_rest[tgt["role"]]
+                if path == "translation":
+                    conversion = np.array(cv.C3_INV)
+                    convert = lambda values: None if values is None else values @ conversion.T
+                    write(component_cb(obj), "location", 3, tgt["role"], t, convert(v),
+                          convert(tin), convert(tout), interp, np.array(rest_t))
+                else:
+                    obj.rotation_mode = "QUATERNION"
+                    conversion = _qmat_left(rest_q) @ _adm_quat_map()
+                    convert = lambda values: None if values is None else values @ conversion.T
+                    write(component_cb(obj), "rotation_quaternion", 4, tgt["role"], t, convert(v),
+                          convert(tin), convert(tout), interp)
             else:
                 if arm is None:
                     if not ch.get("optional"):
@@ -454,7 +564,9 @@ class AnimImporter:
                 _fill(fc, f0 + t * fps, v[:, 0], None if tin is None else tin[:, 0],
                       None if tout is None else tout[:, 0], interp, fps)
         if missing:
-            self.warn(f"clip '{clip['id']}': targets not present on the rig (skipped): {', '.join(missing[:12])}"
+            target_name = "model" if self.model_any or self.component_target else "rig"
+            self.warn(f"clip '{clip['id']}': targets not present on the {target_name} (skipped): "
+                      f"{', '.join(missing[:12])}"
                       + (" …" if len(missing) > 12 else ""))
         dur = clip["duration"]
         action.use_frame_range = True
@@ -516,7 +628,7 @@ def _fill(fc, frames, values, tin, tout, interp, fps):
         kps.foreach_set("handle_right", hr)
 
 
-def assign_action(arm, action, morph_keys=None):
+def assign_action(arm, action, morph_keys=None, model_root=None):
     """Assign a clip action to the rig (if any), its shape-key datablocks and its animated materials."""
     from .export_anim import pick_slot
     if arm is not None:
@@ -526,7 +638,11 @@ def assign_action(arm, action, morph_keys=None):
         if slot is not None:
             ad.action_slot = slot
     keys = {}
-    for o in morph_meshes(arm):
+    meshes = ([o for o in model_root.children_recursive if o.type == "MESH"]
+              if model_root is not None else morph_meshes(arm))
+    for o in meshes:
+        if o.data.shape_keys is None:
+            continue
         keys[o.data.shape_keys.name] = o.data.shape_keys
     for kname, key in keys.items():
         slot = None
@@ -550,6 +666,17 @@ def assign_action(arm, action, morph_keys=None):
             ad = getattr(idb, "animation_data", None) if idb is not None else None
             if ad is not None and ad.action is not None and ad.action.get("adm_clip_id") is not None:
                 ad.action = None
+
+
+def assign_component_actions(components, action):
+    from .export_anim import pick_slot
+    for obj in components.values():
+        slot = pick_slot(action, "OBJECT", (obj.name,), strict=True)
+        if slot is None:
+            continue
+        ad = obj.animation_data or obj.animation_data_create()
+        ad.action = action
+        ad.action_slot = slot
 
 
 def import_library(context, filepath, options=None):

@@ -42,10 +42,11 @@ binding. Any later adoption requires a versioned amendment or later standard rel
 ## Independent conformance and certification work
 
 - Blender preserves `modelProfiles` and `componentRoles`, and its core validator covers the registered
-  vehicle/firearm metadata and role-frame checks. Blender does not yet author/import/evaluate
-  `target.kind=component` animation tracks or check their sampled profile-specific limits. The
-  independent `test_profiles.py` and cross-reader suite are structural/math smoke tests, not a full
-  mechanical-profile evaluator.
+  vehicle/firearm metadata and role-frame checks. Blender animation libraries now author and import
+  `target.kind=component` tracks using rest-relative deltas, resolve profile roles against the chosen
+  Model Root, and reject sampled values outside profile axes or declared limits. A Blender round-trip
+  test covers export/import evaluation and profile-limit rejection. This remains reference-implementation
+  coverage; independent mechanical-profile evaluation and engine interoperability are not certified.
 - No independent second implementation currently verifies ADM semantic humanoid retargeting or the full ADM-IK-1 solver. The Blender tests are reference-implementation tests only.
 - Canonical `rigId`, humanoid semantic retarget and IK need versioned byte/numerical fixtures consumed by an independent validator before certification.
 - The KTX2 subset has not been checked by the official KTX-Software validator or by GPU upload tests; Blender/OpenImageIO independently reads the emitted DDS subset only.

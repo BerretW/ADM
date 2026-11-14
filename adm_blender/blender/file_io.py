@@ -187,12 +187,20 @@ def _armature_items(self, context):
     items = [(o.name, o.name, "", "ARMATURE_DATA", i + 1)
              for i, o in enumerate(sorted((o for o in bpy.data.objects if o.type == "ARMATURE"),
                                           key=lambda o: o.name))]
-    return items + [("__NONE__", "(none - model.any.v1 only)", "Material / morph animation without a rig",
+    return items + [("__NONE__", "(none)", "No armature for model.any.v1 or mechanical component libraries",
+                     "BLANK1", 0)]
+
+
+def _model_root_items(self, context):
+    items = [(o.name, o.name, "", "OUTLINER_OB_EMPTY", i + 1)
+             for i, o in enumerate(sorted((o for o in bpy.data.objects if o.adm.adm_type == "MODEL"),
+                                          key=lambda o: o.name))]
+    return items + [("__NONE__", "(none)", "Only mechanical component libraries need a model root",
                      "BLANK1", 0)]
 
 
 class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
-    """Import an ADM animation library (.adm_anim) onto an armature"""
+    """Import an ADM animation library (.adm_anim) onto a rig or model root"""
     bl_idname = "import_anim.adm_anim"
     bl_label = "Import ADM Animation"
     bl_options = {"REGISTER", "UNDO"}
@@ -200,6 +208,7 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
     filename_ext = ".adm_anim"
     filter_glob: StringProperty(default="*.adm_anim", options={"HIDDEN"})
     armature: EnumProperty(name="Rig", items=_armature_items)
+    model_root: EnumProperty(name="Model Root", items=_model_root_items)
     strict: BoolProperty(name="Strict Compatibility", default=True,
                          description="Refuse libraries whose profile or rigId does not match the rig")
     allow_provisional: BoolProperty(name="Allow Provisional Profiles", default=True,
@@ -211,16 +220,29 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
         arm = active_armature(context)
         if arm is not None:
             self.armature = arm.name
+        root = find_model_root(context.active_object) if context.active_object else None
+        if root is not None:
+            self.model_root = root.name
         return super().invoke(context, event)
+
+    def draw(self, context):
+        self.layout.prop(self, "armature")
+        self.layout.prop(self, "model_root")
+        self.layout.prop(self, "strict")
+        self.layout.prop(self, "allow_provisional")
+        self.layout.prop(self, "frame_start")
 
     def execute(self, context):
         from .import_anim import AnimImportOptions, import_library
         arm = bpy.data.objects.get(self.armature) if self.armature != "__NONE__" else None
+        root = bpy.data.objects.get(self.model_root) if self.model_root != "__NONE__" else None
         if self.armature != "__NONE__" and (arm is None or arm.type != "ARMATURE"):
             arm = active_armature(context)
+        if self.model_root != "__NONE__" and (root is None or root.adm.adm_type != "MODEL"):
+            root = find_model_root(context.active_object) if context.active_object else None
         try:
             imp, lib = import_library(context, self.filepath,
-                                      AnimImportOptions(armature=arm, strict=self.strict,
+                                      AnimImportOptions(armature=arm, model_root=root, strict=self.strict,
                                                         allow_provisional=self.allow_provisional,
                                                         frame_start=self.frame_start))
         except ImportError_ as exc:

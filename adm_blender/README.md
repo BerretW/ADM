@@ -36,8 +36,12 @@ independent ADM conformance certification.
 4. **Face & Expressions**: facial bindings to shape keys and expressions.
 5. **Shaders**: shader definitions (`shaderDefinitions`) with parameters, and custom-shader assignment.
 6. **Animation**: clip libraries (Actions → clips). You can choose:
-   - the binding: `SEMANTIC` (by role) or `EXACT` (one rig, `rigId`);
-   - the target: armature or `model.any`.
+   - for rig libraries, the binding: `SEMANTIC` (by role) or `EXACT` (one rig, `rigId`);
+   - the target: armature, `model.any`, or vehicle/firearm mechanical components.
+   Mechanical libraries are always `SEMANTIC`: choose their Model Root and matching profile, then animate
+   objects marked with unique component roles. Import/export uses rest-relative translation and rotation
+   deltas, and checks sampled tracks against the profile's axes and declared steering, hinge, or
+   articulation ranges.
 7. **Validation**: container and model/animation schema validation, with a report.
 
 On the **Model Root**, the Object panel also edits **Physical Materials**, **Model Components** and

@@ -52,6 +52,10 @@ def _armature_poll(self, obj):
     return obj.type == "ARMATURE"
 
 
+def _model_root_poll(self, obj):
+    return obj.type == "EMPTY" and obj.adm.adm_type == "MODEL"
+
+
 # --- face / expressions ------------------------------------------------------------------------
 class ADMFaceBinding(PropertyGroup):
     channel: EnumProperty(name="Channel", items=[(c, c, "") for c in K.ARKIT52])
@@ -518,9 +522,15 @@ class ADMAnimLibrary(PropertyGroup):
     language: StringProperty(name="Language", default="en")
     target: EnumProperty(name="Target", default="RIG", items=[
         ("RIG", "Rig Profile", "Library targets the skeleton profile of the chosen rig"),
+        ("COMPONENTS", "Mechanical Components", "Vehicle/firearm component-role animation"),
         ("MODEL_ANY", "Any Model (model.any.v1)",
          "Material / morph / expression-only library without bone tracks")])
     armature: PointerProperty(name="Rig", type=bpy.types.Object, poll=_armature_poll)
+    model_root: PointerProperty(name="Model Root", type=bpy.types.Object, poll=_model_root_poll)
+    component_profile: EnumProperty(name="Component Profile", items=[
+        ("vehicle.car.v1", "Vehicle Car", "Normative vehicle.car.v1 component animation"),
+        ("weapon.firearm.v1", "Firearm", "Normative weapon.firearm.v1 component animation"),
+    ])
     binding: EnumProperty(name="Binding", default="SEMANTIC", items=[
         ("SEMANTIC", "Semantic", "Retargetable rotation deltas by profile role"),
         ("EXACT", "Exact", "Absolute local TRS for one exact rig (rigId)")])

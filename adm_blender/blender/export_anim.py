@@ -9,6 +9,7 @@ from bpy_extras import anim_utils
 from mathutils import Quaternion
 
 from ..core import constants as K
+from ..core.component_animation import component_track_issues, sample_track_values
 from ..core import skeleton as SK
 from ..core import skeleton_profiles as SP
 from ..core.buffers import BinBuilder
@@ -18,6 +19,8 @@ from ..core.validate import (BCP47_RE, EVENT_NAME_RE, LIBRARY_ID_RE, NAMESPACE_R
 from . import convert as cv
 from . import material_anim as mat_anim
 from .export_adm import GENERATOR, ExportError, compute_rig_id, find_model_root
+from .component_profiles import (component_model_binding, component_rest_issues,
+                                 restore_component_transform, snapshot_component_transform)
 from .materials import scene_shader_registry
 
 EXPR_PREFIX = "adm_expr_"
@@ -149,7 +152,8 @@ class AnimExporter:
         lib = self.lib
         arm = lib.armature
         model_any = lib.target == "MODEL_ANY"
-        if not model_any and (arm is None or arm.type != "ARMATURE"):
+        component_target = lib.target == "COMPONENTS"
+        if not model_any and not component_target and (arm is None or arm.type != "ARMATURE"):
             raise ExportError(f"library '{lib.lib_id}': choose the rig (armature) first")
         if not LIBRARY_ID_RE.match(lib.lib_id):
             raise ExportError(f"library id '{lib.lib_id}' must match segment('@'segment)*, lowercase")
@@ -158,8 +162,15 @@ class AnimExporter:
                 raise ExportError(f"library '{lib.lib_id}': {field} is required (write it, it is never generated)")
         if not BCP47_RE.match(lib.language):
             raise ExportError(f"library language '{lib.language}' is not a BCP-47 tag")
-        target_profile = K.MODEL_ANY_PROFILE if model_any else arm.data.adm.profile_id.strip()
-        if not model_any:
+        target_profile = (K.MODEL_ANY_PROFILE if model_any else lib.component_profile
+                          if component_target else arm.data.adm.profile_id.strip())
+        if component_target:
+            try:
+                self.component_metadata, self.component_objects = component_model_binding(
+                    lib.model_root, target_profile)
+            except ValueError as exc:
+                raise ExportError(f"library '{lib.lib_id}': {exc}") from exc
+        elif not model_any:
             profile_status = SP.status(target_profile)
             if profile_status == SP.PROVISIONAL:
                 raise ExportError(f"target profile '{target_profile}' is a proposal outside ADM 1.0")
@@ -170,8 +181,8 @@ class AnimExporter:
         d = {"id": lib.lib_id, "title": lib.title.strip(), "description": lib.description.strip(),
              "language": lib.language,
              "targetProfile": target_profile,
-             "binding": "SEMANTIC" if model_any else lib.binding}
-        if not model_any and lib.binding == "EXACT":
+             "binding": "SEMANTIC" if model_any or component_target else lib.binding}
+        if not model_any and not component_target and lib.binding == "EXACT":
             d["rigId"] = compute_rig_id(self.context, arm)
         tags, bad = parse_tags(lib.tags)
         if bad:
@@ -189,7 +200,7 @@ class AnimExporter:
             if not NAMESPACE_RE.match(lib.namespace.strip()):
                 raise ExportError(f"namespace '{lib.namespace}' is not reverse-DNS (e.g. org.example)")
             d["namespace"] = lib.namespace.strip()
-        if model_any:
+        if model_any or component_target:
             return d
         if lib.binding == "SEMANTIC":
             pid = d["targetProfile"]
@@ -247,7 +258,7 @@ class AnimExporter:
 
     def export_clip(self, clip, libd, ids):
         lib = self.lib
-        arm = lib.armature
+        arm = None if lib.target == "COMPONENTS" else lib.armature
         if not SEGMENT_RE.match(clip.clip_id):
             raise ExportError(f"clip id '{clip.clip_id}' must match [a-z][a-z0-9_]*")
         if clip.clip_id in ids:
@@ -284,15 +295,20 @@ class AnimExporter:
                     "channels": [], "samplers": []})
 
         model_any = lib.target == "MODEL_ANY"
-        binding = "SEMANTIC" if model_any else lib.binding
+        component_mode = lib.target == "COMPONENTS"
+        binding = "SEMANTIC" if model_any or component_mode else lib.binding
         if model_any:
             if clip.root_motion == "EXTRACT":
                 raise ExportError(f"clip '{clip.clip_id}': model.any.v1 libraries cannot use root motion EXTRACT")
             bones, role_of = [], {}
+        elif component_mode:
+            if clip.root_motion == "EXTRACT":
+                raise ExportError(f"clip '{clip.clip_id}': component libraries cannot use root motion EXTRACT")
+            bones, role_of = [], {}
         else:
             bones = list(arm.data.bones)
             role_of = {b.name: b.adm.role.strip() for b in bones if b.adm.role.strip()}
-        if model_any:
+        if model_any or component_mode:
             pass
         elif binding == "SEMANTIC":
             if not role_of:
@@ -308,9 +324,12 @@ class AnimExporter:
         # assign action + slots
         assign = _Assign()
         act = clip.action
-        meshes = morph_meshes(arm)
+        meshes = ([o for o in lib.model_root.children_recursive if o.type == "MESH"
+                   and o.data.shape_keys is not None] if component_mode else morph_meshes(arm))
         frame_saved = scene.frame_current
         pose_saved = arm.data.pose_position if arm is not None else None
+        component_states = ({obj: snapshot_component_transform(obj) for obj in self.component_objects.values()}
+                            if component_mode else {})
         registry = scene_shader_registry(scene)
         try:
             exprs = []
@@ -321,6 +340,28 @@ class AnimExporter:
                     assign.assign(arm, act, arm_slot)
                 arm_fcurves = channelbag_fcurves(act, arm_slot)
                 exprs = sorted({m.group(1) for fc in arm_fcurves for m in [EXPR_PATH_RE.match(fc.data_path)] if m})
+            component_rest = {}
+            component_tracks = {}
+            animated_components = {}
+            if component_mode:
+                for role, obj in self.component_objects.items():
+                    assign.assign(obj, None, None)
+                fi = int(np.floor(fs))
+                scene.frame_set(fi, subframe=float(fs - fi))
+                rest_issues = component_rest_issues(lib.model_root, self.component_objects)
+                if rest_issues:
+                    raise ExportError(f"library '{lib.lib_id}': " + "; ".join(rest_issues))
+                for role, obj in self.component_objects.items():
+                    location, rotation, scale = obj.matrix_basis.decompose()
+                    component_rest[role] = (location.copy(), rotation.copy(), scale.copy())
+                    slot = pick_slot(act, "OBJECT", (obj.name,), strict=True)
+                    if slot is not None:
+                        if any(fc.data_path in ("scale", "delta_scale")
+                               for fc in channelbag_fcurves(act, slot)):
+                            raise ExportError(f"clip '{clip.clip_id}': component role {role!r} cannot animate scale")
+                        assign.assign(obj, act, slot)
+                        animated_components[role] = obj
+                        component_tracks[role] = {"t": [], "r": []}
             morph_src = {}  # key name -> (key datablock)
             for o in meshes:
                 key = o.data.shape_keys
@@ -369,6 +410,15 @@ class AnimExporter:
                         sm["t"].append(tuple(t))
                     sm["r"].append(r)
                     sm["s"].append(tuple(s))
+                for role, obj in animated_components.items():
+                    location, rotation, scale = obj.matrix_basis.decompose()
+                    rest_t, rest_q, rest_scale = component_rest[role]
+                    if any(abs(scale[index] - rest_scale[index]) > 1e-5 for index in range(3)):
+                        raise ExportError(f"clip '{clip.clip_id}': component role {role!r} cannot animate scale")
+                    delta_t = location - rest_t
+                    delta_q = rest_q.inverted() @ rotation
+                    component_tracks[role]["t"].append(cv.vec_to_adm(delta_t))
+                    component_tracks[role]["r"].append(cv.quat_to_adm(delta_q))
                 for k, key in morph_src.items():
                     msamples[k].append(min(1.0, max(0.0, key.key_blocks[k].value)))
                 for e in exprs:
@@ -378,9 +428,12 @@ class AnimExporter:
                     ssamples[mat.name].append(mat_anim.shader_param_values(mat, registry))
         finally:
             assign.restore()
+            for obj, state in component_states.items():
+                restore_component_transform(obj, state)
             if arm is not None:
                 arm.data.pose_position = pose_saved
             scene.frame_set(frame_saved)
+            self.context.view_layer.update()
 
         for b in sorted(bones, key=lambda b: (role_of.get(b.name, ""), b.name)):
             sm = samples[b.name]
@@ -406,6 +459,21 @@ class AnimExporter:
                               rest=None if is_root else np.array(tuple(rt)))
                 self._channel(out, dict(target), "scale", times, np.array(sm["s"]), "bone",
                               rest=np.array(tuple(rs)))
+        for role in sorted(component_tracks):
+            target = {"kind": "component", "role": role}
+            for path, key in (("translation", "t"), ("rotation", "r")):
+                values = np.asarray(component_tracks[role][key], dtype=np.float64)
+                if path == "rotation":
+                    for index in range(1, len(values)):
+                        if np.dot(values[index - 1], values[index]) < 0:
+                            values[index] *= -1
+                sampled = sample_track_values(times, values, "LINEAR", rotation=path == "rotation")
+                issues = component_track_issues(
+                    lib.component_profile, self.component_metadata, role, path, sampled)
+                if issues:
+                    raise ExportError(f"clip '{clip.clip_id}', component role {role!r}: {'; '.join(issues)}")
+                rest = np.array([0.0, 0.0, 0.0]) if path == "translation" else np.array([0.0, 0.0, 0.0, 1.0])
+                self._channel(out, dict(target), path, times, values, "component", rest=rest)
         for k in sorted(msamples):
             self._channel(out, {"kind": "morph", "name": k}, "weight", times, np.array(msamples[k])[:, None], "morph")
         for e in sorted(esamples):

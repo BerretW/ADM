@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import math
 from pathlib import Path
 import struct
 import tempfile
@@ -10,6 +11,7 @@ from unittest import mock
 
 from adm_blender.core import constants as K
 from adm_blender.core.buffers import BinBuilder
+from adm_blender.core.component_animation import component_track_issues, sample_track_values
 from adm_blender.core.container import ChunkCollection, read_container, write_container
 from adm_blender.core.png import encode_png
 from adm_blender.core.validate import validate_adm, validate_adm_resolved, validate_anim
@@ -25,6 +27,54 @@ class Draft4Tests(unittest.TestCase):
 
     def validate(self, doc=None):
         return validate_adm(write_container(K.ADM_MAGIC, self.doc if doc is None else doc, self.chunks))
+
+    def test_component_sampling_and_profile_limits(self):
+        linear = sample_track_values([0.0, 1.0], [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]], "LINEAR")
+        self.assertIn((0.0, 0.5, 0.0), linear)
+        metadata = {"axles": [{"index": 0, "steeringAngleRad": 0.5}]}
+        self.assertEqual(component_track_issues(
+            "vehicle.car.v1", metadata, "steering.axle0.left", "rotation",
+            [[0.0, math.sin(0.25), 0.0, math.cos(0.25)]]), [])
+        self.assertTrue(component_track_issues(
+            "vehicle.car.v1", metadata, "steering.axle0.left", "rotation",
+            [[0.0, math.sin(0.3), 0.0, math.cos(0.3)]]))
+
+    def test_weapon_both_articulation_checks_each_path(self):
+        metadata = {"articulations": [{
+            "role": "weapon.bolt", "allowed": "BOTH",
+            "translationAxis": "Z", "translationMin": -0.02, "translationMax": 0.0,
+            "rotationAxis": "X", "rotationMinRad": 0.0, "rotationMaxRad": 0.25,
+        }]}
+        self.assertEqual(component_track_issues(
+            "weapon.firearm.v1", metadata, "weapon.bolt", "translation", [[0.0, 0.0, -0.01]]), [])
+        self.assertEqual(component_track_issues(
+            "weapon.firearm.v1", metadata, "weapon.bolt", "rotation",
+            [[math.sin(0.1), 0.0, 0.0, math.cos(0.1)]]), [])
+        self.assertTrue(component_track_issues(
+            "weapon.firearm.v1", metadata, "weapon.bolt", "rotation",
+            [[0.0, math.sin(0.1), 0.0, math.cos(0.1)]]))
+        self.assertTrue(component_track_issues(
+            "weapon.firearm.v1", metadata, "weapon.bolt", "translation", [[0.01, 0.0, 0.0]]))
+
+    def test_magazine_allows_authored_translation_and_rotation_axes(self):
+        self.assertEqual(component_track_issues(
+            "weapon.firearm.v1", {}, "weapon.magazine", "translation", [[0.01, -0.02, 0.03]]), [])
+        self.assertEqual(component_track_issues(
+            "weapon.firearm.v1", {}, "weapon.magazine", "rotation",
+            [[0.1, 0.2, 0.3, math.sqrt(0.86)]]), [])
+
+    def test_cubic_component_limits_include_between_key_extrema(self):
+        metadata = {"articulations": [{
+            "role": "weapon.bolt", "allowed": "TRANSLATION", "translationAxis": "Z",
+            "translationMin": -0.02, "translationMax": 0.0,
+        }]}
+        samples = sample_track_values(
+            [0.0, 1.0], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], "CUBICSPLINE",
+            [[0.0, 0.0, -4.0], [0.0, 0.0, -4.0]],
+            [[0.0, 0.0, 4.0], [0.0, 0.0, 4.0]])
+        self.assertIn((0.0, 0.0, 1.0), samples)
+        self.assertTrue(component_track_issues(
+            "weapon.firearm.v1", metadata, "weapon.bolt", "translation", samples))
 
     def codes(self, doc=None):
         return {issue.code for issue in self.validate(doc).errors}

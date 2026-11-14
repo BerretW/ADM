@@ -776,10 +776,16 @@ class ADM_PT_animation(_Side, bpy.types.Panel):
             r = col.row()
             r.enabled = False
             r.label(text=f"Target profile: {K.MODEL_ANY_PROFILE} (semantic)")
+        elif lib.target == "COMPONENTS":
+            col.prop(lib, "model_root")
+            col.prop(lib, "component_profile")
+            r = col.row()
+            r.enabled = False
+            r.label(text=f"Target profile: {lib.component_profile} (semantic)")
         else:
             col.prop(lib, "armature")
             col.prop(lib, "binding")
-        if lib.armature is not None and lib.target != "MODEL_ANY":
+        if lib.armature is not None and lib.target == "RIG":
             r = col.row()
             r.enabled = False
             r.label(text=f"Target profile: {lib.armature.data.adm.profile_id}")
@@ -794,7 +800,7 @@ class ADM_PT_animation(_Side, bpy.types.Panel):
         if body is not None:
             for k in ("author", "license", "revision", "namespace"):
                 body.prop(lib, k)
-            if lib.binding == "SEMANTIC" and lib.target != "MODEL_ANY":
+            if lib.binding == "SEMANTIC" and lib.target == "RIG":
                 body.prop(lib, "use_motion_scale")
                 rr = body.row()
                 rr.enabled = lib.use_motion_scale
