@@ -441,7 +441,8 @@ class AnimExporter:
         key = mat.adm.shader_key()
         params = registry.get(key, {})
         for name in sorted(explicit):
-            prm = params.get(name)
+            prm = K.VERTEX_CONTROL_PARAMS.get(name) if mat.adm.vertex_controls_enabled else None
+            prm = prm or params.get(name)
             if prm is None or not prm.get("animatable") or prm.get("type") not in K.SHADER_TYPE_TO_ACCESSOR:
                 self.warn(f"material '{mat.name}': parameter '{name}' is not an animatable numeric parameter "
                           f"of shader {key[0]}@{key[1]}; skipped")
@@ -473,6 +474,11 @@ class AnimExporter:
             raise ExportError(f"library '{self.lib.lib_id}' has no clips")
         doc = {"asset": {"generator": GENERATOR}, "library": libd, "clips": clips,
                "accessors": self.b.accessors, "bufferViews": self.b.buffer_views}
+        if any(ch.get("target", {}).get("parameter") in K.VERTEX_CONTROL_PARAMS
+               for clip in clips for ch in clip.get("channels", [])
+               if ch.get("target", {}).get("kind") == "shaderParameter"):
+            doc["extensionsUsed"] = [K.VERTEX_CONTROL_EXT]
+            doc["extensionsRequired"] = [K.VERTEX_CONTROL_EXT]
         data = write_container(K.ANIM_MAGIC, doc, self.b.bytes())
         report = validate_anim(data) if self.opts.validate else None
         if report is not None and not report.ok:

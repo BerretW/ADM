@@ -585,6 +585,103 @@ def _foliage(g):
     return b
 
 
+def _vertex_color(g):
+    """Return COLOR_0 components, using the extension defaults when no mesh supplies the attribute."""
+    has_attribute = any(
+        obj.type == "MESH" and g.mat.name in obj.data.materials
+        and obj.data.color_attributes.get("COLOR_0") is not None
+        for obj in bpy.data.objects
+    )
+    if not has_attribute:
+        return (0.0, 1.0, 1.0, 0.0)
+    node = g.new("ShaderNodeVertexColor", "COLOR_0", layer_name="COLOR_0")
+    separate = g.new("ShaderNodeSeparateColor", "COLOR_0 Channels")
+    g.link(node.outputs["Color"], separate.inputs[0])
+    return (*tuple(separate.outputs[name] for name in ("Red", "Green", "Blue")), node.outputs["Alpha"])
+
+
+def _socket_source(g, socket):
+    return _from(socket) if socket.is_linked else socket.default_value
+
+
+def _apply_vertex_controls(g, bsdf):
+    a = g.a
+    if not a.vertex_controls_enabled:
+        return
+
+    color0 = _vertex_color(g)
+    red, green, blue, alpha = color0
+    tint_offset = g.new("ShaderNodeValue", "Tint Offset").outputs[0]
+    tint_offset.default_value = float(a.tint_offset)
+    g._driver(tint_offset, "adm.tint_offset")
+    normal_multiplier = g.new("ShaderNodeValue", "Normal Multiplier").outputs[0]
+    normal_multiplier.default_value = float(a.normal_multiplier)
+    g._driver(normal_multiplier, "adm.normal_multiplier")
+    reflection_multiplier = g.new("ShaderNodeValue", "Reflection Multiplier").outputs[0]
+    reflection_multiplier.default_value = float(a.reflection_multiplier)
+    g._driver(reflection_multiplier, "adm.reflection_multiplier")
+    wetness_offset = g.new("ShaderNodeValue", "Wetness Offset").outputs[0]
+    wetness_offset.default_value = float(a.wetness_offset)
+    g._driver(wetness_offset, "adm.wetness_offset")
+
+    base_color = _socket_source(g, bsdf.inputs["Base Color"])
+    base_parts = g.new("ShaderNodeSeparateColor", "Base Color Channels")
+    g.link(base_color, base_parts.inputs[0])
+    base_alpha = _socket_source(g, bsdf.inputs["Alpha"])
+    palette_alpha = 1.0
+    palette_rgb = None
+    palette = a.vertex_tint_palette
+    if palette is not None and palette.size[0] > 0:
+        count = int(palette.size[0])
+        position = g.math("MULTIPLY_ADD", red, float(count), tint_offset)
+        index = g.math("FLOOR", g.math("MINIMUM", g.math("MAXIMUM", position, 0.0), float(count - 1)))
+        u = g.math("DIVIDE", g.math("ADD", index, 0.5), float(count))
+        sample = g.new("ShaderNodeTexImage", "Tint Palette", interpolation="Closest", extension="CLIP")
+        sample.image = palette
+        g.link(g.combine((u, 0.5, 0.0)), sample.inputs["Vector"])
+        palette_parts = g.new("ShaderNodeSeparateColor", "Palette Channels")
+        g.link(sample.outputs["Color"], palette_parts.inputs[0])
+        palette_rgb = tuple(palette_parts.outputs[name] for name in ("Red", "Green", "Blue"))
+        palette_alpha = sample.outputs["Alpha"]
+
+    if palette_rgb is None:
+        tinted_rgb = tuple(base_parts.outputs[name] for name in ("Red", "Green", "Blue"))
+    elif a.vertex_tint_mode == "REPLACE":
+        tinted_rgb = palette_rgb
+    else:
+        tinted_rgb = tuple(g.math("MULTIPLY", base_parts.outputs[name], value)
+                           for name, value in zip(("Red", "Green", "Blue"), palette_rgb))
+        base_alpha = g.math("MULTIPLY", base_alpha, palette_alpha)
+
+    wetness = g.math("ADD", alpha, wetness_offset, clamp=True)
+    color_scale = g.math("SUBTRACT", 1.0, g.math("MULTIPLY", wetness, 0.15))
+    g.link(g.combine(tuple(g.math("MULTIPLY", component, color_scale) for component in tinted_rgb)),
+           bsdf.inputs["Base Color"])
+    g.link(base_alpha, bsdf.inputs["Alpha"])
+
+    base_roughness = _socket_source(g, bsdf.inputs["Roughness"])
+    wet_roughness = g.math("MINIMUM", base_roughness, 0.10)
+    g.link(g.mix("FLOAT", base_roughness, wet_roughness, wetness), bsdf.inputs["Roughness"])
+
+    normal_strength = g.math("MULTIPLY", green, normal_multiplier, clamp=True)
+    for node in list(g.nt.nodes):
+        if node.type == "NORMAL_MAP" and node.name.startswith(PREVIEW_PREFIX):
+            base_strength = float(node.inputs["Strength"].default_value)
+            node.inputs["Strength"].default_value = 1.0
+            scaled_strength = g.math("MULTIPLY", normal_strength, base_strength, clamp=True)
+            g.link(scaled_strength, node.inputs["Strength"])
+
+    specular = bsdf.inputs.get("Specular IOR Level")
+    if specular is not None:
+        base_f0 = g.math("MULTIPLY", _socket_source(g, specular), 0.08)
+        reflected_f0 = g.math("MULTIPLY", base_f0,
+                              g.math("MULTIPLY", blue, reflection_multiplier, clamp=True))
+        water_f0 = ((1.333 - 1.0) / (1.333 + 1.0)) ** 2
+        wet_f0 = g.mix("FLOAT", reflected_f0,
+                       g.math("MULTIPLY_ADD", reflected_f0, (1.0 - water_f0) ** 2, water_f0), wetness)
+        g.link(g.math("DIVIDE", wet_f0, 0.08, clamp=True), specular)
+
+
 BUILDERS = {
     "BRICK": _brick, "CONCRETE": _concrete, "ROOF": _roof, "BARK": _bark, "ROCK": _rock,
     "TERRAIN_4": _terrain, "GLASS": _glass, "WATER": _water, "VEHICLE_PAINT": _vehicle_paint,
@@ -596,7 +693,16 @@ BUILDERS = {
 def build(mat):
     """Build the preview for ``mat``'s official profile; returns the preview output or None."""
     fn = BUILDERS.get(mat.adm.shader)
-    if fn is None or mat.node_tree is None:
+    if mat.node_tree is None or (fn is None and not mat.adm.vertex_controls_enabled):
         return None
     g = _Graph(mat)
-    return g.output(fn(g))
+    bsdf = fn(g) if fn is not None else g.bsdf()
+    _apply_vertex_controls(g, bsdf)
+    return g.output(bsdf)
+
+
+def apply_vertex_controls(mat, bsdf):
+    """Apply the shared vertex-control preview to an already-built preview BSDF."""
+    if mat.node_tree is None or not mat.adm.vertex_controls_enabled:
+        return
+    _apply_vertex_controls(_Graph(mat), bsdf)

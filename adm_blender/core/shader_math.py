@@ -2,6 +2,14 @@
 
 import math
 
+VERTEX_CONTROL_DEFAULTS = {
+    "tintOffset": 0.0,
+    "normalMultiplier": 1.0,
+    "reflectionMultiplier": 1.0,
+    "wetnessOffset": 0.0,
+}
+COLOR0_DEFAULT = (0.0, 1.0, 1.0, 0.0)
+
 
 def clamp(value, low=0.0, high=1.0):
     return min(high, max(low, float(value)))
@@ -12,6 +20,65 @@ def srgb_to_linear(value):
     if value <= 0.04045:
         return value / 12.92
     return ((value + 0.055) / 1.055) ** 2.4
+
+
+def tint_palette_index(position, offset, palette_size):
+    if type(palette_size) is not int or palette_size < 1:
+        raise ValueError("palette_size must be a positive integer")
+    index = math.floor(clamp(position) * palette_size + float(offset))
+    return min(palette_size - 1, max(0, index))
+
+
+def vertex_tint(base_rgba, palette_rgba, mode="MULTIPLY"):
+    """Apply one sRGB palette entry to linear base RGBA."""
+    if len(base_rgba) != 4 or len(palette_rgba) != 4:
+        raise ValueError("base and palette colors must be RGBA")
+    palette = tuple(srgb_to_linear(c) for c in palette_rgba[:3]) + (float(palette_rgba[3]),)
+    if mode == "MULTIPLY":
+        return tuple(float(base_rgba[i]) * palette[i] for i in range(4))
+    if mode == "REPLACE":
+        return palette[:3] + (float(base_rgba[3]),)
+    raise ValueError("tint mode must be MULTIPLY or REPLACE")
+
+
+def vertex_control_normal(normal_rgb, base_scale, color0_green, multiplier):
+    """Scale tangent-space xy by the control, retain z, and normalize."""
+    if normal_rgb is None:
+        return None
+    q = tuple(2.0 * float(channel) - 1.0 for channel in normal_rgb[:3])
+    strength = float(base_scale) * clamp(float(color0_green) * float(multiplier))
+    scaled = (q[0] * strength, q[1] * strength, q[2])
+    length = math.sqrt(sum(component * component for component in scaled))
+    if not math.isfinite(length) or length <= 1e-12:
+        raise ValueError("scaled tangent-space normal must be nonzero and finite")
+    return tuple(component / length for component in scaled)
+
+
+def vertex_control_f0(f0, color0_blue, multiplier):
+    """Scale linear dielectric/metal mixture F0, without changing diffuse color."""
+    scale = clamp(float(color0_blue) * float(multiplier))
+    if isinstance(f0, (int, float)):
+        return float(f0) * scale
+    return tuple(float(component) * scale for component in f0)
+
+
+def vertex_control_wetness(base_rgb, base_roughness, f0, color0_alpha, offset):
+    """Return wet base RGB, roughness, effective F0 and effective wetness."""
+    wetness = clamp(float(color0_alpha) + float(offset))
+    color_scale = 1.0 - 0.15 * wetness
+    color = tuple(float(component) * color_scale for component in base_rgb)
+    roughness = float(base_roughness)
+    wet_roughness = roughness + (min(roughness, 0.10) - roughness) * wetness
+    water_f0 = ((1.333 - 1.0) / (1.333 + 1.0)) ** 2
+    if isinstance(f0, (int, float)):
+        base_f0 = float(f0)
+        coat_f0 = water_f0 + (1.0 - water_f0) ** 2 * base_f0
+        effective_f0 = base_f0 + (coat_f0 - base_f0) * wetness
+    else:
+        base_f0 = tuple(float(component) for component in f0)
+        coat_f0 = tuple(water_f0 + (1.0 - water_f0) ** 2 * component for component in base_f0)
+        effective_f0 = tuple(base + (coat - base) * wetness for base, coat in zip(base_f0, coat_f0))
+    return color, wet_roughness, effective_f0, wetness
 
 
 def schlick(cos_theta, ior):

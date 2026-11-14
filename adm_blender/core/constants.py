@@ -103,6 +103,12 @@ SHADER_WATER = ("adm.nature.water", "1.0.0")
 SHADER_FABRIC = ("adm.surface.fabric", "1.0.0")
 LAYERS_EXT = "ADM_material_layers_v1"
 VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
+VERTEX_CONTROL_PARAMS = {
+    "tintOffset": {"type": "F32", "minimum": -1024.0, "maximum": 1024.0, "animatable": True},
+    "normalMultiplier": {"type": "F32", "minimum": 0.0, "maximum": 4.0, "animatable": True},
+    "reflectionMultiplier": {"type": "F32", "minimum": 0.0, "maximum": 4.0, "animatable": True},
+    "wetnessOffset": {"type": "F32", "minimum": -1.0, "maximum": 1.0, "animatable": True},
+}
 EXTERNAL_IMAGES_EXT = "ADM_external_images_v1"
 PHYSICAL_SURFACES_EXT = "ADM_physical_surfaces_v1"
 SUPPORTED_EXTENSIONS = (LAYERS_EXT, VERTEX_CONTROL_EXT, EXTERNAL_IMAGES_EXT, PHYSICAL_SURFACES_EXT)

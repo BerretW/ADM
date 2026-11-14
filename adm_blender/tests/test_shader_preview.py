@@ -173,6 +173,49 @@ def main():
     check(close(alb[8, 3, :3], (0.1, 0.9, 0.1)), f"TERRAIN_4: one-hot G selects layer 1 ({alb[8, 3, :3]})")
     check(close(alb[8, 12, :3], (0.9, 0.1, 0.1)), f"TERRAIN_4: zero mask falls back to layer 0 ({alb[8, 12, :3]})")
 
+    # 4. Vertex controls are evaluated after the profile's material operations ---------------------
+    mat = bpy.data.materials.new("vertex_controls")
+    plane.data.materials.clear()
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    fallback = M.principled_of(mat)
+    fallback.inputs["Base Color"].default_value = (0.8, 0.4, 0.2, 1.0)
+    fallback.inputs["Roughness"].default_value = 0.6
+    fallback.inputs["Specular IOR Level"].default_value = 0.0
+    mat.adm.shader = "BRICK"
+    color0 = plane.data.color_attributes.new(name="COLOR_0", type="FLOAT_COLOR", domain="CORNER")
+    color0.data.foreach_set("color", np.tile((0.0, 1.0, 1.0, 0.0), len(color0.data)).ravel())
+    mat.adm.vertex_controls_enabled = True
+    mat.adm.wetness_offset = 1.0
+    alb = bake(plane, mat, "DIFFUSE")
+    water_f0 = ((1.333 - 1.0) / (1.333 + 1.0)) ** 2
+    check(close(alb[8, 8, :3], (0.8 * 0.85 * (1.0 - water_f0),
+                                 0.4 * 0.85 * (1.0 - water_f0),
+                                 0.2 * 0.85 * (1.0 - water_f0))),
+          f"COLOR_0 wetness darkens preview albedo ({alb[8, 8, :3]})")
+    rough = bake(plane, mat, "ROUGHNESS")
+    check(close(rough[8, 8, :1], (0.1,)), f"COLOR_0 wetness reduces preview roughness ({rough[8, 8, 0]:.3f})")
+    node_count = len(mat.node_tree.nodes)
+    mat.adm.wetness_offset = 0.5
+    check(len(mat.node_tree.nodes) == node_count, "vertex-control values update through drivers without rebuilding")
+    bpy.context.view_layer.update()
+    alb = bake(plane, mat, "DIFFUSE")
+    half_wet_f0 = water_f0 * 0.5
+    check(close(alb[8, 8, :3], (0.8 * 0.925 * (1.0 - half_wet_f0),
+                                 0.4 * 0.925 * (1.0 - half_wet_f0),
+                                 0.2 * 0.925 * (1.0 - half_wet_f0))),
+          f"vertex-control wetness driver updates live ({alb[8, 8, :3]})")
+    mat.adm.wetness_offset = 0.0
+    color0.data.foreach_set("color", np.tile((0.75, 1.0, 1.0, 0.0), len(color0.data)).ravel())
+    palette = bpy.data.images.new("palette", 2, 1, alpha=True, float_buffer=True)
+    palette.pixels.foreach_set((0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0))
+    palette.update()
+    mat.adm.vertex_tint_palette = palette
+    bpy.context.view_layer.update()
+    alb = bake(plane, mat, "DIFFUSE")
+    check(close(alb[8, 8, :3], (0.8, 0.0, 0.0)),
+          f"COLOR_0 tint index samples the nearest palette entry ({alb[8, 8, :3]})")
+
     adm_blender.unregister()
 
 

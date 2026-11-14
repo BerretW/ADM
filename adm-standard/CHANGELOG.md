@@ -97,4 +97,13 @@
 - Added physical surface profile IDs and per-triangle collision-mesh references. Blender stores IDs in the `adm_physical_material_id` FACE string attribute; the UI can assign the collider's selected stable ID to selected faces.
 - Added Blender workflow tests for external sidecar resolution and physical surface export/import round-trip.
 - Vertex-control values and palette settings currently serialize and import, but universal tint/normal/reflection/wetness preview application, verified animation binding, full `COLOR_1` rules, external failure-cleanup/security edge coverage, and independent-reader interoperability remain open in `SPEC_GAPS.md`. These extensions are not yet certified for full renderer interoperability.
+- Reworked `tools/build_fixtures.py` to use checked-in manifests and verified chunk payloads instead of a developer-local ZIP; `--output-dir` now works and fixture regeneration is byte-reproducible.
+
+## Draft 0.4 revision P11 — vertex-control preview and animation
+
+- Added Blender viewport application of `COLOR_0` tint-palette sampling, normal strength, wetness color and roughness for Core, layered, custom-fallback and profile preview materials when enabled.
+- Added exact-name extension-level `shaderParameter` animation targets for `tintOffset`, `normalMultiplier`, `reflectionMultiplier` and `wetnessOffset`; `.adm_anim` requires the extension when those channels are present, and model/material binding is validated.
+- Added round-trip workflow assertions for exported `COLOR_0`, material control settings, animation bindings and sampled wetness values.
+- Added Cycles bake tests for wetness albedo/roughness and live driver updates.
+- Blender's Principled BSDF cannot match the exact metallic F0 equation; reflectivity remains approximate for metallic materials. Per-profile `COLOR_1` semantics and independent renderer conformance remain open.
 - No binary container change.

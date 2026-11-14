@@ -945,7 +945,7 @@ def apply_shader(mat, m, scene, resolve_image):
     """Read ADM shader fields of material dict ``m`` into ``mat.adm`` and rebuild the viewport preview."""
     with quiet_param_updates():
         _apply_shader(mat, m, scene, resolve_image)
-    if mat.adm.shader != "CORE":
+    if mat.adm.shader != "CORE" or mat.adm.vertex_controls_enabled:
         refresh_shader_preview(mat)
 
 
@@ -1670,11 +1670,19 @@ def refresh_shader_preview(mat):
     remove_shader_preview(mat)
     if mat.adm.shader == "CORE":
         convert_to_adm_material(mat)
+        if mat.adm.vertex_controls_enabled:
+            from . import shader_preview
+            shader_preview.build(mat)
     elif mat.adm.shader == "LAYERED":
-        _build_layered_preview(mat)
+        out = _build_layered_preview(mat)
+        if mat.adm.vertex_controls_enabled and out is not None:
+            from . import shader_preview
+            bsdf = _from(out.inputs["Surface"])
+            if bsdf is not None:
+                shader_preview.apply_vertex_controls(mat, bsdf.node)
     else:
         from . import shader_preview
-        if mat.adm.shader in shader_preview.BUILDERS:
+        if mat.adm.shader in shader_preview.BUILDERS or mat.adm.vertex_controls_enabled:
             convert_to_adm_material(mat)
             shader_preview.build(mat)
 
