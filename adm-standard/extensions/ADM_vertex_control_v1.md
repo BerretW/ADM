@@ -1,6 +1,6 @@
 # `ADM_vertex_control_v1`
 
-Version 1.1.0, incorporated by ADM Draft 0.4 P10.
+Version 1.1.0, incorporated by the final ADM 1.0 specification.
 
 Version 1.1.0 allows tint palettes 1–5 texels high (1.0.0 required exactly one row). Only the first
 row is read, so every valid 1.0.0 file keeps its meaning; a 1.0.0 reader rejects taller palettes.
@@ -10,7 +10,7 @@ row is read, so every valid 1.0.0 file keeps its meaning; a 1.0.0 reader rejects
 A file using this capability MUST list `ADM_vertex_control_v1` in both `extensionsUsed` and
 `extensionsRequired`. It applies to every mesh primitive. A reader that does not support it MUST
 reject the asset; it MUST NOT interpret `COLOR_0` as ordinary vertex color. Without this extension,
-Draft 0.4 `COLOR_0` retains its original linear RGBA color meaning.
+ADM 1.0 `COLOR_0` retains its original linear RGBA color meaning.
 
 This is the sole registered exception to the core rule that extensions do not redefine a core
 semantic. The exception is explicit and versioned; files lacking the required declaration are never

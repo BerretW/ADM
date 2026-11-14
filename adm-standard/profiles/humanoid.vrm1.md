@@ -1,6 +1,6 @@
 # ADM Skeleton Profile: `humanoid.vrm1`
 
-**Status:** role registry and semantic reference-pose/retarget rules are normative (ADM 1.0 Draft 0.4 §§11, 11.2 and 16). Role names and hierarchy are taken unchanged from VRM 1.0; ADM-specific coordinate and normalized-correction rules are defined by the ADM specification. Machine-readable data: [`skeleton-profiles.json`](skeleton-profiles.json) (`profiles[id=humanoid.vrm1]`). Remaining approval and certification blockers are tracked in [`../SPEC_GAPS.md`](../SPEC_GAPS.md).
+**Status:** normative ADM 1.0 role registry and semantic reference-pose/retarget rules (§§11, 11.2 and 16). Role names and hierarchy are taken unchanged from VRM 1.0; ADM-specific coordinate and normalized-correction rules are defined by the ADM specification. Machine-readable data: [`skeleton-profiles.json`](skeleton-profiles.json) (`profiles[id=humanoid.vrm1]`). Independent conformance limitations are tracked in [`../SPEC_GAPS.md`](../SPEC_GAPS.md).
 
 ## H1. Source and role set
 

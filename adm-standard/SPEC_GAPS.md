@@ -1,8 +1,11 @@
-# ADM 1.0 Draft 0.4 — specification gap disposition
+# ADM 1.0 Conformance Status and Excluded Proposals
 
-This register records ambiguities discovered while implementing the reference Blender toolkit and the normative disposition added in revision P4. A closed gap means the current Draft 0.4 behavior is explicit; it does not imply independent conformance certification. Items retained below are deliberately not filled with unapproved binary or semantic conventions.
+ADM 1.0's normative text is final. This register records the design decisions frozen into the
+standard, proposals deliberately excluded from this version, and separate implementation and
+certification work that is not supplied by publication. The remaining items do not reopen or qualify
+the normative requirements.
 
-## Resolved in the specification
+## Finalized design decisions
 
 | ID | Area | Normative disposition |
 |---|---|---|
@@ -13,7 +16,7 @@ This register records ambiguities discovered while implementing the reference Bl
 | `SPEC_GAP-LOCAL-AXES` | §11.2 | Local axes remain unconstrained; the normalized correction algorithm defines how semantic rotation deltas are applied independently of bone roll. |
 | `SPEC_GAP-FORWARD` | §2 / §11 | ADM model space is +Y up, +X anatomical right, −Z forward. Source formats with a different basis are converted consistently across geometry, transforms, skinning, animation, IK and attachments before validation. |
 | `SPEC_GAP-ROOT-ROLE` | §11 / §14 / §16 | `root` is not a VRM role. Humanoid translation and v1 root-motion extraction use semantic `hips`; v1 EXTRACT requires `library.rootMotionSource:"hips"`. No root role is synthesized. |
-| `SPEC_GAP-IK-MULTI` | §20 / animal annex | ADM-IK-1 is explicitly two-bone. Quadruped templates solve only the first two segments; distal joints remain FK and are not represented as full hoof/toe contact IK. More segments need a separate registered capability. |
+| `SPEC_GAP-IK-MULTI` | §20 | ADM-IK-1 is explicitly two-bone. Longer chains and distal hoof/toe contact require a separately registered future capability. |
 | `SPEC_GAP-IK-LIMITS` | §20 | Joint limits, stretch, twist distribution, pole-angle controls, FABRIK/CCD and longer chains are outside ADM-IK-1. The core schema does not accept such fields; authoring tools must report unsupported DCC settings rather than silently export them. |
 | `SPEC_GAP-IK-ZERO-FOLD` | §20.1 | The solver clamps to the exact physical reach interval. At the equal-length zero-distance singularity it preserves the neutral mid position and places the endpoint at the root. The reference solver and boundary test use this rule. |
 | `SPEC_GAP-PROFILE-TEMPLATES` | §11 registry | The root/profile/role/reference-pose/IK-template/socket-template schema for `profiles/skeleton-profiles.json` is specified. Templates are authoring defaults only; ADM files store explicit resolved roles, IK chains and attachments. |
@@ -24,21 +27,25 @@ This register records ambiguities discovered while implementing the reference Bl
 | `SPEC_GAP-INTERACTIVE-BINDING` | Interactive display identity, UV and appearance | `ADM_interactive_surfaces_v1@1.0.0` defines unique surface IDs, node/primitive/UV references, hit coordinates and optional aspect metadata. `adm.surface.interactive@1.0.0` defines runtime color/alpha, lit/unlit, off state and portable fallback. Blender and both manifest validators exercise the data; independent runtime rendering remains unverified. |
 | `SPEC_GAP-HUMANOID-SOCKETS` | Equipment attachment semantics | `ADM_humanoid_sockets_v1@1.0.0` defines 20 stable humanoid mount names, role ancestry, model-space frame axes, asset-authored positions and `mount.root` composition. The reference validator and Blender export/import tests cover the contract. Independent engine interoperability and equipment-fit guarantees remain unverified. |
 
-## Deliberately retained: approval and certification blockers
+## Excluded proposals (not part of ADM 1.0)
 
-| ID | Area | Why it remains open | Required to close |
-|---|---|---|---|
-| `SPEC_GAP-ANIMAL-REGISTRY` | `animal.*.v1` | The identifiers and role sets are design proposals only. The user requirement explicitly says not to call them official without an approved normative profile; the current proposal has not had independent anatomical review. | Approve a versioned profile per species with role hierarchy, mandatory/optional roles, reference pose, limb topology, IK semantics, sockets and positive/negative example rigs; then mark the registry entry NORMATIVE. |
-| `SPEC_GAP-STAND` | Animal reference pose | The proposed quadruped `STAND` posture and 45° checks are editor diagnostics, not calibrated cross-tool semantics. Making them normative without approved animal profiles would imply unsupported compatibility. | Approve the pose per animal profile and publish calibrated direction/side fixtures. |
-| `SPEC_GAP-RETARGET-ANIMAL` | Cross-species animation | No canine/feline/equine map has been reviewed or registered. Similar limb names/topology do not establish compatible motion. | Publish an explicit profile-pair mapping, transform and scaling rules, and numerical acceptance fixtures. Until then every cross-profile binding is INCOMPATIBLE. |
+The quadruped profile proposal and its machine-readable records are retained under `proposals/`.
+They are not entries in the ADM 1.0 profile registry and MUST NOT be used for ADM 1.0 semantic
+binding. Any later adoption requires a versioned amendment or later standard release.
 
-## Release/certification limitations (not specification ambiguities)
+| Proposal | ADM 1.0 disposition | Work required for possible future adoption |
+|---|---|---|
+| `animal.*.v1` registry | Excluded; not registered | Review anatomy and role hierarchies per species; publish versioned profiles and positive/negative fixtures. |
+| Quadruped `STAND` pose | Excluded; diagnostics only in the proposal | Approve a reference pose and calibrated direction/side tolerances for each adopted profile. |
+| Cross-species retargeting | Not defined or permitted | Publish explicit profile-pair mappings, transforms, scaling rules and numerical fixtures. |
+
+## Independent conformance and certification work
 
 - No independent second implementation currently verifies ADM semantic humanoid retargeting or the full ADM-IK-1 solver. The Blender tests are reference-implementation tests only.
 - Canonical `rigId`, humanoid semantic retarget and IK need versioned byte/numerical fixtures consumed by an independent validator before certification.
 - The KTX2 subset has not been checked by the official KTX-Software validator or by GPU upload tests; Blender/OpenImageIO independently reads the emitted DDS subset only.
-- No animal profile may be advertised as normative, and no implementation may claim full ADM 1.0 conformance from the bundled tests alone.
-- The external-image and physical-surface extensions have structural and Blender workflow coverage, including external texture resolution and per-triangle FACE-attribute round-trip. Security-edge fixtures (including symlink escape, failure cleanup, and all external image encodings) and independent-reader interoperability remain release gates.
+- The bundled tests alone do not establish independently verified full ADM 1.0 conformance.
+- The external-image and physical-surface extensions have structural and Blender workflow coverage, including external texture resolution and per-triangle FACE-attribute round-trip. Security-edge fixtures (including symlink escape, failure cleanup, and all external image encodings) and independent-reader interoperability remain certification gates.
 - Interactive screens have numerical reference values and Blender metadata round trips, but no second
   independent runtime renderer or engine-level hit-test certification. Blender previews the authored
   static fallback only; runtime content and input remain the engine's responsibility.

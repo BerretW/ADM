@@ -1,15 +1,15 @@
 """ADM Skeleton Profile Registry (data-driven, bpy-free).
 
-Each profile is a plain dictionary so the very same data can be published as
-``adm-standard/profiles/skeleton-profiles.json`` (see :func:`registry_json`) and consumed by the
-Blender add-on, the validator and the tests.
+Each profile is a plain dictionary consumed by the Blender add-on, validator and tests. The frozen
+ADM 1.0 registry contains only normative and exact-only profiles; provisional authoring proposals are
+published separately from the standard.
 
 Status values
 -------------
-``NORMATIVE``   the role list/hierarchy is normative ADM 1.0 Draft 0.4 data (``humanoid.vrm1``).
+``NORMATIVE``   the role list/hierarchy is normative ADM 1.0 data (``humanoid.vrm1``).
 ``EXACT_ONLY``  no semantic roles; only EXACT (rigId) binding is possible (``generic.v1``).
-``PROVISIONAL`` proposed data that is NOT a registered ADM profile.  Tools may author, map and
-                validate against it, but MUST NOT claim interoperable SEMANTIC compatibility.
+``PROVISIONAL`` non-normative proposal data outside ADM 1.0. Tools may author, map and validate
+                against it, but MUST NOT claim interoperable SEMANTIC compatibility.
 
 Directions (``referencePose.checks``, IK poles, ...) are in ADM model space: +Y up, +X is the
 character's right, forward is -Z (ADM 1.0 §2, §11).
@@ -21,7 +21,8 @@ import re
 
 from . import constants as K
 
-REGISTRY_VERSION = "0.4-P14"
+REGISTRY_VERSION = "1.0.0"
+PROPOSAL_REGISTRY_VERSION = "0.1.0"
 
 NORMATIVE = "NORMATIVE"
 EXACT_ONLY = "EXACT_ONLY"
@@ -114,7 +115,7 @@ def _humanoid():
             {"name": name, "role": role, **({"fallback": list(fallback)} if fallback else {})}
             for name, role, fallback in HUMANOID_SOCKET_TEMPLATES
         ] + [
-            # Retained generic anchors for compatibility with existing Draft 0.4 assets.
+            # Retained generic anchors for compatibility with existing ADM assets.
             {"name": "hand.left", "role": "leftHand"}, {"name": "hand.right", "role": "rightHand"},
             {"name": "head", "role": "head"}, {"name": "spine.back", "role": "chest", "fallback": ["spine"]},
         ],
@@ -125,7 +126,7 @@ def _humanoid():
 
 
 # ---------------------------------------------------------------------------------------------
-# Quadruped family (PROVISIONAL — not registered in ADM 1.0 Draft 0.4)
+# Quadruped family (PROVISIONAL — outside the ADM 1.0 profile registry)
 # ---------------------------------------------------------------------------------------------
 def _quadruped_roles(front, hind, scapula_required, toes_required):
     roles = {
@@ -183,7 +184,7 @@ def _quadruped(pid, title, front, hind, scapula_required, toes_required, gait, e
         "semanticCompatibleWith": [pid],
         "retargetMaps": {},
         "translationRoles": ["hips"],
-        "notes": "PROVISIONAL: not a registered ADM 1.0 profile; SEMANTIC compatibility must not be claimed.",
+        "notes": "PROVISIONAL: outside ADM 1.0; SEMANTIC compatibility must not be claimed.",
     }
     if extends:
         d["extends"] = extends
@@ -268,11 +269,25 @@ def semantic_role_names(profile_id):
 
 
 def registry_document():
-    return {"registryVersion": REGISTRY_VERSION, "specification": "ADM 1.0 Draft 0.4",
+    return {"registryVersion": REGISTRY_VERSION, "specification": "ADM 1.0",
             "coordinateSystem": {"up": list(UP), "forward": list(FORWARD), "right": list(RIGHT)},
-            "profiles": [copy.deepcopy(_REGISTRY[k]) for k in PROFILE_IDS]}
+            "profiles": [copy.deepcopy(_REGISTRY[k]) for k in PROFILE_IDS
+                         if _REGISTRY[k]["status"] != PROVISIONAL]}
 
 
 def registry_json():
     """Canonical JSON text published as adm-standard/profiles/skeleton-profiles.json."""
     return json.dumps(registry_document(), indent=2, ensure_ascii=False) + "\n"
+
+
+def proposal_registry_document():
+    return {"registryVersion": PROPOSAL_REGISTRY_VERSION,
+            "scope": "Non-normative profile proposals outside ADM 1.0",
+            "coordinateSystem": {"up": list(UP), "forward": list(FORWARD), "right": list(RIGHT)},
+            "profiles": [copy.deepcopy(_REGISTRY[k]) for k in PROFILE_IDS
+                         if _REGISTRY[k]["status"] == PROVISIONAL]}
+
+
+def proposal_registry_json():
+    """Canonical JSON text for the non-normative profile proposals."""
+    return json.dumps(proposal_registry_document(), indent=2, ensure_ascii=False) + "\n"

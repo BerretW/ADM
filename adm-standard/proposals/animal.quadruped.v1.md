@@ -1,6 +1,6 @@
-# ADM Skeleton Profiles: quadruped family (`animal.*.v1`) — PROPOSAL
+# Non-normative ADM Skeleton Profile Proposal: quadruped family (`animal.*.v1`)
 
-**Status: PROVISIONAL — not registered for normative semantic interoperability in ADM 1.0 Draft 0.4.** This document and the matching entries in [`skeleton-profiles.json`](skeleton-profiles.json) are a design proposal for review. Tools MAY author, map and validate against these identifiers. They MUST NOT advertise `SEMANTIC` interoperability for them; the plugin reports `PROVISIONAL_SEMANTIC` instead. Role names, required roles, joint topology, gait labels and orientations below are proposals and MUST NOT be emitted as normative compatibility claims until an anatomy review, approved registry entry and independent fixtures are published.
+**Status: PROPOSAL — outside the ADM 1.0 standard and its normative registry.** This document and the matching entries in [`skeleton-profile-proposals.json`](skeleton-profile-proposals.json) are retained for future review only. Tools MAY author, map and validate against these identifiers as a separately labelled provisional feature. They MUST NOT advertise ADM 1.0 `SEMANTIC` interoperability for them; the Blender add-on reports `PROVISIONAL_SEMANTIC` instead. Role names, required roles, joint topology, gait labels and orientations below are proposals and MUST NOT be emitted as normative compatibility claims.
 
 | id | extends | gait | limb segments (front / hind) | required extras |
 |---|---|---|---|---|
@@ -52,4 +52,4 @@ Distal segments such as Toes, Pastern and Hoof keep their FK rotation; hoof/toe 
 - `QDR-003`: canine→equine, canine→feline and humanoid→canine bindings are INCOMPATIBLE.
 - `QDR-004`: same-profile binding is PROVISIONAL_SEMANTIC and is refused when provisional binding is disabled.
 
-`QDR-001`, `QDR-003` and `QDR-004` are executed by the plugin tests (`QDR-002` partially, through the generic needs-parent rule). Registration still requires anatomical review, representative example rigs per specialization, approved pose and IK semantics, and an independent implementation. Until then these checks only test the toolkit's provisional behavior.
+`QDR-001`, `QDR-003` and `QDR-004` are executed by the plugin tests (`QDR-002` partially, through the generic needs-parent rule). Inclusion in a future standard revision would require anatomical review, representative example rigs per specialization, approved pose and IK semantics, and an independent implementation. Until then these checks only test the toolkit's provisional behavior.

@@ -1,6 +1,6 @@
 # ADM Profile: `vehicle.car.v1`
 
-**Status:** normative proposal for ADM Draft 0.4; not yet independently certified. **Applies to:** wheeled passenger cars and comparable four-or-more-wheel road vehicles. Three-wheelers, motorcycles, tracked vehicles and articulated trucks need other profiles. **Game logic:** expressly excluded.
+**Status:** normative ADM 1.0 profile; independent profile certification is separate. **Applies to:** wheeled passenger cars and comparable four-or-more-wheel road vehicles. Three-wheelers, motorcycles, tracked vehicles and articulated trucks need other profiles. **Game logic:** expressly excluded.
 
 ## V1. Coordinate and semantic frame
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## ADM 1.0 — Final specification publication — 2026-11-14
+
+- Froze the ADM 1.0 normative text and established a versioned conformance/certification process
+  separate from specification publication. This does not claim independent implementation
+  certification or external standards-body ratification.
+- Kept the ADM 1.0 wire format and finalized semantics unchanged from the last working revision.
+  Legacy ADM, ADS and `.ads_anim` formats remain incompatible.
+- Excluded all `animal.*.v1` quadruped profiles from ADM 1.0. Their proposals and machine-readable
+  data are retained under `proposals/`; they are not in the normative skeleton registry and cannot
+  be used for ADM 1.0 semantic binding.
+- Froze `profiles/skeleton-profiles.json` at registry version 1.0.0 with `humanoid.vrm1` and
+  `generic.v1`.
+- Recorded independent conformance testing, numerical corpus completion and certification as
+  separate outstanding implementation activities in `SPEC_GAPS.md`.
+
+## Blender Tools 1.15.0 — 2026-11-14
+
+- Publishes the frozen ADM 1.0 skeleton registry separately from non-normative animal profile
+  proposals. The add-on may still author those profiles as explicitly provisional data.
+- Aligns the extension version and exported asset generator marker with the final specification.
+
 ## Draft 0.4 revision P14 — humanoid equipment sockets
 
 - Added the normative `ADM_humanoid_sockets_v1@1.0.0` extension and `ADM-HUMANOID-SOCKETS-1`

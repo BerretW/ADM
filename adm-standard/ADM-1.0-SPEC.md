@@ -1,16 +1,16 @@
 # ADM 1.0 — Apparatus Drawable Model & Animation Standard
 
-**Status:** Draft 0.4 revision P13 — interactive surfaces and prior profile revisions; **NOT ratified**<br>
-**Date:** 2026-11-13  
+**Status:** Final ADM 1.0 specification — published 2026-11-14. This is a project publication; no external standards-body ratification is implied.<br>
+**Date:** 2026-11-14
 **Formats:** `.adm` (drawable model), `.adm_anim` (standalone animation library)  
 **Version:** 1.0 (`major=1, minor=0`) for each independent file format  
 **Compatibility:** intentionally incompatible with all legacy ADM / ADS / `.ads_anim` variants  
 **Intended license:** specification CC0-1.0; reference implementations preferably MIT or Apache-2.0  
-**Conformance:** this draft is not certified; §25 and §30 define the required tests, including streaming/security tests. The published example validator checks a subset only.
+**Conformance:** this publication freezes the normative text; it does not certify an implementation. Independent conformance testing and certification are separate activities described in §25 and §30.
 
 > **Normative rule:** ADM describes reusable *model assets*, NOT game entities. It standardizes appearance, standardized shader bindings and shader-parameter animation, rest transforms, articulation, visual animation, morph shapes, attachment markers, LOD, geometric collision descriptors, and metadata. It does not define NPC AI, inventory, network replication, vehicle drivetrain, damage logic, scripts, character controllers, game physics, or audio playback. An application supplies these systems.
 >
-> **Draft restriction:** This document supersedes the earlier 1.0 draft completely. The last section identifies remaining profile/testing work that MUST be closed before a final 1.0 release. No old files are grandfathered in.
+> **Final release:** This document freezes the ADM 1.0 file and semantic requirements. It supersedes earlier proposals; legacy ADM, ADS and `.ads_anim` files are not compatible and are not grandfathered in.
 
 ## 1. Document scope and interpretation
 
@@ -56,7 +56,7 @@ extension rules. The application, not ADM, supplies runtime images and interacti
 
 ## 3. Native chunked binary container (byte-exact, replaces Draft 0.3)
 
-**BREAKING CHANGE:** The earlier 32-byte header and contiguous BIN region are REMOVED. A Draft 0.4 `.adm` or `.adm_anim` MUST use the header and chunk directory below. This draft is intentionally not compatible with Draft 0.3. Integer fields are unsigned little-endian. The manifest is plain UTF-8 JSON, independently readable. All offsets refer to byte positions from the start of the file. The file MUST NOT include unaddressed bytes except zero padding for 16-byte alignment between regions.
+**BREAKING CHANGE:** The earlier 32-byte header and contiguous BIN region are REMOVED. An ADM 1.0 `.adm` or `.adm_anim` MUST use the header and chunk directory below. ADM 1.0 is intentionally not compatible with the earlier 32-byte-header format. Integer fields are unsigned little-endian. The manifest is plain UTF-8 JSON, independently readable. All offsets refer to byte positions from the start of the file. The file MUST NOT include unaddressed bytes except zero padding for 16-byte alignment between regions.
 
 ### 3.1 Fixed header (64 bytes)
 
@@ -99,7 +99,7 @@ A valid reader MUST enforce checked addition/multiplication before allocating, d
 
 Required top-level members: `asset`, `nodes`, `scenes`, `scene`, `meshes`, `accessors`, `bufferViews`. The `chunkDependencies` member is optional as defined in §5. Optional members (default empty arrays where an array is expected): `materials`, `samplers`, `images`, `textures`, `shaderDefinitions`, `skins`, `colliders`, `lodGroups`, `attachments`, `skeletonProfiles`, `facialProfiles`, `expressions`, `ikChains`, `componentRoles`, `chunkDependencies`, `streamHints`, `physicalMaterials`, `hitboxes`, `modelComponents`, `modelProfiles`, `extensionsUsed`, `extensionsRequired`, `extensions`, `extras`. Embedded animation clips are NOT allowed in `.adm`; animations reside in `.adm_anim`. `asset` is `{ "generator"?: string, "copyright"?: string }` with an optional string `generator` and `copyright`. File version comes **only from binary header**; `asset` MUST NOT duplicate a version.
 
-A missing optional array is equivalent to `[]`. Unknown top-level fields are invalid except namespaced members within `extensions` and arbitrary JSON inside `extras`. `extras` MUST be a JSON object and MUST NOT change normative behavior. `extensionsUsed` and `extensionsRequired` are arrays of unique strings matching `[A-Za-z][A-Za-z0-9_]*`; `extensionsRequired` MUST be a subset of `extensionsUsed`. An implementation MUST reject a file containing an unknown required extension, and MAY ignore an unknown optional extension. Extension data is held in `extensions` objects keyed by those names and MUST have a separately published, versioned specification. An extension MUST NOT reinterpret core fields except where its incorporated normative annex explicitly registers a versioned semantic extension and requires readers that do not support it to reject the file. `ADM_vertex_control_v1` is the sole such exception in this draft; it explicitly changes `COLOR_0` meaning only when required. A writer MUST NOT use `extras` as an undocumented substitute for required core semantics.
+A missing optional array is equivalent to `[]`. Unknown top-level fields are invalid except namespaced members within `extensions` and arbitrary JSON inside `extras`. `extras` MUST be a JSON object and MUST NOT change normative behavior. `extensionsUsed` and `extensionsRequired` are arrays of unique strings matching `[A-Za-z][A-Za-z0-9_]*`; `extensionsRequired` MUST be a subset of `extensionsUsed`. An implementation MUST reject a file containing an unknown required extension, and MAY ignore an unknown optional extension. Extension data is held in `extensions` objects keyed by those names and MUST have a separately published, versioned specification. An extension MUST NOT reinterpret core fields except where its incorporated normative annex explicitly registers a versioned semantic extension and requires readers that do not support it to reject the file. `ADM_vertex_control_v1` is the sole such exception in ADM 1.0; it explicitly changes `COLOR_0` meaning only when required. A writer MUST NOT use `extras` as an undocumented substitute for required core semantics.
 
 All cross-references by index MUST refer to an existing element of the named array. Strings representing logical names are UTF-8; names MAY repeat unless uniqueness is explicitly required. All absent optional object fields take the defaults stated below, never guessed defaults.
 
@@ -326,7 +326,7 @@ At bind time `IBM[j] = inverse(W_joint_bind[j]) × W_mesh_bind`. At time `t`, `D
 
 `skeletonProfiles` is an optional top-level array of `{ "id":string,"skin":u32,"roles":object,"referencePose"?:string,"targetHeight"?:f32,"referenceCorrection"?:object,"rigId"?:string,"extensions"?:object }`. `targetHeight` (finite >0 meters) is the target height used by §16 `motionScale`; `referenceCorrection` maps role names (each a key of `roles`) to unit quaternions `[x,y,z,w]` used by §11.2/§16; `rigId` is the §11.1 fingerprint. `id` MUST be a registered profile ID or a versioned custom ID of §11. `roles` maps **semantic role** to a node index; no role may occur twice; a node MUST NOT be mapped to two roles in the same profile. Role nodes must belong to referenced `skin.joints`. Generic profiles MAY have empty roles and only support exact-rig binding. All roles, including optional ones, use the exact normative spelling for the registered profile.
 
-**Skeleton profile registry:** `profiles/skeleton-profiles.json` is the machine-readable registry. Its root is `{ "registryVersion":string, "specification":string, "coordinateSystem":{ "up":unitVec3, "forward":unitVec3, "right":unitVec3 }, "profiles":[...] }`; for ADM 1.0 these vectors MUST be exactly up `[0,1,0]`, forward `[0,0,-1]`, right `[1,0,0]`. Each profile has `id`, positive integer `version`, `status` (`NORMATIVE`, `EXACT_ONLY`, `PROVISIONAL`), `family`, `title`, `roles`, `referencePose` (object or null), `localAxes`, `ikTemplates`, `socketTemplates`, `semanticCompatibleWith`, `retargetMaps` and `translationRoles`; `source` is optional citation metadata. A role value is `{ "parent":role|null, "required":boolean, "needsParent"?:boolean }`; `parent` names the immediate semantic parent, and unmapped helper joints may intervene in the actual node tree. A non-null `referencePose` is `{ "name":string, "up":unitVec3, "forward":unitVec3, "right":unitVec3, "sides":[{"left":role,"right":role},...], "checks":[{"from":role,"to":role,"direction":unitVec3},...], "toleranceDeg":finiteNumber, "toleranceStatus":"NORMATIVE"|"PROVISIONAL_DIAGNOSTIC" }`. A provisional profile MUST use `PROVISIONAL_DIAGNOSTIC`; its pose checks cannot establish compatibility. Each IK template is `{ "id":string,"root":role,"mid":role,"end":role,"pole":unitVec3 }`; the solver is TWO_BONE in ADM-IK-1. Each socket template is `{ "name":string,"role":role,"fallback"?:[role,...] }`, where fallback order is preference order. `localAxes` is `"UNCONSTRAINED"` in this revision. Empty `retargetMaps` means no cross-profile retarget mapping is registered. Unknown registry fields are invalid. This registry is authoring/validation metadata, not serialized inside `.adm`; each file stores the resolved `roles`, `ikChains` and `attachments` explicitly.
+**Skeleton profile registry:** `profiles/skeleton-profiles.json` is the machine-readable ADM 1.0 registry. Its root is `{ "registryVersion":string, "specification":string, "coordinateSystem":{ "up":unitVec3, "forward":unitVec3, "right":unitVec3 }, "profiles":[...] }`; for ADM 1.0 these vectors MUST be exactly up `[0,1,0]`, forward `[0,0,-1]`, right `[1,0,0]`. Each profile has `id`, positive integer `version`, `status` (`NORMATIVE` or `EXACT_ONLY`), `family`, `title`, `roles`, `referencePose` (object or null), `localAxes`, `ikTemplates`, `socketTemplates`, `semanticCompatibleWith`, `retargetMaps` and `translationRoles`; `source` is optional citation metadata. A role value is `{ "parent":role|null, "required":boolean, "needsParent"?:boolean }`; `parent` names the immediate semantic parent, and unmapped helper joints may intervene in the actual node tree. A non-null `referencePose` is `{ "name":string, "up":unitVec3, "forward":unitVec3, "right":unitVec3, "sides":[{"left":role,"right":role},...], "checks":[{"from":role,"to":role,"direction":unitVec3},...], "toleranceDeg":finiteNumber, "toleranceStatus":"NORMATIVE" }`. Each IK template is `{ "id":string,"root":role,"mid":role,"end":role,"pole":unitVec3 }`; the solver is TWO_BONE in ADM-IK-1. Each socket template is `{ "name":string,"role":role,"fallback"?:[role,...] }`, where fallback order is preference order. `localAxes` is `"UNCONSTRAINED"` in this revision. Empty `retargetMaps` means no cross-profile retarget mapping is registered. Unknown registry fields are invalid. This registry is authoring/validation metadata, not serialized inside `.adm`; each file stores the resolved `roles`, `ikChains` and `attachments` explicitly. Non-normative profile proposals are outside this registry and MUST NOT be interpreted as ADM 1.0 profiles.
 
 Registry status controls claims: `NORMATIVE` may be advertised as semantic-compatible when all profile validation passes; `EXACT_ONLY` never supports semantic binding; `PROVISIONAL` may be authored and validated for diagnostics but MUST NOT be claimed as ADM semantic interoperability. Templates are editor defaults, not hidden runtime behavior.
 
@@ -341,12 +341,12 @@ Coordinates in an imported source format MUST be converted as one consistent bas
 **Compatibility** is explicit:
 
 - `EXACT`: same rig identity and identical ordered mapped joints, default local TRS and skin bind matrices (within declared tolerance). To avoid ambiguous identity across tools, `rigId` is a required lowercase 64-digit hexadecimal SHA-256 over the canonical rig descriptor produced by §11.1 when a model declares an exact-compatible rig. An animation may demand the same rigId.
-- `SEMANTIC`: required semantic roles supplied and matching profile identifier; the profile's published reference-correction and retarget rules apply. Extra unmapped bones keep target rest/default pose. A profile marked `PROVISIONAL` cannot produce this compatibility level.
+- `SEMANTIC`: required semantic roles supplied and matching profile identifier; the profile's published reference-correction and retarget rules apply. Extra unmapped bones keep target rest/default pose. Only a registered `NORMATIVE` profile can produce this compatibility level.
 - `INCOMPATIBLE`: missing required roles, different declared profile IDs, or failed validation; loader MUST NOT play as if compatible.
 
 ### 11.1 Exact rig fingerprint
 
-Canonical descriptor is UTF-8 JSON with sorted keys, no whitespace, integers as decimal, float32 values serialized as **8 lowercase hex digits of their IEEE-754 little-endian byte sequence**, and fields `roles` (sorted role names with integer node indices), `jointOrder` (ordered node indices), `restTRS` (all joint local TRS array entries in `jointOrder` order), `inverseBindMatrices` (16 f32 per joint). Encode as canonical UTF-8 JSON and compute SHA-256 hex digest. `rigId` MUST exactly equal the calculated digest. Negative zero is canonicalized to +0 before bytes encoding. JSON sorting uses Unicode scalar code point order. Exact matching DOES NOT replace validation of actual profile semantics. [**Normative fixture required before final ratification**: §25.]
+Canonical descriptor is UTF-8 JSON with sorted keys, no whitespace, integers as decimal, float32 values serialized as **8 lowercase hex digits of their IEEE-754 little-endian byte sequence**, and fields `roles` (sorted role names with integer node indices), `jointOrder` (ordered node indices), `restTRS` (all joint local TRS array entries in `jointOrder` order), `inverseBindMatrices` (16 f32 per joint). Encode as canonical UTF-8 JSON and compute SHA-256 hex digest. `rigId` MUST exactly equal the calculated digest. Negative zero is canonicalized to +0 before bytes encoding. JSON sorting uses Unicode scalar code point order. Exact matching DOES NOT replace validation of actual profile semantics. A conformance suite MUST include versioned test vectors that verify this algorithm.
 
 ### 11.2 Local axes and normalized humanoid retargeting
 
@@ -354,11 +354,11 @@ ADM does not prescribe Blender/bone-local axis or roll conventions. For `humanoi
 
 For a semantic rotation delta `δ` sampled in the ADM reference frame, evaluate the target role's model-space rotation as `q_target = q_rest × C × δ × inverse(C)`, where `C=referenceCorrection[role]`. With a valid normalized correction this is `δ × q_rest`: the delta is applied in the ADM model frame independent of local bone roll. Quaternions are xyzw Hamilton products; normalize the result. Writers MUST calculate corrections from the serialized rest transforms, not from posed/deformed transforms. The reference pose check is performed before applying correction. The optional profile field MUST contain exactly the mapped role names for a semantic humanoid profile; unmapped helper joints are not entries.
 
-**Mechanical profiles:** `vehicle.car.v1` and `weapon.firearm.v1` are non-skeleton model profiles defined in normative Draft 0.4 annexes. Quadruped identifiers `animal.generic_quadruped.v1`, `animal.canine.v1`, `animal.feline.v1` and `animal.equine.v1` remain PROVISIONAL proposals pending explicit profile approval and independent anatomical review. A tool MUST NOT report `SEMANTIC` compatibility for them. `extends` records shared draft structure only and grants no compatibility.
+**Mechanical profiles:** `vehicle.car.v1` and `weapon.firearm.v1` are non-skeleton model profiles defined in the normative ADM 1.0 annexes. Quadruped identifiers `animal.generic_quadruped.v1`, `animal.canine.v1`, `animal.feline.v1` and `animal.equine.v1` are not registered by ADM 1.0 and are outside this standard. They appear only as non-normative proposals under `proposals/`; these identifiers do not meet ADM 1.0's custom-profile naming rule. A file using one as a profile identifier is non-conforming to ADM 1.0, and a reader MUST NOT report `SEMANTIC` compatibility for it. `extends` records shared proposal structure only and grants no compatibility.
 
 **Custom profiles:** an unregistered identifier MUST use `org.<reverse-domain>.<profile-name>.vN` (lowercase ASCII labels matching `[a-z][a-z0-9-]*`, final version label `v[1-9][0-9]*`). An unregistered profile is `EXACT_ONLY`; it MUST NOT define semantic roles or claim semantic compatibility. To register semantic behavior, publish a versioned annex and machine-readable registry entry defining the complete role set, required/optional rules, parent graph, reference-pose checks and tolerance, translation roles, retarget algorithm/corrections, IK/socket templates and positive/negative fixtures. Until that is approved and listed with `NORMATIVE` status, consumers MUST treat the ID as unknown for semantic binding.
 
-**Cross-profile retarget maps:** ADM 1.0 defines no serialized map format and registers no cross-profile map. The registry's `retargetMaps` MUST therefore be empty in this revision. A differing source/target profile ID is `INCOMPATIBLE`, even when the roles appear similar or the profiles share a draft `extends` relationship. A future mapping requires a versioned, reviewed profile-pair annex with an explicit role mapping, transform/correction rules, compatibility tests and an exact registry entry; tools MUST NOT infer or synthesize one. This explicit prohibition is the ADM 1.0 behavior, not an invitation to guess.
+**Cross-profile retarget maps:** ADM 1.0 defines no serialized map format and registers no cross-profile map. The registry's `retargetMaps` MUST therefore be empty in this revision. A differing source/target profile ID is `INCOMPATIBLE`, even when the roles appear similar or the proposals share an `extends` relationship. A future mapping requires a versioned, reviewed profile-pair annex with an explicit role mapping, transform/correction rules, compatibility tests and an exact registry entry; tools MUST NOT infer or synthesize one. This explicit prohibition is the ADM 1.0 behavior, not an invitation to guess.
 
 
 ## 12. Model metadata for mechanical parts and attachments
@@ -569,14 +569,15 @@ All collider shapes are centered at their node local origin, oriented with node 
 
 When a model uses one or more standardized humanoid equipment socket names, it MUST declare `ADM_humanoid_sockets_v1` in `extensionsUsed` and `extensionsRequired`, provide top-level `extensions.ADM_humanoid_sockets_v1.version:"1.0.0"`, and include a `humanoid.vrm1` skeleton profile. Each registered socket is an ordinary attachment whose node is the mapped socket role node or one of its descendants. Its rest-pose model-space frame MUST have unit scale, +X right, +Y up, and −Z forward (axis-component tolerance `1e-4`); position is authored per model to accommodate its proportions. The exact names, role mappings, accessory frame composition rule, and conformance cases are normative in [`extensions/ADM_humanoid_sockets_v1.md`](extensions/ADM_humanoid_sockets_v1.md). Existing attachments and the legacy generic socket-template names retain their §24 behavior unless the extension is declared.
 
-## 25. Validation and interoperability acceptance suite
+## 25. Validation and interoperability conformance suite
 
-A final ADM 1.0 release MUST contain a versioned test corpus, independent conformance validator, and a formally separate collection of **positive and negative** tests. Minimum required cases:
+This section defines the minimum acceptance cases for an implementation claiming the corresponding ADM capabilities. Publication of this specification is independent of publication of a conformance suite or certification. An implementation MUST NOT claim independently verified conformance unless it has passed a published, versioned corpus of **positive and negative** tests with an independent validator for every capability it advertises. Minimum required cases:
 
 | Fixture | Purpose / expected outcome |
 |---|---|
 | `triangle.adm` | basic 64-byte header, chunk directory, triangle, material defaults, exact vertex coordinates |
 | `skinned_humanoid.adm` | 15 required humanoid semantic roles, 4-weight skinning, correct bind and neutral pose |
+| `rig_fingerprint.json` | canonical rig descriptor, SHA-256 result, role ordering and negative-zero normalization |
 | `face_arkit52.adm` | complete mapping of 52 semantic face channels, expected vertex samples for `jawOpen=0,0.5,1` |
 | `morph_and_skin.adm` | identical result applying morph **before** skinning |
 | `walk_wounded.adm_anim` | library id `human@walking@wounded`, descriptions, clip timing and lookup |
@@ -592,7 +593,7 @@ A final ADM 1.0 release MUST contain a versioned test corpus, independent confor
 
 **Deterministic metadata:** JSON member order does not matter; canonicalization is only required for exact-rig hash (§11.1), event payload ordering and test vectors. Runtimes MUST impose configurable input resource limits (prevent huge allocations, overflow, deeply nested JSON and decompression bombs) and report resource-limit errors distinctly from invalid encoding.
 
-**Current state:** Draft 0.4 bundles newly regenerated 64-byte-header fixtures and negative container tests. The advanced fixtures above are mandatory acceptance criteria for release, **not claimed to exist yet**. Independent exporter/reader interoperability testing has **not** been performed for this revised specification.
+**Conformance status:** The bundled reference fixtures and scripts cover only a subset of these cases. No independent full conformance validator or cross-vendor interoperability result is included with this publication. Their absence does not leave the normative text open or provisional; it means no implementation is certified by this publication.
 
 
 ## 26. Authoring rules for Blender and other DCC exporters
@@ -652,7 +653,8 @@ Suggested repository layout:
 spec/
   ADM-1.0-SPEC.md           # this normative master document
   schemas/                 # JSON Schema for both manifest kinds
-  profiles/                # pinned humanoid/face and normative vehicle/weapon annexes; future animal profiles
+  profiles/                # pinned normative ADM 1.0 profiles and annexes
+  proposals/               # non-normative profile proposals outside ADM 1.0
   registry/                # namespace/extension ID registry and immutable shader profiles
   fixtures/valid/          # byte-perfect samples and expected evaluator output
   fixtures/invalid/        # validation failures with codes
@@ -667,7 +669,7 @@ Recommended source citation references:
 - VRM Animation 1.0: https://github.com/vrm-c/vrm-specification/blob/master/specification/VRMC_vrm_animation-1.0/README.md
 - Apple ARKit named coefficients: https://developer.apple.com/documentation/arkit/arfaceanchor/blendshapelocation/
 
-**Release blockers (not optional):** freeze the full VRM role registry snapshot including all optional bones; publish numerical calibrated T-pose fixtures and canonical rig fingerprint example; publish fully valid anim/morph/IK/shader-animation fixture bytes with expected samples; freeze shader registry schemas and material-layer extension; implement independent parsers/evaluators; test branch/error paths, out-of-bounds handling, right/left anatomy and morphology. Until then this text is a **serious engineering draft**, not a verified final international standard.
+**Final status:** ADM 1.0 is frozen by this publication. Changes to normative behavior require a later version under §28. The independent conformance corpus, validator, numerical evaluator and interoperability certification described in §25 are separate implementation and certification deliverables; none is implied by publication of this specification.
 
 
 
@@ -679,11 +681,11 @@ This section defines **asset descriptors**, not runtime game behavior. Every ord
 
 `modelComponents` optional list: `{ "id":string, "role":string, "node":u32, "socket"?:string }` with unique IDs matching `[a-z][a-z0-9_.]*`; `role` is a published profile role or qualified custom role. `node` resolves an existing node. If `socket` appears, it MUST match an attachment in §24. Two component records MUST NOT have the same `id`. This permits identifying detachable parts without prescribing how they detach. An assembly system SHOULD use attachments with explicit stable local transforms; per-entity attachment decisions are outside ADM. External model asset dependencies are not mandatory for core: engines MAY assemble separate `.adm` files via these semantic sockets. No external file URI is implied by a component record.
 
-### 29.2 Vehicle model profile — status provisional
+### 29.2 Vehicle model profile — normative; independent certification pending
 
 `vehicle.car.v1` is **defined by incorporated normative annex `profiles/vehicle.car.v1.md`**, with its role list, +X wheel roll axes, +Y steering, hinge metadata, multiple consecutive axle records, socket alignment, role-preserving LODs and semantic animation. The annex defines `ADM-VEHICLE-CAR-1` and `VEH-001..006`. It describes visual and collision asset data only: vehicle dynamics, drivetrains, steering controller and damage logic are not part of ADM. **Profile design is now complete; independent certification fixtures remain pending.**
 
-### 29.3 Weapon modularity — status provisional
+### 29.3 Weapon modularity — normative; independent certification pending
 
 `weapon.firearm.v1` is **defined by incorporated normative annex `profiles/weapon.firearm.v1.md`**, with required receiver/muzzle roles, optional moving visual mechanisms, normalized attachment frames, exact versioned mount interfaces, visual animation and `weapon.attachment.v1` for modular accessories. The annex defines `ADM-WEAPON-FIREARM-1` and `WPN-001..006`. Ballistics, damage, firing mechanisms, inventory, aiming controllers and other gameplay systems are not represented. **Profile design is now complete; independent certification fixtures remain pending.**
 
@@ -695,7 +697,7 @@ This section defines **asset descriptors**, not runtime game behavior. Every ord
 
 For a high-speed racing-game model pipeline: chunk streaming, independently readable LODs, standalone portable PBR materials, mechanical sockets, physical collision descriptors and robust invalid-file handling MUST be tested. For a detailed extraction-shooter model pipeline: attachment round-trips, morph/skin fidelity, shared animation library retargeting, weapon modularity fixtures, low-latency material fallback and asset caching MUST be tested. Profile certification requires `VEH-001..006` or `WPN-001..006` test success; ordinary `ADM-CORE-1` asset support does not require either mechanical profile.
 
-## 30. Draft 0.4 mandatory conformance additions
+## 30. ADM 1.0 required conformance cases
 
 `CONT-001`: header 64 bytes, exact field offsets, magic and region bounds. `CONT-002`: sorted unique chunk IDs, aligned nonoverlapping payloads and zero padding. `CONT-003`: SHA-256 mismatch detected when chunk is consumed. `CONT-004`: RAW and optional ZSTD decoding; unsupported codec must raise exact capability error. `CONT-005`: dependency closure deterministic and acyclic. `CONT-006`: parser can inspect manifest and list clips/materials **with zero payload reads**. `CONT-007`: fetch one mesh/texture/clip without loading all other chunks. `CONT-008`: malicious length/offset/overflow, truncated and zip-bomb-like content rejected without unsafe allocation. `CONT-009`: requested LOD can load independently of higher LOD when manifest dependencies permit it.
 
@@ -712,13 +714,13 @@ fixtures and tests do not substitute for independent runtime renderer certificat
 
 `ANIM-001`: clip metadata retrievable without loading ANIM chunks. `ANIM-002`: semantic humanoid rotations on distinct proportions conform to §16. `ANIM-003`: morph + skin evaluation order and ARKit52 channel mapping. `ANIM-004`: reachability, pole and twist cases for two-bone IK. `ANIM-005`: shader material ID binding and fallback animation results with exact times. `MOD-001`: attachment IDs and node transforms preserved through re-export. `PHYS-001`: collider/hitbox metadata round-trips without engine-specific behavior assumptions.
 
-**Profile conformance:** `VEH-001..006` and `WPN-001..006` are defined in the normative annexes, with a structural fixture set and a separate baseline validator. These are NOT yet a complete numerical animation or Blender round-trip certification suite. Skeleton profile tests `HUM-001..006` (annex `profiles/humanoid.vrm1.md`) and the provisional `QDR-001..004` (annex `profiles/animal.quadruped.v1.md`) are executed by the reference Blender toolkit; an independent second implementation is still required.
+**Profile conformance:** `VEH-001..006` and `WPN-001..006` are defined in the normative annexes, with structural fixtures and a baseline validator. These are not a complete numerical animation or Blender round-trip certification suite. Skeleton profile tests `HUM-001..006` are defined for `humanoid.vrm1`; the bundled checks are reference-implementation tests, not independent certification.
 
-**Status:** This kit includes a working **container-only** validator and lightweight examples covering `CONT-001..003`, `CONT-005` and initial manifest decoding. It does NOT include complete numerical animation solvers, renderer golden images or a full semantic validator; KTX2/DDS subset checks (§8.6) exist only in the Blender add-on's validator. Consequently this document is **Draft 0.4, not a ratified/certified release**. No vendor may claim full ADM 1.0 conformance from the included scripts alone.
+**Publication and certification:** ADM 1.0 is final; the reference kit includes a container validator and only partial coverage of the cases above. It does NOT include complete numerical animation solvers, renderer golden images or an independent full semantic validator; KTX2/DDS subset checks (§8.6) exist in the Blender add-on's validator. Passing the bundled scripts alone is not evidence of full ADM 1.0 conformance or certification.
 
 
-## 31. Incorporated normative mechanical profile annexes
+## 31. Incorporated normative profile annexes
 
-The following files are normative components of this Draft 0.4 revision, not external optional commentary. A tool claiming the named profile MUST implement both §29 and its corresponding annex. `profiles/vehicle.car.v1.md` defines `ADM-VEHICLE-CAR-1`; `profiles/weapon.firearm.v1.md` defines `ADM-WEAPON-FIREARM-1` and modular `weapon.attachment.v1`. Ambiguities are errors, not permission to guess: discrepancy between the core document and an annex MUST be reported and resolved before profile certification. Per §28 the final registry is version-pinned at publication.
+The following files are normative components of ADM 1.0, not optional commentary. A tool claiming the named profile MUST implement both §29 and its corresponding annex. `profiles/vehicle.car.v1.md` defines `ADM-VEHICLE-CAR-1`; `profiles/weapon.firearm.v1.md` defines `ADM-WEAPON-FIREARM-1` and modular `weapon.attachment.v1`. Ambiguities are errors, not permission to guess: discrepancy between the core document and an annex MUST be reported. The profile registry is version-pinned by this publication.
 
-**Skeleton profile annexes (revision P4):** `profiles/skeleton-profiles.json` (machine-readable registry), `profiles/humanoid.vrm1.md` (normative humanoid role, reference-pose and retarget rules) and `profiles/animal.quadruped.v1.md` (PROVISIONAL, non-normative). Approval and certification blockers are listed in `SPEC_GAPS.md`.
+**Skeleton profile annexes:** `profiles/skeleton-profiles.json` is the frozen ADM 1.0 registry; `profiles/humanoid.vrm1.md` defines the normative humanoid roles, reference pose and retarget rules. The `generic.v1` profile permits exact binding only. Quadruped proposals are excluded from ADM 1.0 and retained under `proposals/`; they are not entries in the normative registry and MUST NOT be used for ADM 1.0 semantic binding.

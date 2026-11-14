@@ -1,6 +1,6 @@
 # ADM Profile: `weapon.firearm.v1`
 
-**Status:** normative proposal for ADM Draft 0.4; not yet independently certified. **Applies to:** visual modular representations of firearms (including different feed designs). **Excludes:** ballistics, ammunition properties, firing mechanisms, damage, procedural instructions, recoil forces, and gameplay operation. The profile does not describe manufacturing.
+**Status:** normative ADM 1.0 profile; independent profile certification is separate. **Applies to:** visual modular representations of firearms (including different feed designs). **Excludes:** ballistics, ammunition properties, firing mechanisms, damage, procedural instructions, recoil forces, and gameplay operation. The profile does not describe manufacturing.
 
 ## W1. Coordinates and declaration
 

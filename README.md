@@ -1,14 +1,14 @@
 # ADM Tools for Blender
 
-Author, import, export and validate **ADM Draft 0.4** model assets (`.adm`) and standalone animation
+Author, import, export and validate **ADM 1.0** model assets (`.adm`) and standalone animation
 libraries (`.adm_anim`) in **Blender 5.2+**.
 
 The add-on uses a Sollumz-inspired create/convert workflow, with an ADM sidebar, explicit object
 types, skeleton role mapping, materials, animation libraries and validation reports. This is an
 independent project, not affiliated with Sollumz.
 
-**Status:** working implementation against a working draft, not certified ADM 1.0 conformance.
-Draft 0.3 files are intentionally incompatible with the current chunk container.
+**Status:** working reference implementation against the final ADM 1.0 specification; independent conformance certification is not implied.
+Legacy ADM, ADS and `.ads_anim` files are intentionally incompatible with the ADM 1.0 chunk container.
 
 ## Install
 
@@ -34,7 +34,7 @@ See the [add-on guide](adm_blender/README.md) for authoring, import/export and a
 | Path | Contents |
 | --- | --- |
 | [adm_blender](adm_blender/) | Blender extension and independent Python parsing/validation core |
-| [adm-standard](adm-standard/) | Draft 0.4 specification, fixtures and reference container tools |
+| [adm-standard](adm-standard/) | Final ADM 1.0 specification, fixtures and reference container tools |
 | [adm_blender/tests](adm_blender/tests/) | Container, semantic and Blender round-trip tests |
 
 Supported authoring includes meshes, skins, morph targets, semantic skeleton profiles, facial bindings,
@@ -62,12 +62,12 @@ roles or animation compatibility.
   See the `SPEC_GAP-SHADER-CORE20` entry before relying on renderer interoperability.
 - External-image and per-triangle physical-surface round trips have Blender workflow coverage, but
   security-edge cases and independent-reader interoperability remain open.
-- Vehicle/weapon profile names remain provisional. Physics, damage and other gameplay behavior
-  are outside this asset format.
-- Skeleton profiles: `humanoid.vrm1` is fully supported. Quadruped profiles (`animal.*.v1`) are
-  PROVISIONAL proposals and are not certifiable. See [SPEC_GAPS.md](adm-standard/SPEC_GAPS.md).
+- Vehicle/weapon profiles are normative ADM 1.0 annexes; independent profile certification is
+  separate. Physics, damage and other gameplay behavior are outside this asset format.
+- `humanoid.vrm1` is the normative semantic skeleton profile. Quadruped profiles (`animal.*.v1`)
+  are proposals outside ADM 1.0; see [SPEC_GAPS.md](adm-standard/SPEC_GAPS.md).
 
-See the [draft](adm-standard/ADM-1.0-SPEC.md) and [implementation limits](adm_blender/README.md#draft-04-container-and-fallback)
+See the [final specification](adm-standard/ADM-1.0-SPEC.md) and [implementation limits](adm_blender/README.md#adm-10-container-and-fallback)
 before making interoperability or conformance claims.
 
 ## Development and tests

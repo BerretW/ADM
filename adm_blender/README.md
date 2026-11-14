@@ -1,8 +1,9 @@
 # ADM Tools for Blender (5.2+)
 
-Blender extension for the ADM 1.0 format (spec: `adm-standard/ADM-1.0-SPEC.md`, Draft 0.4).
+Blender extension for the final ADM 1.0 specification (`adm-standard/ADM-1.0-SPEC.md`).
 The workflow and layout follow Sollumz: object types, create/convert tools, a sidebar tab,
-validation and import/export.
+validation and import/export. This is a reference implementation; its tests do not constitute
+independent ADM conformance certification.
 
 ## Installation
 
@@ -45,7 +46,8 @@ Hitboxes reference an exported collider and an optional collider node/ancestor; 
 are assigned on colliders. For a MESH collider, select faces in Edit Mode, choose the physical ID on
 the collider, return to Object Mode, and click **Assign Surface To Selected Faces**. Unassigned faces
 use the collider's default ID. These are asset descriptors, not physics simulation or damage behavior.
-Vehicle and firearm profiles remain provisional, not certified built-ins.
+Vehicle and firearm profiles are normative ADM 1.0 annexes; independent profile certification is
+separate. Physics and game behavior are not defined by the format.
 
 **Import and export:** use *File › Import/Export › ADM Model (.adm)* and *ADM Animation Library*.
 Drag & drop of `.adm` files also works.
@@ -92,7 +94,7 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
 - **Profile:** choose the skeleton profile.
   - `humanoid.vrm1`: VRM 1.0 roles.
   - `generic.v1`: exact rig binding only.
-  - `animal.generic_quadruped.v1`, `animal.canine.v1`, `animal.feline.v1`, `animal.equine.v1`: **PROVISIONAL**, not certifiable.
+  - `animal.generic_quadruped.v1`, `animal.canine.v1`, `animal.feline.v1`, `animal.equine.v1`: **PROVISIONAL authoring proposals outside ADM 1.0**, not certifiable.
   - custom.
 - **Detection:** *Detect Skeleton* auto-maps bones to roles (Mixamo, VRM, Unreal, Blender naming).
 - **Role editor:** fix mappings by hand, one bone per role. Duplicates are rejected.
@@ -121,7 +123,7 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
   - import a library and run a compatibility test against the rig (`EXACT`, `SEMANTIC`, `PROVISIONAL_SEMANTIC`, `INCOMPATIBLE`);
   - no automatic retarget between different profiles (e.g. canine→equine).
 
-Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `referenceCorrection` and `rigId`. It is blocked only by structural errors (missing or duplicate roles, wrong hierarchy). Pose deviations only warn. Open spec questions are listed in [SPEC_GAPS.md](../adm-standard/SPEC_GAPS.md).
+Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `referenceCorrection` and `rigId`. It is blocked only by structural errors (missing or duplicate roles, wrong hierarchy). Pose deviations only warn. Conformance limitations and excluded proposals are listed in [SPEC_GAPS.md](../adm-standard/SPEC_GAPS.md).
 
 The `ADM_humanoid_sockets_v1` extension declares standardized humanoid attachment names and their
 role ancestry; it does not add bones or affect existing animation libraries. A gear/weapon asset can
@@ -229,10 +231,10 @@ The export writes `pbrParameter` and `shaderParameter` channels:
 These libraries are not bound to a rig. They contain only morph and material channels; bones are not
 exported, and `EXTRACT` is forbidden. You can import them without an armature (rig = *None*).
 
-## Draft 0.4 container and fallback
+## ADM 1.0 container and fallback
 
 - Both file types use the native **64-byte header**, **80-byte directory entries**, 16-byte alignment,
-  per-chunk SHA-256 and chunk-addressed buffer views. Draft 0.3 containers are rejected.
+  per-chunk SHA-256 and chunk-addressed buffer views. Legacy Draft 0.3 containers are rejected.
 - Writers generate independent **RAW** chunks for accessor views (`GEOM` / `ANIM`) and images (`IMAG`).
   Chunks exceeding the interoperable 256 MiB cap are rejected, not written as invalid assets.
 - The core reader exposes metadata-only bootstrap and on-demand chunk retrieval with dependency closure.
@@ -270,8 +272,9 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   `DDS_FALLBACK`). *Open Image* on a texture slot also accepts `.ktx2` and `.dds` files; the add-on
   decodes them itself when Blender cannot.
 
-This is Draft 0.4 authoring support, **not full ADM conformance certification**. The draft's numerical
-renderer, retargeting, IK and advanced interoperability acceptance corpus is not yet complete.
+This is ADM 1.0 authoring support, **not full ADM conformance certification**. The numerical
+renderer, retargeting, IK and advanced interoperability evidence described in §25 is a separate
+conformance activity and is not supplied by the Blender reference tests.
 
 ## Interpretations of the draft
 

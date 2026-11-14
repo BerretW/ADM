@@ -1,4 +1,9 @@
-# Draft 0.4 executed test report
+# ADM 1.0 reference-implementation test evidence
+
+The dated entries below are historical test results from development and pre-final revisions.
+They document the bundled reference implementation only; they are not independent ADM conformance
+certification, and publication of ADM 1.0 does not imply that every §25/§30 certification case has
+been executed.
 
 ## `ADM-HUMANOID-SOCKETS-1` / Blender Tools 1.14.0 — local verification
 

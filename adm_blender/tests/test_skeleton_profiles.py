@@ -135,6 +135,11 @@ class RegistryTests(unittest.TestCase):
         path = STANDARD / "profiles" / "skeleton-profiles.json"
         self.assertEqual(path.read_text(encoding="utf-8"), SP.registry_json(),
                          "regenerate with: python -m adm_blender.tests.test_skeleton_profiles --write-registry")
+        registry = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual({p["id"] for p in registry["profiles"]}, {"humanoid.vrm1", "generic.v1"})
+        self.assertFalse(any(p["status"] == SP.PROVISIONAL for p in registry["profiles"]))
+        proposals = STANDARD / "proposals" / "skeleton-profile-proposals.json"
+        self.assertEqual(proposals.read_text(encoding="utf-8"), SP.proposal_registry_json())
 
 
 class HumanoidRigTests(unittest.TestCase):
@@ -393,5 +398,9 @@ if __name__ == "__main__":
         out = STANDARD / "profiles" / "skeleton-profiles.json"
         out.write_text(SP.registry_json(), encoding="utf-8", newline="\n")
         print("wrote", out)
+        proposal_out = STANDARD / "proposals" / "skeleton-profile-proposals.json"
+        proposal_out.parent.mkdir(parents=True, exist_ok=True)
+        proposal_out.write_text(SP.proposal_registry_json(), encoding="utf-8", newline="\n")
+        print("wrote", proposal_out)
     else:
         unittest.main()
