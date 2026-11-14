@@ -218,6 +218,21 @@ def test_vertex_color_authoring(tmp):
     mesh.polygons[1].material_index = 1
     mat.adm.active_tint_entry = 2
     mesh.color_attributes["COLOR_0"].data.foreach_set("color", after.ravel())
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    wm.vertex_color_scope = "MATERIAL"
+    wm.vertex_color_layer = "COLOR_0"
+    wm.vertex_color_channel = "B"
+    wm.vertex_color_values = (0.0, 0.0, 0.33, 0.0)
+    check(bpy.ops.adm.vertex_colors(action="APPLY") == {"FINISHED"}
+          and bpy.ops.adm.vertex_colors(action="TINT") == {"FINISHED"},
+          "This Material Faces works without any face selection")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    scoped = layer_values(mesh, "COLOR_0")
+    check(close(scoped[:4, 2], 0.33) and close(scoped[:4, 0], 0.5625) and close(scoped[4:], after[4:]),
+          "This Material Faces writes only faces of the active material")
+    mesh.color_attributes["COLOR_0"].data.foreach_set("color", after.ravel())
+    wm.vertex_color_scope = "ALL"
     try:
         palette_position(0, 4, 2.0)
     except VertexColorError:

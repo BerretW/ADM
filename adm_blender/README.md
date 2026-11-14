@@ -54,7 +54,8 @@ the actual Blender color attributes, not a separate color system.
 - **Reset Defaults** writes `COLOR_0=(0,1,1,0)` and `COLOR_1=(0,0,0,0)`. These mean tint entry 0,
   full normal strength, full base reflectivity and a dry surface. `COLOR_1` is reserved and has no
   shading effect for current official profiles, including Interactive Surface.
-- Choose **All Faces** or **Selected Faces**, then edit one R/G/B/A channel or all four and click
+- Choose **All Faces**, **Selected Faces** or **This Material Faces** (every face using the active
+  material, regardless of selection), then edit one R/G/B/A channel or all four and click
   **Apply Channels**. Edit Mode uses its live face selection without switching modes. A single-channel
   write preserves the other channels. **Make Active** selects the layer for Blender vertex painting.
 - Choose an RGBA **Tint Palette** image 1–5 px high on the active material (only its **top row** is

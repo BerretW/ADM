@@ -262,7 +262,11 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
         wm = context.window_manager.adm
         mat = obj.active_material
         name = wm.vertex_color_layer
+        selected = wm.vertex_color_scope == "SELECTED"
+        slots = {i for i, slot in enumerate(obj.material_slots) if mat is not None and slot.material == mat}
         try:
+            if wm.vertex_color_scope == "MATERIAL" and self.action in {"RESET", "APPLY", "TINT"} and not slots:
+                raise VertexColorError("This Material Faces needs an active material")
             validate_layers(obj.data)
             if self.action in {"INITIALIZE", "ACTIVE"}:
                 ensure_layers(obj.data)
@@ -272,16 +276,15 @@ class ADM_OT_vertex_colors(bpy.types.Operator):
                     raise VertexColorError("Enable ADM Vertex Controls on the active material")
                 size = len(palette_colors(mat.adm.vertex_tint_palette))
                 red = palette_position(mat.adm.active_tint_entry, size, mat.adm.tint_offset)
-                slots = {i for i, slot in enumerate(obj.material_slots) if slot.material == mat}
                 count = write_colors(obj.data, ("COLOR_0",), {"COLOR_0": (red, 1.0, 1.0, 0.0)},
-                                     "R", wm.vertex_color_scope == "SELECTED", slots)
+                                     "R", selected, slots)
                 name = "COLOR_0"
             else:
                 names = tuple(DEFAULTS) if self.action == "RESET" else (name,)
                 values = DEFAULTS if self.action == "RESET" else {name: tuple(wm.vertex_color_values)}
                 count = write_colors(obj.data, names, values,
                                      "RGBA" if self.action == "RESET" else wm.vertex_color_channel,
-                                     wm.vertex_color_scope == "SELECTED")
+                                     selected, slots if wm.vertex_color_scope == "MATERIAL" else None)
             if self.action != "ACTIVE" and mat is not None and not mat.adm.vertex_controls_enabled:
                 mat.adm.vertex_controls_enabled = True
             sync_control_meshes(explicit=(obj,))

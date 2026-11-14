@@ -6,6 +6,8 @@
   ignored and never sampled. Taller palettes are rejected (`VERTEX_CONTROL_PALETTE_SIZE`).
 - Every valid 1.0.0 asset keeps its exact meaning. A 1.0.0 reader rejects palettes taller than one row.
 - Blender swatches, preview sampling, export and the validator follow the new rule.
+- Added the **This Material Faces** vertex-color scope: Reset, Apply Channels and Apply Palette to R
+  write every face of the active material, independent of the face selection.
 
 ## Blender Tools 1.11.0 — 2026-11-14
 

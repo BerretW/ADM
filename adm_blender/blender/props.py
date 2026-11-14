@@ -561,6 +561,8 @@ class ADMWindowProps(PropertyGroup):
     vertex_color_scope: EnumProperty(name="Faces", default="ALL", items=[
         ("ALL", "All Faces", "Modify the whole active mesh"),
         ("SELECTED", "Selected Faces", "Modify selected, visible faces, including live Edit Mode selection"),
+        ("MATERIAL", "This Material Faces",
+         "Modify every face using the active material, ignoring the face selection"),
     ])
     vertex_color_channel: EnumProperty(name="Channel", items=[
         ("RGBA", "All Channels", "Write all four channels"),
