@@ -211,6 +211,7 @@ def draw_object_props(layout, context, obj):
         row.operator("adm.lod_preview", text="", icon="HIDE_OFF").show_all = False
         op = row.operator("adm.lod_preview", text="", icon="RESTRICT_VIEW_OFF")
         op.show_all = True
+        layout.operator("adm.generate_lods", text="Regenerate LODs", icon="MOD_DECIM")
     if t in {"NONE", "ATTACHMENT", "LOD_GROUP"}:
         col = layout.column()
         col.prop(p, "attachment_name", text="Attachment" if t != "ATTACHMENT" else "Name")
@@ -519,6 +520,7 @@ class ADM_PT_tools(_Side, bpy.types.Panel):
         row.operator("adm.create_collider", icon="MESH_ICOSPHERE")
         row.prop(wm, "collider_shape", text="")
         col.operator("adm.create_lod_group", icon="MOD_DECIM")
+        col.operator("adm.generate_lods", icon="MOD_DECIM")
         col.operator("adm.create_attachment", icon="EMPTY_ARROWS")
         box = lay.box()
         box.label(text="Convert", icon="FILE_REFRESH")
@@ -1303,6 +1305,7 @@ class ADM_MT_add(bpy.types.Menu):
             op.shape, op.fit = shape, False
         lay.separator()
         lay.operator("adm.create_lod_group", icon="MOD_DECIM")
+        lay.operator("adm.generate_lods", icon="MOD_DECIM")
         lay.operator("adm.create_attachment", icon="EMPTY_ARROWS")
 
 

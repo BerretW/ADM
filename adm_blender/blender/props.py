@@ -152,6 +152,8 @@ class ADMObjectProps(PropertyGroup):
     lod_levels: CollectionProperty(type=ADMLodLevel)
     active_lod_level: IntProperty()
     lod_preview_distance: FloatProperty(name="Preview Distance", min=0.0, unit="LENGTH")
+    lod_source: PointerProperty(name="LOD Source", type=bpy.types.Object,
+                                description="LOD0 mesh this level was generated from; regenerating replaces it")
 
 
 # --- bones / skeleton ----------------------------------------------------------------------------

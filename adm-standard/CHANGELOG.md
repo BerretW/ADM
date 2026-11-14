@@ -1,5 +1,13 @@
 # Changelog
 
+## Blender Tools 1.13.0 — 2026-11-14
+
+- Added **Generate LODs**: Decimate (Collapse) LOD1…LODn of the active mesh into an ADM LOD group,
+  default four levels (100/50/25/10 % triangles at 0/15/40/100 m). Interactive screen faces are kept
+  intact and stay bound to the same `surfaceId` on every level. Shape keys are transferred to near
+  levels (default up to LOD2) through attribute-interpolated deltas and dropped on far levels.
+  Regeneration replaces only generated levels. No ADM schema, shader or capability version changes.
+
 ## Blender Tools 1.12.0 / `ADM_vertex_control_v1` 1.1.0 — 2026-11-14
 
 - Tint palettes may be 1–5 texels high. Only the first (top) row is the palette; other rows are

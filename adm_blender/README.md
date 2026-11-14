@@ -17,6 +17,19 @@ validation and import/export.
 1. **Tools tab (N-panel › ADM)**: create a Model Root, Scene, LOD, Collider or Attachment, or convert
    the selection to an ADM type. This is the Sollumz-style "Create / Convert" approach.
 2. **Object**: set the ADM type of the active object, plus its LOD, collider and attachment properties.
+   **Generate LODs** (Tools › Create, or *Regenerate LODs* on a LOD group) builds LOD1…LODn of the
+   active mesh with Blender's Decimate (Collapse) and wires them into an ADM LOD group. Defaults are
+   four levels: LOD0 (original, 0 m), LOD1 50 % triangles at 15 m, LOD2 25 % at 40 m, LOD3 10 % at
+   100 m. Every level is decimated from LOD0, keeps materials, UVs, `COLOR_0`/`COLOR_1`, skin vertex
+   groups, the modifier stack and interactive surface IDs. Interactive screen faces are never
+   decimated (the reduction target excludes them), so one `surfaceId` binds the screen on every
+   level. Shape keys follow common game practice: they are transferred to near levels (default
+   LOD1–LOD2, *Shape Keys Up To LOD*) and dropped on far levels. The morph deltas are carried through
+   the decimation as interpolated vertex attributes, so close surfaces such as lips do not mix; keys
+   keep their names, relative keys, ranges and vertex groups, so `.adm_anim` morph channels drive all
+   levels by name. Running it again replaces the levels it generated earlier; manual levels stay.
+   Limits: shape-key drivers and Facial Profile/expression bindings are not copied to generated levels,
+   absolute shape keys are rejected, and colliders are not affected by LOD.
 3. **Skeleton**: pick the profile (`humanoid.vrm1`, `generic.v1` or custom) and run *Auto Map Roles*. This
    recognises Mixamo, VRM, Unreal and Blender naming. It also covers *Compute rigId* and IK chains.
 4. **Face & Expressions**: facial bindings to shape keys and expressions.
@@ -268,6 +281,7 @@ The draft leaves some points open. This add-on resolves them as follows:
 ```
 blender -b --factory-startup --python tests/test_fixtures.py
 blender -b --factory-startup --python tests/test_workflow.py
+blender -b --factory-startup --python tests/test_lod_generator.py
 blender -b --factory-startup --python tests/test_interactive_blender.py
 blender -b --factory-startup --python tests/test_skeleton_blender.py
 blender -b --factory-startup --python tests/test_material_slots.py
