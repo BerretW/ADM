@@ -1092,12 +1092,12 @@ PROFILE_HINTS = {
 }
 
 
-def _draw_param_row(box, v, prm, typ):
+def _draw_param_row(box, v, prm, typ, label=None):
     r = box.row(align=True)
     r.prop(v, "use", text="")
     sub = r.row(align=True)
     sub.active = v.use
-    sub.label(text=v.name)
+    sub.label(text=v.name if label is None else label)
     if typ == "F32":
         sub.prop(v, "value_f", text="")
     elif typ in ("VEC2", "VEC3", "VEC4"):
@@ -1106,6 +1106,109 @@ def _draw_param_row(box, v, prm, typ):
         sub.prop(v, "value_bool", text="")
     if prm.get("animatable"):
         r.operator("adm.material_key_param", icon="KEYFRAME", text="").name = v.name
+
+
+def _shader_param_groups(shader, version, names):
+    """Partition known official layers and COLOR_1 effects without changing custom schemas."""
+    remaining = list(names)
+    groups = []
+
+    def add_group(identifier, label, prefix):
+        order = ("strength", "texture", "base_color", "color", "normal",
+                 "metallic_texture", "metallic", "metallic_channel", "metallic_invert",
+                 "roughness_texture", "roughness", "roughness_channel", "roughness_invert",
+                 "emissive", "value")
+        selected = [prefix + suffix for suffix in order if prefix + suffix in remaining]
+        selected.extend(name for name in remaining if name.startswith(prefix) and name not in selected)
+        if selected:
+            groups.append((identifier, label, prefix, selected))
+            remaining[:] = [name for name in remaining if name not in selected]
+
+    if shader in ("TERRAIN_4", "TWO_LAYER") or (shader == "LAYERED" and version == K.SHADER_PROFILE_V2):
+        for i in range(2 if shader == "TWO_LAYER" else 4):
+            add_group(f"layer_{i}", f"Layer {i}", f"layer{i}_")
+    if shader != "CUSTOM" and version == K.SHADER_PROFILE_V2:
+        for channel, effect in zip(K.SHADER_MASK_CHANNELS, K.COLOR1_CONTRACTS.get(shader, ())):
+            add_group(f"color1_{channel.lower()}", f"COLOR_1 {channel} - {effect['label']}",
+                      f"color1_{channel.lower()}_")
+    return groups, remaining
+
+
+def _draw_shader_texture(box, p, v, prm, label=None, show_channel_options=False):
+    c = box.column(align=True)
+    r = c.row(align=True)
+    r.prop(v, "use", text="")
+    r.label(text=v.name if label is None else label)
+    r.prop(v, "tex_coord", text="UV")
+    c.template_ID(v, "image", new="image.new", open="image.open")
+    if show_channel_options:
+        prefix = v.name[:-len("_texture")]
+        channel = p.params.get(prefix + "_channel")
+        invert = p.params.get(prefix + "_invert")
+        if channel is not None and invert is not None:
+            options = c.row(align=True)
+            options.prop(channel, "texture_channel", text="Channel")
+            options.prop(invert, "texture_invert", text="Invert")
+    if label is None and prm.get("description"):
+        c.label(text=prm["description"])
+    if v.name == "mortar_mask":
+        c.operator("adm.material_generate_mortar_mask", icon="MOD_BUILD")
+
+
+def _draw_shader_params(layout, p, params):
+    available = {v.name: v for v in p.params if v.name in params}
+    groups, remaining = _shader_param_groups(p.shader, p.shader_version, available)
+    paired_options = set()
+    if p.shader != "CUSTOM":
+        for name in available:
+            if name.endswith(("_metallic_texture", "_roughness_texture")):
+                prefix = name[:-len("_texture")]
+                options = (prefix + "_channel", prefix + "_invert")
+                if all(option in available and option in params for option in options):
+                    paired_options.update(options)
+
+    labels = {
+        "strength": "Strength", "texture": "Albedo", "base_color": "Color factor",
+        "color": "Color factor", "normal": "Normal", "metallic_texture": "Metallic",
+        "metallic": "Metallic factor", "roughness_texture": "Roughness",
+        "roughness": "Roughness factor", "emissive": "Emissive", "value": "Value",
+    }
+
+    def draw_names(layout, names, prefix=""):
+        for name in names:
+            if name in paired_options:
+                continue
+            v, prm = available[name], params[name]
+            label = labels.get(name[len(prefix):], name) if prefix else None
+            if prm.get("type") == "TEXTURE":
+                _draw_shader_texture(layout, p, v, prm, label,
+                                     name[:-len("_texture")] + "_channel" in paired_options)
+            else:
+                _draw_param_row(layout, v, prm, prm.get("type"), label)
+
+    if groups:
+        layout.label(text="Shader layers and effects", icon="TEXTURE")
+        layout.label(text="Checkboxes enable overrides", icon="INFO")
+        for index, (identifier, title, prefix, names) in enumerate(groups):
+            header, body = layout.panel(f"adm_shader_{identifier}", default_closed=index != 0)
+            header.label(text=title)
+            if body is not None:
+                if prefix + "metallic_texture" in names:
+                    body.label(text="Maps multiply factors; metallic defaults to 0", icon="INFO")
+                draw_names(body, names, prefix)
+
+    tex = [name for name in remaining if params[name].get("type") == "TEXTURE"]
+    val = [name for name in remaining if params[name].get("type") != "TEXTURE"
+           and name not in paired_options]
+    if tex:
+        tb = layout.box()
+        tb.label(text="Shader Texture Parameters", icon="TEXTURE")
+        draw_names(tb, tex)
+    if val:
+        vb = layout.box()
+        vb.label(text="Shader Value Parameters", icon="PROPERTIES")
+        vb.label(text="Editing a value enables its Override checkbox", icon="INFO")
+        draw_names(vb, val)
 
 
 def draw_material(lay, context, mat):
@@ -1193,7 +1296,7 @@ def draw_material(lay, context, mat):
             col.prop(p, "layer_mask_uv")
         col.prop(p, "layers_required")
         for label, rec in (("Base Layer", p.layer_base), ("Overlay Layer", p.layer_overlay)):
-            hdr, body = box.panel(f"adm_mat_{label.split()[0].lower()}", default_closed=label != "Base Layer")
+            hdr, body = lay.panel(f"adm_mat_{label.split()[0].lower()}", default_closed=label != "Base Layer")
             hdr.label(text=label)
             if body is not None:
                 b = body.column()
@@ -1202,7 +1305,7 @@ def draw_material(lay, context, mat):
                     b.prop(rec, k)
                 if rec.use_normal_factor:
                     b.prop(rec, "normal_factor")
-        box.operator("adm.material_layers_from_pbr", icon="IMPORT")
+        lay.operator("adm.material_layers_from_pbr", icon="IMPORT")
     elif p.shader == "CUSTOM" or p.shader_version == K.SHADER_PROFILE_V2 \
             or p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
         params = registry.get(p.shader_key())
@@ -1216,40 +1319,7 @@ def draw_material(lay, context, mat):
                 r.alert = not in_sync
                 r.operator("adm.material_sync_params", icon="FILE_REFRESH",
                            text="Sync Parameters" if in_sync else "Sync Parameters (out of date)")
-            tex = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") == "TEXTURE"]
-            val = [(v, params[v.name]) for v in p.params if v.name in params
-                   and params[v.name].get("type") != "TEXTURE"
-                   and not (p.shader != "CUSTOM" and v.name.endswith(
-                       ("_metallic_channel", "_roughness_channel", "_metallic_invert", "_roughness_invert"))
-                       and v.name.rsplit("_", 1)[0] + "_texture" in params)]
-            if tex:
-                tb = box.box()
-                tb.label(text="Shader Texture Parameters", icon="TEXTURE")
-                for v, prm in tex:
-                    c = tb.column(align=True)
-                    r = c.row(align=True)
-                    r.prop(v, "use", text="")
-                    r.label(text=v.name)
-                    r.prop(v, "tex_coord", text="UV")
-                    c.template_ID(v, "image", new="image.new", open="image.open")
-                    if p.shader != "CUSTOM" and v.name.endswith(("_metallic_texture", "_roughness_texture")):
-                        prefix = v.name[:-len("_texture")]
-                        channel = p.params.get(prefix + "_channel")
-                        invert = p.params.get(prefix + "_invert")
-                        if channel is not None and invert is not None:
-                            options = c.row(align=True)
-                            options.prop(channel, "texture_channel", text="Channel")
-                            options.prop(invert, "texture_invert", text="Invert")
-                    if prm.get("description"):
-                        c.label(text=prm["description"])
-                    if v.name == "mortar_mask":
-                        c.operator("adm.material_generate_mortar_mask", icon="MOD_BUILD")
-            if val:
-                vb = box.box()
-                vb.label(text="Shader Value Parameters", icon="PROPERTIES")
-                vb.label(text="Editing a value enables its Override checkbox", icon="INFO")
-                for v, prm in val:
-                    _draw_param_row(vb, v, prm, prm.get("type"))
+            _draw_shader_params(lay, p, params)
 
     controls = lay.box()
     controls.label(text="ADM Vertex Control", icon="COLOR")

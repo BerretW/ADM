@@ -187,6 +187,12 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
 - For custom shaders, the box is the portable PBR fallback. Shader parameters of type `TEXTURE` are
   listed separately under **Shader Texture Parameters**. Picking a custom shader syncs its parameters
   automatically; **Sync Parameters** is highlighted when they are out of date.
+- Two-layer, terrain and PBR Layered 2.0 shader parameters are grouped into collapsible sections by
+  layer, with albedo, normal, metallic and roughness maps beside their corresponding factors.
+  Version 2.0 profiles also group their effects by **COLOR_1** channel and effect name. Expand a
+  section to edit it; other profile parameters remain in the texture and value sections below.
+  Each checkbox still controls its individual override, and metallic/roughness channel and inversion
+  controls belong to the texture directly above them.
 
 ### Shader profile previews
 
@@ -199,7 +205,7 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   through drivers, so they update live and can be keyframed. **Refresh Preview** rebuilds the nodes.
 - Terrain Four Layer uses its own `layer0_texture` through `layer3_texture` parameters, not the
   portable PBR Base Color texture. Without a blend mask, layer 0 is visible. Assign `layer0_texture`
-  under **Shader Texture Parameters**, or click **Use PBR Base Color for Layer 0** to copy the
+  under **Layer 0**, or click **Use PBR Base Color for Layer 0** to copy the
   existing PBR image and UV set. This changes layer 0 only and preserves the PBR fallback. When a
   material is shared, use the same second UV map name on its meshes for a consistent preview.
 - Each terrain layer also has `layer{i}_metallic_texture` and `layer{i}_roughness_texture` slots.

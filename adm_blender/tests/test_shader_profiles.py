@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import traceback
+from types import SimpleNamespace
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO)
@@ -19,6 +20,82 @@ def check(condition, message):
         FAILS.append(message)
 
 
+def check_shader_ui(K):
+    from adm_blender.blender import ui
+
+    class Params(list):
+        def get(self, name):
+            return next((item for item in self if item.name == name), None)
+
+    class Layout:
+        def __init__(self, seen, panel_allowed=True):
+            self.seen = seen
+            self.panel_allowed = panel_allowed
+
+        def row(self, **kwargs):
+            return Layout(self.seen, panel_allowed=False)
+
+        column = row
+        box = row
+
+        def panel(self, *args, **kwargs):
+            assert self.panel_allowed, "collapsible panels need the full region width"
+            return Layout(self.seen, panel_allowed=False), Layout(self.seen)
+
+        def label(self, **kwargs):
+            pass
+
+        def prop(self, owner, prop, **kwargs):
+            if prop in ("use", "texture_channel", "texture_invert"):
+                self.seen.append(owner.name)
+
+        def template_ID(self, *args, **kwargs):
+            pass
+
+        def operator(self, *args, **kwargs):
+            return SimpleNamespace()
+
+    for key, kind in K.OFFICIAL_SHADER_KINDS.items():
+        schema = {item["name"]: item for item in K.OFFICIAL_SHADERS[key]}
+        names = list(schema)
+        groups, remaining = ui._shader_param_groups(kind, key[1], names)
+        partition = [name for _, _, _, items in groups for name in items] + remaining
+        check(len(partition) == len(names) and set(partition) == set(names),
+              f"{kind}@{key[1]}: UI groups preserve every parameter once")
+        values = Params(SimpleNamespace(name=name, use=True) for name in names)
+        seen = []
+        ui._draw_shader_params(Layout(seen), SimpleNamespace(shader=kind, shader_version=key[1], params=values),
+                               schema)
+        check(len(seen) == len(names) and set(seen) == set(names),
+              f"{kind}@{key[1]}: UI draws each parameter or its channel control once")
+        if kind in ("TWO_LAYER", "TERRAIN_4") or (kind == "LAYERED" and key[1] == K.SHADER_PROFILE_V2):
+            layer = groups[0][3]
+            check(layer.index("layer0_texture") < layer.index("layer0_normal")
+                  < layer.index("layer0_metallic_texture") < layer.index("layer0_metallic")
+                  < layer.index("layer0_roughness_texture") < layer.index("layer0_roughness"),
+                  f"{kind}@{key[1]}: layer maps and factors are ordered together")
+
+    custom_names = ["layer0_texture", "layer0_metallic_channel", "color1_r_texture"]
+    groups, remaining = ui._shader_param_groups("CUSTOM", K.SHADER_PROFILE_V2, custom_names)
+    check(not groups and remaining == custom_names, "custom shader names are not regrouped")
+    schema = {name: {"type": "TEXTURE" if name.endswith("_texture") else "F32"}
+              for name in custom_names}
+    seen = []
+    ui._draw_shader_params(Layout(seen), SimpleNamespace(
+        shader="CUSTOM", shader_version=K.SHADER_PROFILE_V2,
+        params=Params(SimpleNamespace(name=name, use=True) for name in custom_names)), schema)
+    check(len(seen) == len(custom_names) and set(seen) == set(custom_names),
+          "custom shader texture and value controls remain visible")
+
+    incomplete = ["layer0_metallic_texture", "layer0_metallic_channel"]
+    schema = {name: {"type": "TEXTURE" if name.endswith("_texture") else "F32"} for name in incomplete}
+    seen = []
+    ui._draw_shader_params(Layout(seen), SimpleNamespace(
+        shader="TWO_LAYER", shader_version="1.0.0",
+        params=Params(SimpleNamespace(name=name, use=True) for name in incomplete)), schema)
+    check(set(seen) == set(incomplete), "out-of-sync channel remains visible without its invert parameter")
+
+
 def main(tmp):
     adm_blender.register()
     from adm_blender.core import constants as K
@@ -26,6 +103,7 @@ def main(tmp):
     from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
 
+    check_shader_ui(K)
     bpy.ops.wm.read_homefile(use_empty=True)
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     cube = bpy.context.active_object
