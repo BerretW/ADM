@@ -9,6 +9,9 @@ independent project, not affiliated with Sollumz.
 
 **Status:** working reference implementation against the final ADM 1.0 specification; independent conformance certification is not implied.
 Legacy ADM, ADS and `.ads_anim` files are intentionally incompatible with the ADM 1.0 chunk container.
+The shader registry was reissued on 2026-11-15; earlier development schemas with the same
+identities are superseded and are not supported. See the
+[registry publication record](adm-standard/SPEC_GAPS.md#shader-registry-republication).
 
 ## Install
 
@@ -93,6 +96,7 @@ Run Blender round trips separately:
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_fixtures.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_interactive_blender.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_workflow.py
+& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_terrain_workflow.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_skeleton_blender.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_material_slots.py
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python .\adm_blender\tests\test_texture_formats.py
@@ -106,6 +110,7 @@ The [CI workflow](.github/workflows/ci.yml) runs core/reference tests and verifi
 on Windows and Linux. A separate Ubuntu job tries Blender's download host and two mirrors, verifies the
 same pinned Blender 5.2.4 SHA-256 for each successful download, and runs headless Blender integration
 scripts. This does not certify independent renderer/IK conformance.
+The terrain workflow script above is currently a manual test and is not included in the CI Blender job.
 
 ## Publishing
 

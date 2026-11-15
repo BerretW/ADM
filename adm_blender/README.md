@@ -5,6 +5,10 @@ The workflow and layout follow Sollumz: object types, create/convert tools, a si
 validation and import/export. This is a reference implementation; its tests do not constitute
 independent ADM conformance certification.
 
+The shader registry was reissued on 2026-11-15. Earlier development schemas with the same
+identities are superseded and are not supported; see the
+[publication record](../adm-standard/SPEC_GAPS.md#shader-registry-republication).
+
 ## Installation
 
 - **Simplest:** zip the `adm_blender` folder (e.g. right-click › *Send to › Compressed folder*) and install
@@ -144,8 +148,9 @@ Export writes `skeletonProfiles` with roles, `referencePose`, `targetHeight`, `r
 
 The Model Root panel preserves `modelProfiles` as strict JSON, and node properties assign
 `componentRoles`. The core validator checks the registered vehicle and firearm profile metadata and
-their role-frame constraints. The Blender animation authoring/import workflow does not yet author or
-evaluate `target.kind=component` tracks; use a compatible external tool/runtime for those tracks.
+their role-frame constraints. Blender can author, export and import `target.kind=component` tracks
+using rest-relative translation and rotation deltas, with profile-axis and limit checks. Independent
+engine evaluation and interoperability remain unverified.
 
 The `ADM_humanoid_sockets_v1` extension declares standardized humanoid attachment names and their
 role ancestry; it does not add bones or affect existing animation libraries. A gear/weapon asset can
@@ -227,7 +232,9 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   Preview/Rendered mode. They are never exported.
 - A parameter is used only when its **Override** checkbox is enabled; otherwise the contract
   default applies. Editing a value enables Override automatically. Overridden numbers are connected
-  through drivers, so they update live and can be keyframed. **Refresh Preview** rebuilds the nodes.
+  through drivers, so they update live. Only parameters marked `animatable` in the shader schema
+  support exported shader animation; the panel shows a key button for those parameters.
+  **Refresh Preview** rebuilds the nodes.
 - Terrain Four Layer uses its own `layer0_texture` through `layer3_texture` parameters, not the
   portable PBR Base Color texture. In version 1.0, layer 0 is visible without a blend mask. Assign `layer0_texture`
   under **Layer 0**, or click **Use PBR Base Color for Layer 0** to copy the
@@ -296,12 +303,13 @@ Blender's preview is not a camera or live UI implementation. See the
 
 1. In the material panel, set the **Animation ID** (or *Auto*).
 2. Run **Link Material To Clip**, which adds a MATERIAL/NODETREE slot to the clip's Action.
-3. Key `layer_factor`, PBR values, shader parameters or enabled ADM Vertex Control parameters with
-   the key button next to each parameter.
+3. Key `layer_factor`, PBR values, animatable shader parameters or enabled ADM Vertex Control
+   parameters with the key button next to each parameter.
 
 The export writes `pbrParameter` and `shaderParameter` channels:
 - PBR channels only when their values change over the clip.
-- Shader parameters only when they have keyframes. Values are clamped to the parameter's min/max.
+- Shader parameters only when marked `animatable` and keyed. Values are clamped to the parameter's
+  min/max. Keyed shader parameters not marked `animatable` are skipped with an export warning.
 - ADM Vertex Control targets use the extension's parameter names and the material's exact shader
   identity. The `.adm_anim` file declares `ADM_vertex_control_v1` required.
 

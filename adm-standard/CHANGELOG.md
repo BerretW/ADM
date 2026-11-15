@@ -1,5 +1,23 @@
 # Changelog
 
+## ADM 1.0 shader registry republication — 2026-11-15
+
+- Reissued the current 42 shader definitions and their referenced contracts as the authoritative
+  baseline, retaining their current IDs and versions. This explicitly supersedes earlier development
+  definitions, including the 20 changed identities recorded below; compatibility with those
+  definitions is not supported. The ADM container version is unchanged.
+- Froze the reissued entries and contract text in `shaders/freeze-2026-11-15.json`. CI checks the
+  baseline separately from the generated registry and rejects changes to published identities.
+- Released Blender Tools 1.18.9 with the republication notice; shader behavior is unchanged.
+
+## Documentation audit — 2026-11-15
+
+- Documented that 20 published shader identities acquired metallic/roughness texture parameters
+  or channel/inversion controls without a version change after the 1.0 publication. The later
+  republication above resolves the versioning decision, without supporting the earlier schemas.
+- Documented the current Blender terrain workflow, animatable-parameter export restriction and
+  the manual terrain regression test's absence from CI.
+
 ## ADM 1.0 — Final specification publication — 2026-11-14
 
 - Froze the ADM 1.0 normative text and established a versioned conformance/certification process

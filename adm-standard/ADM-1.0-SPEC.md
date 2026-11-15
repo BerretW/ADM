@@ -198,6 +198,12 @@ registry addition does not change ADM 1.0 container or mesh encoding.
 
 ### 8.1 Shader registry, binding identity and discovery
 
+**Republication notice (2026-11-15):** the shader registry and referenced contracts are reissued
+as the authoritative ADM 1.0 definitions, replacing earlier development definitions under the
+same identities. Compatibility with those earlier definitions is not promised. This one-time
+correction does not change the ADM container version; from this republication onward the
+immutability and exact-version rules below apply to these definitions.
+
 A shader is identified by an exact pair `(shader.id, shader.version)`, serialized as `"shader":{"id":"adm.pbr.metallic_roughness","version":"1.0.0"}`. `id` is a nonempty ASCII dot-qualified identifier (regex `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+`, length 3..160 bytes), compared byte-for-byte. The `adm.` prefix is reserved for the official registry; external publishers SHOULD use reverse-DNS prefixes they control (for example `org.example.hologram`). `version` MUST be an exact SemVer 2.0.0 version without build metadata or ranges; a reader MUST NOT silently substitute another version. Official registry entries are immutable after publication; a semantic change requires a new version. `shader` defaults to the core PBR shader. A material's `animationId`, when present, MUST match `[a-z][a-z0-9_]*` and be unique across all `materials` in one model. It is a portable animation binding key, NOT an array index or user-visible material title. Animatable shader materials MUST provide `animationId`.
 
 `shaderDefinitions`, optional on the `.adm` top-level, is an array of **embedded descriptive schemas** (no executable code). Each entry MUST have `{ "id":string, "version":string, "parameters":[...] }` and MAY have `"description"` and `"author"` strings. No two entries may have the same `(id,version)`. Its parameter entries MUST satisfy §8.2. An embedded definition is required for each *non-official custom shader referenced by a material*, so parsers can validate names/types and editors can expose an inspector without internet access. Official `adm.*` shader definitions MUST NOT be redefined in the file: the published registry takes precedence. An embedded custom definition describes the interface, not an interoperable rendering algorithm; custom implementations require a separately published shader contract, and otherwise conform only by rendering the PBR fallback. Missing embedded custom definition is invalid even if an application has an implementation installed.

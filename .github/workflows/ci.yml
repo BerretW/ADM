@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
@@ -37,8 +38,11 @@ jobs:
           python adm-standard/tools/test_independent_conformance.py
           python adm-standard/tools/test_shader_vertex_masks.py
       - name: Validate shader registry
+        env:
+          FREEZE_BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           python adm-standard/tools/build_shader_registry.py --check
+          python adm-standard/tools/check_shader_registry_freeze.py --base-revision-env FREEZE_BASE_REVISION
           python adm-standard/tools/test_shader_registry.py
       - name: Regenerate fixtures without external inputs
         run: |

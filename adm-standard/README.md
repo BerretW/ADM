@@ -4,6 +4,11 @@
 
 This kit contains the frozen normative specification for the **native, chunk-streamable** game-model format `.adm` and the independent animation-library format `.adm_anim`. Models are **asset descriptions**, not game entities. ADM 1.0 is not binary compatible with legacy ADM, ADS or `.ads_anim` formats.
 
+**Shader registry republication:** on 2026-11-15 the current shader schemas and contracts replaced
+the earlier published development definitions under the same identities. Compatibility with those
+earlier definitions is not supported. The reissued definitions are frozen; see the
+[publication record](SPEC_GAPS.md#shader-registry-republication).
+
 ## Contents
 
 - `ADM-1.0-SPEC.md`: final normative specification, including the exact 64-byte header, 80-byte chunk directory entries, chunk-addressed bufferViews, safety rules, model data, animation libraries, morphs, two-bone IK, shaders and PBR fallback.
@@ -25,6 +30,8 @@ This kit contains the frozen normative specification for the **native, chunk-str
   published fixtures; it does not certify full semantic conformance.
 - `tools/test_shader_vertex_masks.py`: independent numerical vectors and v2 profile-channel checks;
   it does not import Blender's implementation.
+- `shaders/freeze-2026-11-15.json` and `tools/check_shader_registry_freeze.py`: reviewed baseline
+  and immutability check for the published shader entries and their referenced contract text.
 - `tools/run_tests.py`: reproducible tests for the supplied files.
 - `TEST-RESULTS.md`: executed tests and known gaps.
 - `CHANGELOG.md`: publication history and final 1.0 release record.
@@ -36,6 +43,7 @@ python3 tools/run_tests.py
 python3 tools/test_profiles.py
 python3 tools/test_independent_conformance.py
 python3 tools/test_shader_vertex_masks.py
+python3 tools/check_shader_registry_freeze.py
 python3 tools/container.py fixtures/valid/triangle.adm
 ```
 
