@@ -52,7 +52,7 @@ def _coords(data, count):
     return out.reshape(-1, 3)
 
 
-def _decimated_mesh(context, source, ratio, protect, morphs):
+def _decimated_mesh(context, source, ratio, protect, morphs, protected_vertices=()):
     """Decimate a copy of the LOD0 basis; morph deltas ride along as interpolated point attributes."""
     mesh = source.data.copy()
     tmp = bpy.data.objects.new("_adm_lod_tmp", mesh)
@@ -69,7 +69,7 @@ def _decimated_mesh(context, source, ratio, protect, morphs):
         if mesh.shape_keys is not None:
             tmp.shape_key_clear()
         total = triangle_count(mesh)
-        kept = set()
+        kept = set(protected_vertices)
         if protect:
             for poly in mesh.polygons:
                 if poly.material_index < len(source.material_slots) \
@@ -80,10 +80,14 @@ def _decimated_mesh(context, source, ratio, protect, morphs):
         mod.decimate_type = "COLLAPSE"
         # protected triangles are excluded from the reduction target so the rest still reaches `ratio`
         mod.ratio = 1.0 if total == 0 else (locked + ratio * (total - locked)) / total
+        if protected_vertices:
+            mod.ratio = ratio
         if kept:
             group = tmp.vertex_groups.new(name=PROTECT_GROUP)
             group.add([v.index for v in mesh.vertices if v.index not in kept], 1.0, "REPLACE")
             mod.vertex_group = PROTECT_GROUP
+            if protected_vertices:
+                mod.vertex_group_factor = 1000.0
         depsgraph = context.evaluated_depsgraph_get()
         result = bpy.data.meshes.new_from_object(tmp.evaluated_get(depsgraph), preserve_all_data_layers=True,
                                                  depsgraph=depsgraph)

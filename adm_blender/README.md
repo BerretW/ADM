@@ -217,9 +217,11 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
 2. In Object Mode choose **ADM Tools › Create › Create Terrain from Heightmap**. Select the loaded
    image, enter its real-world width and depth in metres, and set the minimum and maximum elevations
    in metres. The source image does not supply these dimensions.
-3. Choose samples in X and Y; the dialog shows the resulting triangle count. The mesh is an editable
-   grid with UVs and a Terrain Four Layer material. Heights are baked into the vertices. Sample counts
-   are limited to 513 per axis and source images to 16,777,216 pixels.
+3. Leave **Samples X/Y at 0 (Source)** to preserve the original sampling density: a 1009 x 1009
+   heightmap creates a 1009 x 1009 grid, without downsampling. Enter at least 2 on either axis to
+   resample it manually. For loaded images, the dialog shows the resolved grid and triangle count.
+   The mesh is an editable grid with UVs and a Terrain Four Layer material; heights are baked into
+   its vertices. Large grids take more memory and time.
 4. Assign the four layer textures and a painted or generated RGBA weight mask under **Blend & Tiling**.
    The operator does not infer a blend mask from height or slope. For an existing mesh, create a grid
    and UV map, apply a height displacement to its geometry, then assign the same shader and mask.
@@ -229,7 +231,12 @@ flip either axis, apply a height scale and offset, and place the center or lower
 3D cursor. Alternatively, enter metres per source pixel: the physical dimensions use the number of
 intervals (`samples - 1`), not the number of samples. Non-finite pixels and a configured NoData
 value are rejected. The generated object stores its source image name and settings as custom
-properties. The existing 513-sample-per-axis and 16,777,216-source-pixel limits still apply.
+properties. Source images are limited to 8193 x 8193 pixels (67,125,249) and generated grids to
+4,194,304 vertices (native 2017 x 2017 maps fit). With both Samples at 0, a denser source is reduced
+automatically to the largest grid within that limit, keeping the aspect ratio (8192 x 8192 becomes
+2048 x 2048); neighbouring source pixels are box-averaged so detail does not alias. The dialog and
+the completion message show the resulting vertex spacing in metres. Explicit Samples that exceed
+the limit are rejected. Manual Samples inputs allow up to 4096 per axis within that total.
 Direct file loading uses Blender's image decoder; a format Blender cannot decode is reported as an
 error. The importer does not read GeoTIFF georeferencing or infer NoData metadata: enter dimensions
 and any NoData value explicitly. It creates a working mesh only; use the separate terrain-tiling
@@ -249,24 +256,52 @@ working mesh; **Regenerate Preview** replaces the preview and **Cancel** removes
 - **Hybrid** first divides the grid into regular sectors, then applies the same connected adaptive
   partitioning inside each sector. Sector width and length are in metres.
 
-Adaptive modes partition existing grid cells; they do not remesh or create density-adaptive geometry.
-Their area limits are quantized to the working grid and infeasible settings are rejected. A preview
+Adaptive and Hybrid tiling only decide where tile borders run over existing grid cells; geometry
+density is controlled separately by **Tile Geometry** below. Slope and elevation are averaged over
+roughly one eighth of the target tile width, so sensor noise on dense heightmaps does not strand
+single cells as separate tiles.
+Their area limits are quantized to the working grid. The preview dialog shows the grid size, cell
+spacing, the tile area allowed by **Maximum Cells per Tile** and the expected tile count while you
+edit; settings that cannot work (for example a Minimum Area needing more cells than a tile may hold,
+or more than 4,096 tiles) mark the offending field red with a suggested fix and are refused before
+any partitioning runs. On dense grids raise **Maximum Cells per Tile**: at 0.71 m spacing a cell is
+about 0.5 m2, so the default 4,096 cells caps tiles at about 2,065 m2. Preview and Apply show progress;
+Apply reuses the partition computed by Preview. A preview
 stores the source geometry signature and parameters; applying after editing the working mesh is
 rejected until the preview is regenerated. One apply operation is limited to 4,096 tiles to prevent
 accidental creation of an unresponsive Blender scene.
 
+**Tile Geometry** selects how each tile is simplified after tiling:
+
+- **Adaptive** (default) keeps detail where the terrain needs it. For every tile it searches for the
+  lowest Decimate/Collapse ratio whose vertical deviation from every source sample of that tile stays
+  within **Max Height Error** (default 0.1 m). Flat tiles therefore drop to very few triangles while
+  rough tiles keep more. The completion message reports the largest measured error; each tile stores
+  it as `adm_terrain_measured_error_m`. The bound is checked at the source samples, not between them.
+- **Decimate** keeps a fixed share of triangles: **15% / 30% / 70%** (retained, not removed). This is
+  not Un-Subdivide, which uses integer iterations rather than a ratio. Small or narrow tiles can retain
+  more than the requested percentage because borders are protected.
+- **Full Resolution** keeps all source grid cells.
+
+In both reduced modes boundary vertices and edges are protected and verified unchanged, so
+neighbouring tiles still meet exactly. The completion message reports the actual triangle counts.
+The reduction is baked into editable output meshes, not left as a modifier, and never modifies the
+full-resolution working grid. Adaptive search costs several Collapse passes per tile and is slower
+than Decimate on large terrains.
+
 **Apply Tiling** creates a collection of separate ADM Model Roots and uniquely editable mesh
-datablocks. Each tile retains the source material, UV maps, `COLOR_0`/`COLOR_1`, supported point
-attributes and sampled vertex positions. The original working mesh is retained, hidden and excluded
-from export. The first tile becomes active. Use Blender's existing **Generate LODs** on a tile to add
+datablocks. Each tile retains source materials, UV maps, `COLOR_0`/`COLOR_1` and supported point
+attributes; interior attribute values are interpolated during reduction. The original working mesh
+is retained, hidden and excluded from export. The first tile becomes active.
+Use Blender's existing **Generate LODs** on a tile to add
 an ADM LOD Group, **Sync Terrain Borders** after editing coincident border samples, and **Export Tile**
 for an individual model. To export a set, use the standard ADM export dialog's **All Model Roots**
 scope.
 
 Border synchronization averages matching XY samples shared by generated tiles; it does not add
 vertices, reconcile differently transformed roots or repair mismatched edge topology. Tiling requires
-the regular-grid topology produced by this heightmap tool; topological edits are unsupported.
-Polygon-aware manual split/merge editing, density-adaptive mesh generation, LOD seam stitching/skirts,
+the regular-grid topology of the working mesh; manually changing its topology is unsupported.
+Polygon-aware manual split/merge editing, LOD seam stitching/skirts,
 synchronization of simplified LOD borders, and export manifests are not implemented.
 
 ### Shader profile previews

@@ -65,6 +65,24 @@ class TerrainPartitionTests(unittest.TestCase):
             * (max(cell // 12 for cell in region) - min(cell // 12 for cell in region) + 1) > len(region)
             for region in first))
 
+    def test_noisy_dense_grid_grows_whole_regions(self):
+        # per-cell slope noise used to strand single cells and explode the region count
+        size = 160
+        state = 12345
+        heights = []
+        for y in range(size):
+            for x in range(size):
+                state = (state * 1103515245 + 12345) % 2 ** 31
+                heights.append(5 * math.sin(x / 20) * math.cos(y / 25) + 0.2 * state / 2 ** 31)
+        reports = []
+        regions = adaptive_partition(heights, size, size, size - 1, size - 1, target_area_m2=2500,
+                                     min_area_m2=1200, max_area_m2=5000, max_cells_per_tile=5000,
+                                     max_regions=60, progress=reports.append)
+        self.assertLessEqual(len(regions), 20)
+        self.assertTrue(all(1200 <= len(region) <= 5000 for region in regions))
+        self.assertTrue(all(connected(region, size - 1, size - 1) for region in regions))
+        self.assertTrue(reports and reports[-1] == 1.0)
+
     def test_hybrid_regions_stay_inside_regular_sectors(self):
         sectors = sector_cells(self.samples_x, self.samples_y, self.width_m, self.depth_m, 6, 4)
         partition = []

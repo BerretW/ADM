@@ -62,7 +62,7 @@ class ADM_OT_import(bpy.types.Operator, ImportHelper):
 
 
 def _update_export_scope(self, context):
-    if self.get("_vertex_controls_manual", False):
+    if self.vertex_controls_manual:
         return
     root = find_model_root(context.active_object) if context.active_object else None
     if self.scope == "ALL_ROOTS":
@@ -71,14 +71,16 @@ def _update_export_scope(self, context):
     else:
         enabled = default_export_options(context, root if self.scope == "ROOT" else None,
                                          self.scope == "SELECTED").vertex_controls
-    self["_setting_vertex_controls"] = True
-    self.vertex_controls = enabled
-    self["_setting_vertex_controls"] = False
+    self.vertex_controls_auto = True
+    try:
+        self.vertex_controls = enabled
+    finally:
+        self.vertex_controls_auto = False
 
 
 def _update_export_vertex_controls(self, context):
-    if not self.get("_setting_vertex_controls", False):
-        self["_vertex_controls_manual"] = True
+    if not self.vertex_controls_auto:
+        self.vertex_controls_manual = True
 
 
 class ADM_OT_export(bpy.types.Operator, ExportHelper):
@@ -109,6 +111,8 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
     vertex_controls: BoolProperty(name="ADM Vertex Controls", default=False, update=_update_export_vertex_controls,
                                   description="Use ADM_vertex_control_v1 semantics for COLOR_0 and COLOR_1; "
                                               "required to export authored COLOR_1 masks for 2.0.0 profiles")
+    vertex_controls_manual: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+    vertex_controls_auto: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
     image_format: EnumProperty(name="Images", default="PNG", items=[
         ("PNG", "PNG", "Embed every texture as PNG; JPEG, DDS, KTX2, TGA, EXR… sources are converted. "
                        "Readable by every ADM reader"),

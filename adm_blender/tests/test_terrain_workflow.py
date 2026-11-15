@@ -1,4 +1,5 @@
 """Blender regression tests for terrain creation and export option defaults."""
+import math
 import os
 import struct
 import sys
@@ -55,9 +56,15 @@ def main(tmp):
     assert not default_export_options(bpy.context, root).vertex_controls
     overlay.adm.export_exclude = False
 
-    class Options(dict):
-        scope = "ROOT"
-        _vertex_controls = False
+    class Options:
+        # like a Blender 5 operator: attributes only, no IDProperty item access
+        __slots__ = ("scope", "_vertex_controls", "vertex_controls_manual", "vertex_controls_auto")
+
+        def __init__(self):
+            self.scope = "ROOT"
+            self._vertex_controls = False
+            self.vertex_controls_manual = False
+            self.vertex_controls_auto = False
 
         @property
         def vertex_controls(self):
@@ -139,8 +146,9 @@ def main(tmp):
     bpy.ops.adm.create_terrain_heightmap(image_name=absolute.name, dimensions_mode="SPACING",
                                          spacing_x_m=3, spacing_y_m=5, height_mode="ABSOLUTE",
                                          height_scale=2, height_offset_m=1, flip_x=True, flip_y=True,
-                                         origin="CORNER", samples_x=4, samples_y=3)
+                                         origin="CORNER")
     terrain = bpy.context.active_object
+    assert terrain["adm_terrain_samples_x"] == 4 and terrain["adm_terrain_samples_y"] == 3
     assert np.allclose([vertex.co.z for vertex in terrain.data.vertices],
                        [23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1])
     assert np.allclose(terrain.data.vertices[0].co[:2], (0, 0))
@@ -294,12 +302,180 @@ def main(tmp):
            + png_chunk(b"IEND", b""))
     with open(source_path, "wb") as stream:
         stream.write(png)
-    bpy.ops.adm.create_terrain_heightmap(image_path=source_path, width_m=1, depth_m=1,
-                                         samples_x=2, samples_y=2)
+    bpy.ops.adm.create_terrain_heightmap(image_path=source_path, width_m=1, depth_m=1)
     terrain = bpy.context.active_object
     expected = np.array([0, 1, 32769, 65535], np.float64) / 65535
     assert np.allclose(sorted(vertex.co.z for vertex in terrain.data.vertices), expected, atol=1e-7)
     assert bpy.data.images[terrain["adm_terrain_source_image"]].colorspace_settings.is_data
+
+    from adm_blender.blender.operators import _terrain_boundary
+
+    dense = bpy.data.images.new("Native Density", width=65, height=33, float_buffer=True)
+    dense.colorspace_settings.name = "Non-Color"
+    dense_pixels = np.zeros((33, 65, 4), dtype=np.float32)
+    yy, xx = np.mgrid[:33, :65]
+    dense_pixels[:, :, 0] = 0.5 + 0.2 * np.sin(xx * 0.2) * np.cos(yy * 0.15)
+    dense_pixels[:, :, 3] = 1
+    dense.pixels.foreach_set(dense_pixels.ravel())
+    counts = []
+    for preset in ("0.15", "0.3", "0.7"):
+        assert bpy.ops.adm.create_terrain_heightmap(
+            image_name=dense.name, width_m=64, depth_m=32,
+            min_height_m=0, max_height_m=10) == {"FINISHED"}
+        source = bpy.context.active_object
+        assert len(source.data.vertices) == 65 * 33
+        assert np.allclose([vertex.co.z for vertex in source.data.vertices],
+                           dense_pixels[:, :, 0].ravel() * 10)
+        mask = source.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+        mask.data.foreach_set("color", np.tile([0.25, 0.5, 0.75, 1], len(mask.data)))
+        assert bpy.ops.adm.terrain_preview_fixed_grid(
+            tile_width_m=32, tile_length_m=32, reduction_method="DECIMATE",
+            reduction=preset) == {"FINISHED"}
+        assert bpy.ops.adm.terrain_apply_tiling() == {"FINISHED"}
+        collection = bpy.context.active_object.users_collection[0]
+        tiles = [obj for obj in collection.objects if obj.type == "MESH"]
+        assert len(tiles) == 2
+        total = 0
+        seams = []
+        for tile in tiles:
+            triangles = sum(len(poly.vertices) - 2 for poly in tile.data.polygons)
+            assert abs(triangles / 2048 - float(preset)) < 0.02, (preset, triangles)
+            assert len(tile.data.vertices) < 33 * 33
+            assert len(tile.data.uv_layers["UVMap"].data) == len(tile.data.loops)
+            assert len(tile.data.color_attributes["COLOR_1"].data) == len(tile.data.loops)
+            assert all(np.allclose(value.color, (0.25, 0.5, 0.75, 1))
+                       for value in tile.data.color_attributes["COLOR_1"].data)
+            boundary_vertices, _edges = _terrain_boundary(tile.data)
+            assert len(boundary_vertices) == 128
+            seams.append(sorted(tuple(tile.data.vertices[index].co) for index in boundary_vertices
+                                if abs(tile.data.vertices[index].co.x) < 1e-6))
+            total += triangles
+        assert seams[0] == seams[1] and len(seams[0]) == 33
+        assert len(source.data.vertices) == 65 * 33 and len(source.data.polygons) == 64 * 32
+        counts.append(total)
+    assert counts[0] < counts[1] < counts[2]
+
+    from adm_blender.blender.operators import _terrain_max_height_error
+
+    mixed = bpy.data.images.new("Adaptive Density", width=65, height=33, float_buffer=True)
+    mixed.colorspace_settings.name = "Non-Color"
+    mixed_pixels = np.zeros((33, 65, 4), dtype=np.float32)
+    mixed_pixels[:, :, 0] = 0.5 + np.where(xx >= 32, 0.2 * np.sin(xx * 0.5) * np.cos(yy * 0.4), 0.0)
+    mixed_pixels[:, :, 3] = 1
+    mixed.pixels.foreach_set(mixed_pixels.ravel())
+    adaptive_totals = []
+    for tolerance in (0.2, 0.05):
+        assert bpy.ops.adm.create_terrain_heightmap(
+            image_name=mixed.name, width_m=64, depth_m=32,
+            min_height_m=0, max_height_m=10, origin="CORNER") == {"FINISHED"}
+        source = bpy.context.active_object
+        grid = np.empty(len(source.data.vertices) * 3)
+        source.data.vertices.foreach_get("co", grid)
+        grid = grid.reshape(33, 65, 3)
+        assert bpy.ops.adm.terrain_preview_fixed_grid(
+            tile_width_m=32, tile_length_m=32, reduction_method="ADAPTIVE",
+            max_error_m=tolerance) == {"FINISHED"}
+        assert bpy.ops.adm.terrain_apply_tiling() == {"FINISHED"}
+        collection = bpy.context.active_object.users_collection[0]
+        tiles = sorted((obj for obj in collection.objects if obj.type == "MESH"),
+                       key=lambda obj: obj.parent["adm_terrain_bounds_grid_x0"])
+        assert len(tiles) == 2
+        triangles = [sum(len(poly.vertices) - 2 for poly in tile.data.polygons) for tile in tiles]
+        assert triangles[0] < triangles[1] < 2048, triangles
+        assert triangles[0] < 0.1 * 2048, triangles
+        for tile, columns in zip(tiles, (slice(0, 33), slice(32, 65))):
+            assert tile["adm_terrain_reduction"] == "ADAPTIVE"
+            assert tile["adm_terrain_measured_error_m"] <= tolerance
+            samples = grid[:, columns].reshape(-1, 3)
+            assert _terrain_max_height_error(tile.data, samples, math.inf) <= tolerance + 1e-6
+            assert len(_terrain_boundary(tile.data)[0]) == 128
+        adaptive_totals.append(sum(triangles))
+    assert adaptive_totals[0] < adaptive_totals[1]
+    root = tiles[0].parent
+    data, report = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True)).export()
+    assert report.ok
+    path = os.path.join(tmp, "reduced_tile.adm")
+    with open(path, "wb") as stream:
+        stream.write(data)
+    expected_triangles = sum(len(poly.vertices) - 2 for poly in tiles[0].data.polygons)
+    expected_boundary = _terrain_boundary(tiles[0].data)[1]
+    bpy.ops.wm.read_homefile(use_empty=True)
+    import_model(bpy.context, path, ImportOptions())
+    reduced = next(obj for obj in bpy.context.scene.objects if obj.type == "MESH")
+    assert len(reduced.data.polygons) == expected_triangles
+    assert _terrain_boundary(reduced.data)[1] == expected_boundary
+    assert reduced.data.uv_layers.get("UVMap") is not None
+    assert reduced.data.color_attributes.get("COLOR_1") is not None
+
+    wide = bpy.data.images.new("Native 1009", width=1009, height=3, float_buffer=True)
+    wide.colorspace_settings.name = "Non-Color"
+    pixels = np.zeros((3, 1009, 4), dtype=np.float32)
+    pixels[:, :, 0] = np.linspace(0, 1, 1009)
+    pixels[:, :, 3] = 1
+    wide.pixels.foreach_set(pixels.ravel())
+    assert bpy.ops.adm.create_terrain_heightmap(
+        image_name=wide.name, width_m=1008, depth_m=2) == {"FINISHED"}
+    wide_grid = bpy.context.active_object
+    assert len(wide_grid.data.vertices) == 1009 * 3
+    assert np.allclose([vertex.co.z for vertex in wide_grid.data.vertices], pixels[:, :, 0].ravel())
+    for samples, message in ((1, "at least 2"), (4096, "4,194,304 vertices")):
+        before = len(bpy.data.objects)
+        try:
+            bpy.ops.adm.create_terrain_heightmap(
+                image_name=wide.name, width_m=1008, depth_m=2, samples_x=samples, samples_y=samples)
+        except RuntimeError as exc:
+            assert message in str(exc)
+        else:
+            raise AssertionError("invalid or oversized terrain samples must be rejected")
+        assert len(bpy.data.objects) == before
+
+    from adm_blender.blender.operators import MAX_TERRAIN_VERTICES, _terrain_effective_samples
+
+    assert _terrain_effective_samples(8192, 8192, 0, 0) == (2048, 2048)
+    assert _terrain_effective_samples(1009, 1009, 0, 0) == (1009, 1009)
+    dense_w, dense_h = 8193, 2049
+    huge = bpy.data.images.new("Too Dense", width=dense_w, height=dense_h, float_buffer=True)
+    huge.colorspace_settings.name = "Non-Color"
+    huge_pixels = np.zeros((dense_h, dense_w, 4), dtype=np.float32)
+    huge_pixels[:, :, 0] = (0.5 * np.linspace(0, 1, dense_w)[None, :]
+                            + 0.25 * (np.arange(dense_h) % 2)[:, None])
+    huge_pixels[:, :, 3] = 1
+    huge.pixels.foreach_set(huge_pixels.ravel())
+    del huge_pixels
+    assert bpy.ops.adm.create_terrain_heightmap(
+        image_name=huge.name, width_m=8192, depth_m=2048, origin="CORNER") == {"FINISHED"}
+    auto = bpy.context.active_object
+    ax, ay = auto["adm_terrain_samples_x"], auto["adm_terrain_samples_y"]
+    assert 0.99 * MAX_TERRAIN_VERTICES < ax * ay <= MAX_TERRAIN_VERTICES, (ax, ay)
+    assert abs(ax / ay - 4) < 0.01, (ax, ay)
+    auto_coords = np.empty(ax * ay * 3)
+    auto.data.vertices.foreach_get("co", auto_coords)
+    auto_coords = auto_coords.reshape(ay, ax, 3)[2:-2, 2:-2]
+    # box averaging must damp the one-pixel row stripes instead of aliasing them to 0 or 0.25
+    detail = auto_coords[:, :, 2] - 0.5 * auto_coords[:, :, 0] / 8192
+    assert np.abs(detail - 0.125).max() < 0.05, np.abs(detail - 0.125).max()
+    bpy.data.images.remove(huge)
+
+    from adm_blender.blender.operators import _terrain_tiling_check
+
+    dense = {"adm_terrain_samples_x": 2048, "adm_terrain_samples_y": 2048,
+             "adm_terrain_width_m": 2047 * 0.71, "adm_terrain_depth_m": 2047 * 0.71}
+    tiling = dict(mode="ADAPTIVE", tile_width_m=100, tile_length_m=100, target_area_m2=10000,
+                  min_area_m2=2500, max_area_m2=20000, max_cells_per_tile=4096,
+                  sector_width_m=500, sector_length_m=500)
+    _info, problems = _terrain_tiling_check(dense, tiling)
+    assert "Minimum Area needs 4,960 cells" in problems["max_cells_per_tile"], problems
+    _info, problems = _terrain_tiling_check(dense, dict(tiling, max_cells_per_tile=40000))
+    assert not problems, problems
+    _info, problems = _terrain_tiling_check(dense, dict(tiling, mode="FIXED", tile_width_m=10, tile_length_m=10))
+    assert "maximum is 4,096" in problems["tile_width_m"], problems
+    try:
+        bpy.ops.adm.terrain_preview_fixed_grid(mode="ADAPTIVE", min_area_m2=2500, max_cells_per_tile=100)
+    except RuntimeError as exc:
+        assert "Minimum Area needs" in str(exc), exc
+    else:
+        raise AssertionError("infeasible tiling limits must be rejected before partitioning")
+    assert "adm_terrain_preview_settings" not in auto
 
     invalid = bpy.data.images.new("Invalid Heightmap", width=2, height=2, float_buffer=True)
     invalid.colorspace_settings.name = "Non-Color"

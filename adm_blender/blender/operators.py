@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+import textwrap
 import uuid
 
 import bpy
@@ -623,8 +624,12 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
         ("CORNER", "Lower Left", "Place the terrain lower-left corner at the 3D cursor")])
     use_no_data: BoolProperty(name="Reject NoData Value", default=False)
     no_data_value: FloatProperty(name="NoData Value", default=0.0)
-    samples_x: IntProperty(name="Samples X", default=193, min=2, max=513)
-    samples_y: IntProperty(name="Samples Y", default=193, min=2, max=513)
+    samples_x: IntProperty(name="Samples X (0 = Source)", default=0, min=0, max=4096,
+                           description="Zero preserves one vertex per source pixel (auto-reduced above "
+                                       "4,194,304 vertices); enter at least 2 to resample")
+    samples_y: IntProperty(name="Samples Y (0 = Source)", default=0, min=0, max=4096,
+                           description="Zero preserves one vertex per source pixel (auto-reduced above "
+                                       "4,194,304 vertices); enter at least 2 to resample")
 
     @classmethod
     def poll(cls, context):
@@ -656,7 +661,29 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
             layout.prop(self, "no_data_value")
         for name in ("samples_x", "samples_y"):
             layout.prop(self, name)
-        layout.label(text=f"Triangles: {2 * (self.samples_x - 1) * (self.samples_y - 1):,}")
+        source_size = tuple(image.size) if image is not None and image.has_data else (0, 0)
+        nx, ny = _terrain_effective_samples(*source_size, self.samples_x, self.samples_y)
+        if nx >= 2 and ny >= 2:
+            layout.label(text=f"Grid: {nx:,} x {ny:,}; triangles: {2 * (nx - 1) * (ny - 1):,}")
+            if self.dimensions_mode == "SIZE":
+                size_x, size_y = self.width_m, self.depth_m
+            else:
+                size_x = self.spacing_x_m * (source_size[0] - 1)
+                size_y = self.spacing_y_m * (source_size[1] - 1)
+            if size_x > 0 and size_y > 0:
+                layout.label(text=f"Vertex spacing: {size_x / (nx - 1):.3g} x {size_y / (ny - 1):.3g} m")
+            if source_size[0] * source_size[1] > MAX_HEIGHTMAP_PIXELS:
+                layout.label(text="Source exceeds 8193 x 8193 pixels; downscale the image", icon="ERROR")
+            elif nx * ny > MAX_TERRAIN_VERTICES:
+                layout.label(text="Grid exceeds 4,194,304 vertices; lower Samples", icon="ERROR")
+            elif not (self.samples_x or self.samples_y) and (nx, ny) != source_size:
+                layout.label(text="Source too dense for 4,194,304 vertices; auto-sampled with averaging",
+                             icon="INFO")
+            elif nx * ny > 1_000_000:
+                layout.label(text="Large grid: import and tiling may take some time", icon="INFO")
+        else:
+            layout.label(text="Automatic Samples: one vertex per source pixel "
+                              "(reduced automatically above 4,194,304 vertices)")
         if self.dimensions_mode == "SIZE" and (self.width_m <= 0 or self.depth_m <= 0):
             layout.label(text="Enter the real-world width and depth", icon="ERROR")
 
@@ -687,10 +714,16 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
         if image is None:
             return reject("Choose a loaded heightmap image or file")
         width, height = image.size
-        if width < 2 or height < 2 or width * height > 16_777_216:
-            return reject("Heightmap must be at least 2 x 2 and at most 16,777,216 pixels")
+        if width < 2 or height < 2 or width * height > MAX_HEIGHTMAP_PIXELS:
+            return reject(f"Heightmap must be at least 2 x 2 and at most {MAX_HEIGHTMAP_PIXELS:,} pixels "
+                          f"(8193 x 8193); this one is {width} x {height}")
         if not image.colorspace_settings.is_data:
             return reject("Set the heightmap image color space to Non-Color")
+        nx, ny = _terrain_effective_samples(width, height, self.samples_x, self.samples_y)
+        if nx < 2 or ny < 2:
+            return reject("Samples must be 0 (source resolution) or at least 2 per axis")
+        if nx * ny > MAX_TERRAIN_VERTICES:
+            return reject("Terrain grid exceeds 4,194,304 vertices; lower Samples X/Y or set both to 0")
         width_m = self.width_m if self.dimensions_mode == "SIZE" else self.spacing_x_m * (width - 1)
         depth_m = self.depth_m if self.dimensions_mode == "SIZE" else self.spacing_y_m * (height - 1)
         values = (width_m, depth_m, self.min_height_m, self.max_height_m, self.height_scale,
@@ -709,7 +742,8 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
             return reject(f"Cannot decode heightmap pixels: {exc}")
         if not image.has_data:
             return reject("Heightmap image has no decoded pixel data")
-        heights = pixels.reshape(height, width, 4)[:, :, 0]
+        heights = pixels.reshape(height, width, 4)[:, :, 0].copy()
+        del pixels
         if not np.isfinite(heights).all():
             return reject("Heightmap contains NaN or infinite values")
         if self.use_no_data and np.any(heights == self.no_data_value):
@@ -720,14 +754,9 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
             heights = heights[:, ::-1]
         if self.flip_y:
             heights = heights[::-1, :]
-        x = np.linspace(0, width - 1, self.samples_x)
-        y = np.linspace(0, height - 1, self.samples_y)
-        x0, y0 = x.astype(np.int32), y.astype(np.int32)
-        x1, y1 = np.minimum(x0 + 1, width - 1), np.minimum(y0 + 1, height - 1)
-        fx, fy = (x - x0)[None, :], (y - y0)[:, None]
-        z = ((1 - fy) * ((1 - fx) * heights[np.ix_(y0, x0)] + fx * heights[np.ix_(y0, x1)])
-             + fy * ((1 - fx) * heights[np.ix_(y1, x0)] + fx * heights[np.ix_(y1, x1)]))
-        u, v = np.meshgrid(np.linspace(0, 1, self.samples_x), np.linspace(0, 1, self.samples_y))
+        z = _terrain_resample_axis(_terrain_resample_axis(heights, nx, 1), ny, 0)
+        del heights
+        u, v = np.meshgrid(np.linspace(0, 1, nx), np.linspace(0, 1, ny))
         elevation = (self.min_height_m + z * (self.max_height_m - self.min_height_m)
                      if self.height_mode == "NORMALIZED" else z)
         elevation = elevation * self.height_scale + self.height_offset_m
@@ -738,11 +767,18 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
                                   (v.ravel() - origin) * depth_m / unit, elevation.ravel() / unit))
         if not np.isfinite(coords).all() or np.max(np.abs(coords)) > np.finfo(np.float32).max:
             return reject("Terrain coordinates exceed Blender's finite mesh coordinate range")
-        indices = np.arange(self.samples_x * self.samples_y).reshape(self.samples_y, self.samples_x)
+        indices = np.arange(nx * ny, dtype=np.int32).reshape(ny, nx)
         faces = np.column_stack((indices[:-1, :-1].ravel(), indices[:-1, 1:].ravel(),
                                  indices[1:, 1:].ravel(), indices[1:, :-1].ravel()))
         mesh = bpy.data.meshes.new("ADM Terrain")
-        mesh.from_pydata(coords.tolist(), [], faces.tolist())
+        mesh.vertices.add(len(coords))
+        mesh.vertices.foreach_set("co", coords.astype(np.float32).ravel())
+        mesh.loops.add(faces.size)
+        mesh.loops.foreach_set("vertex_index", faces.ravel())
+        mesh.polygons.add(len(faces))
+        mesh.polygons.foreach_set("loop_start", np.arange(len(faces), dtype=np.int32) * 4)
+        mesh.polygons.foreach_set("loop_total", np.full(len(faces), 4, dtype=np.int32))
+        mesh.update(calc_edges=True)
         uv = mesh.uv_layers.new(name="UVMap")
         loop_indices = np.empty(len(mesh.loops), dtype=np.int32)
         mesh.loops.foreach_get("vertex_index", loop_indices)
@@ -760,8 +796,8 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
         obj["adm_terrain_flip_x"] = self.flip_x
         obj["adm_terrain_flip_y"] = self.flip_y
         obj["adm_terrain_origin"] = self.origin
-        obj["adm_terrain_samples_x"] = self.samples_x
-        obj["adm_terrain_samples_y"] = self.samples_y
+        obj["adm_terrain_samples_x"] = nx
+        obj["adm_terrain_samples_y"] = ny
         obj["adm_terrain_use_no_data"] = self.use_no_data
         obj["adm_terrain_no_data_value"] = self.no_data_value
         link_to_active_collection(context, obj)
@@ -777,7 +813,8 @@ class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
         mat.adm.animation_id = unique_animation_id(mat.name, taken)
         mesh.materials.append(mat)
         make_active(context, obj)
-        self.report({"INFO"}, f"Created terrain with {len(faces) * 2:,} triangles")
+        self.report({"INFO"}, f"Created terrain with {len(faces) * 2:,} triangles; "
+                    f"{nx:,} x {ny:,} vertices spaced {width_m / (nx - 1):.3g} x {depth_m / (ny - 1):.3g} m")
         return {"FINISHED"}
 
 
@@ -792,6 +829,105 @@ def _terrain_grid_boundaries(sample_count, extent_m, tile_size_m):
 
 
 MAX_TERRAIN_TILES = 4096
+MAX_TERRAIN_VERTICES = 4_194_304
+MAX_HEIGHTMAP_PIXELS = 8193 * 8193
+
+
+def _terrain_tiling_check(obj, settings):
+    """Feasibility of tiling settings from the grid size alone, before any partition runs.
+
+    Returns (info lines, {property name: problem}); any problem means the partition cannot succeed.
+    """
+    nx, ny = int(obj.get("adm_terrain_samples_x", 0)), int(obj.get("adm_terrain_samples_y", 0))
+    width, depth = float(obj.get("adm_terrain_width_m", 0)), float(obj.get("adm_terrain_depth_m", 0))
+    if nx < 2 or ny < 2 or width <= 0 or depth <= 0:
+        return [], {}
+    cells_x, cells_y = nx - 1, ny - 1
+    cell_area = width / cells_x * depth / cells_y
+    info = [f"Grid {nx:,} x {ny:,}, cell {width / cells_x:.3g} x {depth / cells_y:.3g} m "
+            f"({cells_x * cells_y:,} cells)"]
+    problems = {}
+    if settings["mode"] == "FIXED":
+        bx = _terrain_grid_boundaries(nx, width, max(settings["tile_width_m"], 0.001))
+        by = _terrain_grid_boundaries(ny, depth, max(settings["tile_length_m"], 0.001))
+        count = (len(bx) - 1) * (len(by) - 1)
+        largest = max(b - a for a, b in zip(bx, bx[1:])) * max(b - a for a, b in zip(by, by[1:]))
+        info.append(f"Tiles: {count:,}, up to {largest:,} cells each; borders snap to the source grid")
+        if count > MAX_TERRAIN_TILES:
+            problems["tile_width_m"] = (f"{count:,} tiles; maximum is {MAX_TERRAIN_TILES:,}. "
+                                        f"Use larger tiles")
+        return info, problems
+    min_area, max_area, target = settings["min_area_m2"], settings["max_area_m2"], settings["target_area_m2"]
+    if max_area < min_area:
+        problems["max_area_m2"] = "Maximum Area is below Minimum Area"
+        return info, problems
+    max_cells = min(settings["max_cells_per_tile"], int(math.floor(max_area / cell_area + 1e-12)))
+    min_cells = max(1, int(math.ceil(min_area / cell_area - 1e-12)))
+    if max_cells < 1:
+        problems["max_area_m2"] = f"Maximum Area is smaller than one cell ({cell_area:.3g} m2)"
+        return info, problems
+    effective_max = max_cells * cell_area
+    if settings["max_cells_per_tile"] * cell_area < max_area:
+        info.append(f"Maximum Cells per Tile caps tiles at {effective_max:,.0f} m2")
+    if min_cells > max_cells:
+        problems["max_cells_per_tile" if settings["max_cells_per_tile"] < max_area / cell_area
+                 else "min_area_m2"] = (
+            f"Minimum Area needs {min_cells:,} cells, but a tile holds at most {max_cells:,} "
+            f"({effective_max:,.0f} m2). Set Maximum Cells per Tile to {min_cells:,}+ or lower Minimum Area")
+    if not min_area <= target <= max_area:
+        problems["target_area_m2"] = "Target Area must lie between Minimum and Maximum Area"
+    if settings["mode"] == "HYBRID":
+        sectors = (len(_terrain_grid_boundaries(nx, width, max(settings["sector_width_m"], 0.001))) - 1) \
+            * (len(_terrain_grid_boundaries(ny, depth, max(settings["sector_length_m"], 0.001))) - 1)
+        sector_area = min(settings["sector_width_m"], width) * min(settings["sector_length_m"], depth)
+        tiles_min = sectors * max(1, math.ceil(sector_area / effective_max))
+        if sectors > MAX_TERRAIN_TILES:
+            problems["sector_width_m"] = f"{sectors:,} sectors; maximum is {MAX_TERRAIN_TILES:,}"
+        elif sector_area > effective_max and sector_area < min_area * 2:
+            problems["sector_width_m"] = ("A sector is larger than one tile but cannot hold two tiles of "
+                                          "Minimum Area; change sector size or tile areas")
+    else:
+        tiles_min = math.ceil(cells_x * cells_y / max_cells)
+    expected = max(tiles_min, round(width * depth / max(target, 1e-9)))
+    info.append(f"Expected tiles: about {expected:,} (at least {tiles_min:,})")
+    if tiles_min > MAX_TERRAIN_TILES:
+        problems.setdefault("max_cells_per_tile", (
+            f"At least {tiles_min:,} tiles needed; maximum is {MAX_TERRAIN_TILES:,}. "
+            f"Raise Maximum Area or Maximum Cells per Tile"))
+    return info, problems
+
+
+def _terrain_effective_samples(width, height, samples_x, samples_y):
+    """Grid size for the importer; both Samples at 0 = source density, capped at MAX_TERRAIN_VERTICES."""
+    if samples_x or samples_y or width < 2 or height < 2:
+        return samples_x or width, samples_y or height
+    if width * height <= MAX_TERRAIN_VERTICES:
+        return width, height
+    step = math.sqrt(width * height / MAX_TERRAIN_VERTICES)
+    while True:
+        nx, ny = int((width - 1) / step) + 1, int((height - 1) / step) + 1
+        if nx * ny <= MAX_TERRAIN_VERTICES:
+            return max(nx, 2), max(ny, 2)
+        step *= 1.0001
+
+
+def _terrain_resample_axis(values, count, axis):
+    """Bilinear resample along `axis`; when shrinking, average a box window to avoid aliasing."""
+    size = values.shape[axis]
+    positions = np.linspace(0, size - 1, count)
+    step = (size - 1) / (count - 1)
+    radius = int(step / 2) if step >= 2 else 0
+    total = None
+    for offset in range(-radius, radius + 1):
+        position = np.clip(positions + offset, 0, size - 1)
+        low = position.astype(np.int64)
+        high = np.minimum(low + 1, size - 1)
+        fraction = position - low
+        fraction = fraction[None, :] if axis == 1 else fraction[:, None]
+        first = np.take(values, low, axis=axis)
+        sample = first + (np.take(values, high, axis=axis) - first) * fraction
+        total = sample if total is None else total + sample
+    return total / (2 * radius + 1)
 
 
 def _remove_terrain_preview(context, source):
@@ -813,13 +949,19 @@ def _terrain_grid_info(context, source):
         raise ValueError("select an unmodified terrain grid created by the heightmap tool")
     if len(source.data.polygons) != (nx - 1) * (ny - 1):
         raise ValueError("terrain grid topology changed; regenerate it before tiling")
-    for row in range(ny - 1):
-        for column in range(nx - 1):
-            expected = (row * nx + column, row * nx + column + 1,
-                        (row + 1) * nx + column + 1, (row + 1) * nx + column)
-            polygon = source.data.polygons[row * (nx - 1) + column]
-            if tuple(polygon.vertices) != expected:
-                raise ValueError("terrain grid topology changed; regenerate it before tiling")
+    mesh = source.data
+    totals = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.polygons.foreach_get("loop_total", totals)
+    starts = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.polygons.foreach_get("loop_start", starts)
+    loops = np.empty(len(mesh.loops), dtype=np.int64)
+    mesh.loops.foreach_get("vertex_index", loops)
+    rows, columns = np.divmod(np.arange((nx - 1) * (ny - 1), dtype=np.int64), nx - 1)
+    first = rows * nx + columns
+    expected = np.stack((first, first + 1, first + nx + 1, first + nx), axis=1)
+    if not np.all(totals == 4) or len(loops) != 4 * len(totals) \
+            or not np.array_equal(loops[starts[:, None] + np.arange(4)], expected):
+        raise ValueError("terrain grid topology changed; regenerate it before tiling")
     scale = context.scene.unit_settings.scale_length
     if not math.isfinite(scale) or scale <= 0:
         raise ValueError("scene unit scale must be finite and positive")
@@ -843,7 +985,25 @@ def _terrain_height_samples(source, scale):
     return (coords.reshape(-1, 3)[:, 2].astype(np.float64) * scale).tolist()
 
 
-def _terrain_partition(source, context, settings):
+_TERRAIN_PARTITION_CACHE = {}
+
+
+def _terrain_partition(source, context, settings, progress=None):
+    """Partition the source grid; the last result is cached so Apply reuses the Preview work."""
+    keys = ("mode", "tile_width_m", "tile_length_m", "target_area_m2", "min_area_m2", "max_area_m2",
+            "sensitivity", "natural_boundary", "max_cells_per_tile", "sector_width_m", "sector_length_m")
+    key = (source.as_pointer(), _terrain_signature(source), context.scene.unit_settings.scale_length,
+           json.dumps({name: settings[name] for name in keys}, sort_keys=True))
+    cached = _TERRAIN_PARTITION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    result = _terrain_partition_uncached(source, context, settings, progress)
+    _TERRAIN_PARTITION_CACHE.clear()
+    _TERRAIN_PARTITION_CACHE[key] = result
+    return result
+
+
+def _terrain_partition_uncached(source, context, settings, progress):
     mode = settings["mode"]
     nx, ny, scale, width_m, depth_m = _terrain_grid_info(context, source)
     if mode == "FIXED":
@@ -864,7 +1024,7 @@ def _terrain_partition(source, context, settings):
             max_cells_per_tile=settings["max_cells_per_tile"],
             max_regions=MAX_TERRAIN_TILES)
         if mode == "ADAPTIVE":
-            regions = adaptive_partition(samples, nx, ny, width_m, depth_m, **params)
+            regions = adaptive_partition(samples, nx, ny, width_m, depth_m, progress=progress, **params)
         elif mode == "HYBRID":
             sectors = sector_cells(nx, ny, width_m, depth_m,
                                    settings["sector_width_m"], settings["sector_length_m"])
@@ -877,6 +1037,8 @@ def _terrain_partition(source, context, settings):
                     validate_samples=index == 0, **params))
                 if len(regions) > MAX_TERRAIN_TILES:
                     raise ValueError(f"Tiling exceeds the {MAX_TERRAIN_TILES}-tile limit")
+                if progress is not None:
+                    progress((index + 1) / len(sectors))
         else:
             raise ValueError("unknown terrain tiling mode")
     if not regions or len(regions) > MAX_TERRAIN_TILES:
@@ -893,13 +1055,18 @@ def _terrain_signature(source):
 
 
 def _terrain_boundary_chains(regions, cells_x, cells_y):
-    owner = {cell: tile for tile, region in enumerate(regions) for cell in region}
+    owner = [-1] * (cells_x * cells_y)
+    for tile, region in enumerate(regions):
+        for cell in region:
+            owner[cell] = tile
     edges = set()
 
     def add_edge(a, b):
         edges.add((min(a, b), max(a, b)))
 
-    for cell, tile in owner.items():
+    for cell, tile in enumerate(owner):
+        if tile < 0:
+            continue
         row, column = divmod(cell, cells_x)
         corners = (row * (cells_x + 1) + column,
                    row * (cells_x + 1) + column + 1,
@@ -913,7 +1080,7 @@ def _terrain_boundary_chains(regions, cells_x, cells_y):
         for neighbor_row, neighbor_column, edge in neighbors:
             neighbor = neighbor_row * cells_x + neighbor_column
             if not (0 <= neighbor_row < cells_y and 0 <= neighbor_column < cells_x) \
-                    or owner.get(neighbor) != tile:
+                    or owner[neighbor] != tile:
                 add_edge(*edge)
 
     adjacency = {}
@@ -966,6 +1133,17 @@ class ADM_OT_terrain_preview_fixed_grid(bpy.types.Operator):
     max_cells_per_tile: IntProperty(name="Maximum Cells per Tile", default=4096, min=1)
     sector_width_m: FloatProperty(name="Sector Width (m)", default=500.0, min=0.001)
     sector_length_m: FloatProperty(name="Sector Length (m)", default=500.0, min=0.001)
+    reduction_method: EnumProperty(name="Tile Geometry", default="ADAPTIVE", items=[
+        ("NONE", "Full Resolution", "Keep all source grid cells"),
+        ("ADAPTIVE", "Adaptive", "Keep detail where the terrain needs it: find the lowest triangle count "
+                                 "whose height error stays within the tolerance"),
+        ("DECIMATE", "Decimate", "Collapse interior geometry to a fixed share of triangles")])
+    max_error_m: FloatProperty(name="Max Height Error (m)", default=0.1, min=0.001, soft_max=10.0,
+                               description="Largest allowed vertical deviation from any source sample")
+    reduction: EnumProperty(name="Keep Triangles", default="0.7", items=[
+        ("0.15", "Keep 15% of Triangles", "Collapse interior geometry after tiling; preserve boundary samples"),
+        ("0.3", "Keep 30% of Triangles", "Collapse interior geometry after tiling; preserve boundary samples"),
+        ("0.7", "Keep 70% of Triangles", "Collapse interior geometry after tiling; preserve boundary samples")])
 
     @classmethod
     def poll(cls, context):
@@ -983,54 +1161,82 @@ class ADM_OT_terrain_preview_fixed_grid(bpy.types.Operator):
                 return {"CANCELLED"}
             for name in ("mode", "tile_width_m", "tile_length_m", "target_area_m2",
                          "min_area_m2", "max_area_m2", "sensitivity", "natural_boundary",
-                         "max_cells_per_tile", "sector_width_m", "sector_length_m"):
+                         "max_cells_per_tile", "sector_width_m", "sector_length_m",
+                         "reduction_method", "max_error_m", "reduction"):
                 if name in saved:
-                    setattr(self, name, saved[name])
+                    try:
+                        setattr(self, name, saved[name])
+                    except (TypeError, ValueError):
+                        pass
         elif source is not None:
             self.tile_width_m = float(source.get("adm_terrain_preview_width_m", self.tile_width_m))
             self.tile_length_m = float(source.get("adm_terrain_preview_length_m", self.tile_length_m))
         return context.window_manager.invoke_props_dialog(self, width=360)
 
+    def _settings(self):
+        return {name: getattr(self, name) for name in (
+            "mode", "tile_width_m", "tile_length_m", "target_area_m2",
+            "min_area_m2", "max_area_m2", "sensitivity", "natural_boundary",
+            "max_cells_per_tile", "sector_width_m", "sector_length_m",
+            "reduction_method", "max_error_m", "reduction")}
+
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "mode")
+        try:
+            info, problems = _terrain_tiling_check(context.active_object, self._settings())
+        except ValueError as exc:
+            info, problems = [], {"mode": str(exc)}
+
+        def field(name):
+            row = layout.row()
+            row.alert = name in problems
+            row.prop(self, name)
+            if name in problems:
+                for index, line in enumerate(textwrap.wrap(problems[name], 52)):
+                    layout.label(text=line, icon="ERROR" if index == 0 else "BLANK1")
+
+        field("mode")
         if self.mode == "FIXED":
-            layout.prop(self, "tile_width_m")
-            layout.prop(self, "tile_length_m")
+            field("tile_width_m")
+            field("tile_length_m")
         else:
-            layout.prop(self, "target_area_m2")
-            layout.prop(self, "min_area_m2")
-            layout.prop(self, "max_area_m2")
-            layout.prop(self, "sensitivity")
-            layout.prop(self, "natural_boundary")
-            layout.prop(self, "max_cells_per_tile")
+            for name in ("target_area_m2", "min_area_m2", "max_area_m2", "sensitivity",
+                         "natural_boundary", "max_cells_per_tile"):
+                field(name)
             if self.mode == "HYBRID":
-                layout.prop(self, "sector_width_m")
-                layout.prop(self, "sector_length_m")
-        obj = context.active_object
-        if self.mode == "FIXED":
-            width, depth = obj.get("adm_terrain_width_m", 0), obj.get("adm_terrain_depth_m", 0)
-            nx, ny = obj.get("adm_terrain_samples_x", 0), obj.get("adm_terrain_samples_y", 0)
-            if nx > 1 and ny > 1:
-                try:
-                    bx = _terrain_grid_boundaries(nx, width, max(self.tile_width_m, 0.001))
-                    by = _terrain_grid_boundaries(ny, depth, max(self.tile_length_m, 0.001))
-                    count = (len(bx) - 1) * (len(by) - 1)
-                    layout.label(text=f"Tiles: {count}")
-                    if count > MAX_TERRAIN_TILES:
-                        layout.label(text=f"Maximum is {MAX_TERRAIN_TILES}", icon="ERROR")
-                    layout.label(text="Borders snap to the nearest source grid interval")
-                except ValueError as exc:
-                    layout.label(text=str(exc), icon="ERROR")
+                field("sector_width_m")
+                field("sector_length_m")
+        box = layout.box().column(align=True)
+        for line in info:
+            box.label(text=line, icon="INFO")
+        if problems:
+            box.label(text="These settings cannot produce a tiling", icon="CANCEL")
+        layout.prop(self, "reduction_method")
+        if self.reduction_method == "ADAPTIVE":
+            layout.prop(self, "max_error_m")
+            layout.label(text="Flat areas get fewer triangles, detailed areas keep more")
+        elif self.reduction_method == "DECIMATE":
+            layout.prop(self, "reduction")
+            layout.label(text="Protected borders may prevent reaching the target ratio")
+        if self.reduction_method != "NONE":
+            layout.label(text="Applied after tiling; source grid and tile borders stay intact")
 
     def execute(self, context):
         source = context.active_object
-        settings = {name: getattr(self, name) for name in (
-            "mode", "tile_width_m", "tile_length_m", "target_area_m2",
-            "min_area_m2", "max_area_m2", "sensitivity", "natural_boundary",
-            "max_cells_per_tile", "sector_width_m", "sector_length_m")}
+        settings = self._settings()
         try:
-            nx, ny, scale, regions = _terrain_partition(source, context, settings)
+            _info, problems = _terrain_tiling_check(source, settings)
+        except ValueError as exc:
+            problems = {"mode": str(exc)}
+        if problems:
+            self.report({"ERROR"}, next(iter(problems.values())))
+            return {"CANCELLED"}
+        progress = context.window_manager
+        progress.progress_begin(0, 100)
+        try:
+            nx, ny, scale, regions = _terrain_partition(
+                source, context, settings, lambda fraction: progress.progress_update(int(fraction * 90)))
+            progress.progress_update(92)
             source_id = str(source.get("adm_terrain_id", ""))
             if not source_id:
                 source_id = uuid.uuid4().hex
@@ -1039,29 +1245,25 @@ class ADM_OT_terrain_preview_fixed_grid(bpy.types.Operator):
             curve = bpy.data.curves.new(f"{source.name}_TilePreview", "CURVE")
             curve.dimensions = "3D"
             curve.resolution_u = 1
+            coords = np.empty(len(source.data.vertices) * 3, dtype=np.float32)
+            source.data.vertices.foreach_get("co", coords)
+            points = np.ones((len(source.data.vertices), 4), dtype=np.float32)
+            points[:, :3] = coords.reshape(-1, 3)
+            points[:, 2] += 0.02 / scale
             if self.mode == "FIXED":
                 _nx, _ny, _scale, ranges = _terrain_ranges(
                     context, source, self.tile_width_m, self.tile_length_m)
                 x_bounds = sorted({boundary for x0, x1, _y0, _y1 in ranges for boundary in (x0, x1)})
                 y_bounds = sorted({boundary for _x0, _x1, y0, y1 in ranges for boundary in (y0, y1)})
-                lines = ([row * nx + column for row in range(ny)] for column in x_bounds)
-                for indices in list(lines) + (
-                        [[row * nx + column for column in range(nx)] for row in y_bounds]):
-                    spline = curve.splines.new("POLY")
-                    spline.points.add(len(indices) - 1)
-                    for point_index, vertex_index in enumerate(indices):
-                        vertex = source.data.vertices[vertex_index].co
-                        spline.points[point_index].co = (
-                            vertex.x, vertex.y, vertex.z + 0.02 / scale, 1)
+                chains = [[row * nx + column for row in range(ny)] for column in x_bounds] \
+                    + [[row * nx + column for column in range(nx)] for row in y_bounds]
             else:
                 chains = _terrain_boundary_chains(regions, nx - 1, ny - 1)
-                for indices in chains:
-                    spline = curve.splines.new("POLY")
-                    spline.points.add(len(indices) - 1)
-                    for point_index, vertex_index in enumerate(indices):
-                        vertex = source.data.vertices[vertex_index].co
-                        spline.points[point_index].co = (
-                            vertex.x, vertex.y, vertex.z + 0.02 / scale, 1)
+            progress.progress_update(96)
+            for indices in chains:
+                spline = curve.splines.new("POLY")
+                spline.points.add(len(indices) - 1)
+                spline.points.foreach_set("co", points[indices].ravel())
             preview = bpy.data.objects.new(f"{source.name}_TilePreview", curve)
             context.collection.objects.link(preview)
             preview.parent = source
@@ -1078,72 +1280,184 @@ class ADM_OT_terrain_preview_fixed_grid(bpy.types.Operator):
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
+        finally:
+            progress.progress_end()
         self.report({"INFO"}, f"Previewed {len(regions)} {self.mode.lower()} terrain tiles")
         return {"FINISHED"}
 
 
-def _terrain_tile_mesh(source, tile_index, nx, cells):
-    source_mesh = source.data
-    source_polygons = sorted(cells)
-    source_indices = sorted({vertex_index
-                             for polygon_index in source_polygons
-                             for vertex_index in source_mesh.polygons[polygon_index].vertices})
-    local_index = {source_index: index for index, source_index in enumerate(source_indices)}
-    coordinates = [tuple(source_mesh.vertices[index].co) for index in source_indices]
-    faces = []
-    for source_polygon in source_polygons:
-        face = source_mesh.polygons[source_polygon]
-        faces.append(tuple(local_index[index] for index in face.vertices))
+class _TerrainSourceData:
+    """Source mesh arrays read once per Apply and shared by every tile."""
+
+    def __init__(self, mesh):
+        polygons, loops = len(mesh.polygons), len(mesh.loops)
+        self.loop_start = np.empty(polygons, dtype=np.int32)
+        mesh.polygons.foreach_get("loop_start", self.loop_start)
+        self.loop_total = np.empty(polygons, dtype=np.int32)
+        mesh.polygons.foreach_get("loop_total", self.loop_total)
+        self.material_index = np.empty(polygons, dtype=np.int32)
+        mesh.polygons.foreach_get("material_index", self.material_index)
+        self.use_smooth = np.empty(polygons, dtype=bool)
+        mesh.polygons.foreach_get("use_smooth", self.use_smooth)
+        self.loop_vertex = np.empty(loops, dtype=np.int32)
+        mesh.loops.foreach_get("vertex_index", self.loop_vertex)
+        self.coords = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+        mesh.vertices.foreach_get("co", self.coords)
+        self.coords = self.coords.reshape(-1, 3)
+        self.uv_layers = []
+        for layer in mesh.uv_layers:
+            values = np.empty(loops * 2, dtype=np.float32)
+            layer.data.foreach_get("uv", values)
+            self.uv_layers.append((layer.name, values.reshape(-1, 2)))
+        self.colors = []
+        for attr in mesh.color_attributes:
+            if attr.domain == "CORNER" and attr.data_type in {"FLOAT_COLOR", "BYTE_COLOR"}:
+                values = np.empty(loops * 4, dtype=np.float32)
+                attr.data.foreach_get("color", values)
+                self.colors.append((attr.name, attr.data_type, values.reshape(-1, 4)))
+        self.points = []
+        for attr in mesh.attributes:
+            if attr.domain == "POINT" and attr.data_type in {"FLOAT", "INT", "BOOLEAN"} \
+                    and not attr.name.startswith("."):
+                dtype = {"FLOAT": np.float32, "INT": np.int32, "BOOLEAN": bool}[attr.data_type]
+                values = np.empty(len(mesh.vertices), dtype=dtype)
+                attr.data.foreach_get("value", values)
+                self.points.append((attr.name, attr.data_type, values))
+
+
+def _terrain_tile_mesh(source, tile_index, nx, cells, data=None):
+    if data is None:
+        data = _TerrainSourceData(source.data)
+    polygons = np.array(sorted(cells), dtype=np.int64)
+    totals = data.loop_total[polygons].astype(np.int64)
+    offsets = np.cumsum(totals) - totals
+    source_loops = np.repeat(data.loop_start[polygons] - offsets, totals) + np.arange(int(totals.sum()))
+    source_indices, local_vertices = np.unique(data.loop_vertex[source_loops], return_inverse=True)
     mesh = bpy.data.meshes.new(f"{source.name}_Tile{tile_index:03d}")
-    mesh.from_pydata(coordinates, [], faces)
-    for material in source_mesh.materials:
+    mesh.vertices.add(len(source_indices))
+    mesh.vertices.foreach_set("co", data.coords[source_indices].ravel())
+    mesh.loops.add(len(source_loops))
+    mesh.loops.foreach_set("vertex_index", local_vertices.astype(np.int32).ravel())
+    mesh.polygons.add(len(polygons))
+    mesh.polygons.foreach_set("loop_start", offsets.astype(np.int32))
+    mesh.polygons.foreach_set("loop_total", totals.astype(np.int32))
+    mesh.update(calc_edges=True)
+    for material in source.data.materials:
         mesh.materials.append(material)
-    for polygon, source_polygon in zip(mesh.polygons, source_polygons):
-        polygon.material_index = source_mesh.polygons[source_polygon].material_index
-        polygon.use_smooth = source_mesh.polygons[source_polygon].use_smooth
-    source_loop_lookup = {}
-    for polygon in source_mesh.polygons:
-        for loop_index in polygon.loop_indices:
-            source_loop_lookup[(polygon.index, source_mesh.loops[loop_index].vertex_index)] = loop_index
-    for layer in source_mesh.uv_layers:
-        copied = mesh.uv_layers.new(name=layer.name)
-        values = np.empty(len(layer.data) * 2, dtype=np.float32)
-        layer.data.foreach_get("uv", values)
-        values = values.reshape(-1, 2)
-        out = np.empty(len(mesh.loops) * 2, dtype=np.float32)
-        for polygon in mesh.polygons:
-            source_polygon = source_polygons[polygon.index]
-            for loop_index in polygon.loop_indices:
-                vertex_index = mesh.loops[loop_index].vertex_index
-                source_index = source_indices[vertex_index]
-                source_loop = source_loop_lookup[(source_polygon, source_index)]
-                out[loop_index * 2:loop_index * 2 + 2] = values[source_loop]
-        copied.data.foreach_set("uv", out)
-    for source_attr in source_mesh.color_attributes:
-        if source_attr.domain != "CORNER" or source_attr.data_type not in {"FLOAT_COLOR", "BYTE_COLOR"}:
-            continue
-        copied = mesh.color_attributes.new(name=source_attr.name, type=source_attr.data_type, domain="CORNER")
-        values = np.empty(len(source_attr.data) * 4, dtype=np.float32)
-        source_attr.data.foreach_get("color", values)
-        values = values.reshape(-1, 4)
-        out = np.empty(len(mesh.loops) * 4, dtype=np.float32)
-        for polygon in mesh.polygons:
-            source_polygon = source_polygons[polygon.index]
-            for loop_index in polygon.loop_indices:
-                source_index = source_indices[mesh.loops[loop_index].vertex_index]
-                source_loop = source_loop_lookup[(source_polygon, source_index)]
-                out[loop_index * 4:loop_index * 4 + 4] = values[source_loop]
-        copied.data.foreach_set("color", out)
-    for attribute in source_mesh.attributes:
-        if attribute.domain != "POINT" or attribute.data_type not in {"FLOAT", "INT", "BOOLEAN"}:
-            continue
-        copied = mesh.attributes.new(attribute.name, attribute.data_type, "POINT")
-        prop = {"FLOAT": "value", "INT": "value", "BOOLEAN": "value"}[attribute.data_type]
-        source_values = [getattr(attribute.data[index], prop) for index in source_indices]
-        for item, value in zip(copied.data, source_values):
-            setattr(item, prop, value)
+    mesh.polygons.foreach_set("material_index", data.material_index[polygons])
+    mesh.polygons.foreach_set("use_smooth", data.use_smooth[polygons])
+    for name, values in data.uv_layers:
+        mesh.uv_layers.new(name=name).data.foreach_set("uv", values[source_loops].ravel())
+    for name, data_type, values in data.colors:
+        copied = mesh.color_attributes.new(name=name, type=data_type, domain="CORNER")
+        copied.data.foreach_set("color", values[source_loops].ravel())
+    for name, data_type, values in data.points:
+        mesh.attributes.new(name, data_type, "POINT").data.foreach_set("value", values[source_indices])
     mesh.update()
     return mesh
+
+
+def _terrain_boundary(mesh):
+    loops = np.empty(len(mesh.loops), dtype=np.int64)
+    mesh.loops.foreach_get("vertex_index", loops)
+    starts = np.empty(len(mesh.polygons), dtype=np.int64)
+    mesh.polygons.foreach_get("loop_start", starts)
+    totals = np.empty(len(mesh.polygons), dtype=np.int64)
+    mesh.polygons.foreach_get("loop_total", totals)
+    following = np.arange(len(loops)) + 1
+    following[starts + totals - 1] = starts
+    edges = np.sort(np.stack((loops, loops[following]), axis=1), axis=1)
+    unique, counts = np.unique(edges, axis=0, return_counts=True)
+    boundary_edges = unique[counts == 1]
+    coords = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", coords)
+    coords = coords.reshape(-1, 3)
+    segments = {tuple(sorted((tuple(map(float, coords[a])), tuple(map(float, coords[b])))))
+                for a, b in boundary_edges}
+    return set(boundary_edges.ravel().tolist()), segments
+
+
+def _terrain_reduce_tile(context, tile, ratio):
+    from .lod_gen import _decimated_mesh
+
+    vertices, boundary = _terrain_boundary(tile.data)
+    if len(vertices) == len(tile.data.vertices):
+        return None
+    result, _locked = _decimated_mesh(
+        context, tile, ratio, False, False, protected_vertices=vertices)
+    if _terrain_boundary(result)[1] != boundary:
+        bpy.data.meshes.remove(result)
+        raise ValueError(f"{tile.name}: simplification changed a protected border")
+    tile.data = result
+    return result
+
+
+ADAPTIVE_MIN_RATIO = 0.02
+ADAPTIVE_SEARCH_STEPS = 7
+
+
+def _terrain_max_height_error(mesh, samples, tolerance):
+    """Largest vertical distance from source samples to `mesh`; stops early above `tolerance`."""
+    from mathutils.bvhtree import BVHTree
+
+    coords = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
+    mesh.vertices.foreach_get("co", coords)
+    coords = coords.reshape(-1, 3)
+    bvh = BVHTree.FromPolygons(coords.tolist(), [tuple(p.vertices) for p in mesh.polygons])
+    top = float(max(coords[:, 2].max(), samples[:, 2].max())) + 1.0
+    down = Vector((0.0, 0.0, -1.0))
+    worst = 0.0
+    for x, y, z in samples:
+        hit = bvh.ray_cast(Vector((x, y, top)), down)[0]
+        if hit is not None:
+            error = abs(hit.z - z)
+        else:
+            # samples exactly on an outer edge can slip between triangles; fall back to 3D distance
+            nearest = bvh.find_nearest(Vector((x, y, z)))[0]
+            error = math.inf if nearest is None else (nearest - Vector((x, y, z))).length
+        if error > worst:
+            worst = error
+            if worst > tolerance:
+                break
+    return worst
+
+
+def _terrain_reduce_tile_adaptive(context, tile, tolerance):
+    """Lowest Collapse ratio whose height error at every source sample stays within `tolerance`."""
+    from .lod_gen import _decimated_mesh
+
+    vertices, boundary = _terrain_boundary(tile.data)
+    if len(vertices) == len(tile.data.vertices):
+        return None, 0.0
+    samples = np.empty(len(tile.data.vertices) * 3, dtype=np.float64)
+    tile.data.vertices.foreach_get("co", samples)
+    samples = samples.reshape(-1, 3)
+
+    def attempt(ratio):
+        mesh, _locked = _decimated_mesh(context, tile, ratio, False, False, protected_vertices=vertices)
+        if _terrain_boundary(mesh)[1] == boundary:
+            error = _terrain_max_height_error(mesh, samples, tolerance)
+            if error <= tolerance:
+                return mesh, error
+        bpy.data.meshes.remove(mesh)
+        return None, None
+
+    best, best_error = attempt(ADAPTIVE_MIN_RATIO)
+    if best is None:
+        low, high = ADAPTIVE_MIN_RATIO, 1.0
+        for _step in range(ADAPTIVE_SEARCH_STEPS):
+            middle = (low + high) / 2.0
+            mesh, error = attempt(middle)
+            if mesh is None:
+                low = middle
+                continue
+            if best is not None:
+                bpy.data.meshes.remove(best)
+            best, best_error, high = mesh, error, middle
+    if best is None:
+        return None, 0.0
+    tile.data = best
+    return best, best_error
 
 
 class ADM_OT_terrain_apply_tiling(bpy.types.Operator):
@@ -1164,7 +1478,21 @@ class ADM_OT_terrain_apply_tiling(bpy.types.Operator):
             settings = json.loads(source["adm_terrain_preview_settings"])
             if source.get("adm_terrain_preview_signature") != _terrain_signature(source):
                 raise ValueError("terrain changed after preview; regenerate the preview before applying")
-            nx, ny, scale, regions = _terrain_partition(source, context, settings)
+            wm = context.window_manager
+            wm.progress_begin(0, 100)
+            try:
+                nx, ny, scale, regions = _terrain_partition(
+                    source, context, settings, lambda fraction: wm.progress_update(int(fraction * 100)))
+            finally:
+                wm.progress_end()
+            method = settings.get("reduction_method", "NONE")
+            reduction = settings.get("reduction", "0.7")
+            if method not in {"NONE", "ADAPTIVE", "DECIMATE"} \
+                    or (method == "DECIMATE" and reduction not in {"0.15", "0.3", "0.7"}):
+                raise ValueError("unknown terrain reduction settings; regenerate the preview")
+            max_error_m = float(settings.get("max_error_m", 0.1))
+            if method == "ADAPTIVE" and not (math.isfinite(max_error_m) and max_error_m > 0):
+                raise ValueError("adaptive height tolerance must be positive; regenerate the preview")
         except (ValueError, TypeError, KeyError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -1176,7 +1504,12 @@ class ADM_OT_terrain_apply_tiling(bpy.types.Operator):
         collection["adm_terrain_tiling_mode"] = settings["mode"]
         created_objects = []
         created_meshes = []
+        original_triangles = output_triangles = 0
+        worst_error_m = 0.0
+        progress = context.window_manager
+        progress.progress_begin(0, len(regions))
         try:
+            source_data = _TerrainSourceData(source.data)
             cells_x = nx - 1
             cell_area = (float(source["adm_terrain_width_m"]) / cells_x
                          * float(source["adm_terrain_depth_m"]) / (ny - 1))
@@ -1186,7 +1519,7 @@ class ADM_OT_terrain_apply_tiling(bpy.types.Operator):
                 y1 = max(row for row, _column in rows_columns) + 1
                 x0 = min(column for _row, column in rows_columns)
                 x1 = max(column for _row, column in rows_columns) + 1
-                mesh = _terrain_tile_mesh(source, index, nx, cells)
+                mesh = _terrain_tile_mesh(source, index, nx, cells, source_data)
                 created_meshes.append(mesh)
                 root = bpy.data.objects.new(f"{source.name}_Tile_{index:03d}_Root", None)
                 created_objects.append(root)
@@ -1211,8 +1544,25 @@ class ADM_OT_terrain_apply_tiling(bpy.types.Operator):
                 tile.parent = root
                 tile.matrix_parent_inverse.identity()
                 tile["adm_terrain_tile_id"] = root["adm_terrain_tile_id"]
-                tile["adm_terrain_vertex_count"] = len(mesh.vertices)
+                original_triangles += len(cells) * 2
+                if method == "DECIMATE":
+                    result = _terrain_reduce_tile(context, tile, float(reduction))
+                    if result is not None:
+                        created_meshes.append(result)
+                    tile["adm_terrain_reduction_ratio"] = float(reduction)
+                elif method == "ADAPTIVE":
+                    result, error = _terrain_reduce_tile_adaptive(context, tile, max_error_m / scale)
+                    if result is not None:
+                        created_meshes.append(result)
+                    tile["adm_terrain_max_error_m"] = max_error_m
+                    tile["adm_terrain_measured_error_m"] = error * scale
+                    worst_error_m = max(worst_error_m, error * scale)
+                tile["adm_terrain_vertex_count"] = len(tile.data.vertices)
+                tile["adm_terrain_reduction"] = method
+                output_triangles += sum(len(poly.vertices) - 2 for poly in tile.data.polygons)
+                progress.progress_update(index)
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError) as exc:
+            progress.progress_end()
             for obj in reversed(created_objects):
                 if obj.name in bpy.data.objects:
                     bpy.data.objects.remove(obj, do_unlink=True)
@@ -1222,6 +1572,11 @@ class ADM_OT_terrain_apply_tiling(bpy.types.Operator):
             bpy.data.collections.remove(collection)
             self.report({"ERROR"}, f"Tile generation failed; temporary output removed: {exc}")
             return {"CANCELLED"}
+        progress.progress_end()
+        _TERRAIN_PARTITION_CACHE.clear()
+        for mesh in created_meshes:
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
         _remove_terrain_preview(context, source)
         for key in ("adm_terrain_preview_settings", "adm_terrain_preview_signature",
                     "adm_terrain_preview_width_m", "adm_terrain_preview_length_m"):
@@ -1233,7 +1588,12 @@ class ADM_OT_terrain_apply_tiling(bpy.types.Operator):
                            if obj.type == "MESH" and obj.get("adm_terrain_tile_id")), None)
         if first_tile is not None:
             make_active(context, first_tile)
-        self.report({"INFO"}, f"Created {len(regions)} independent ADM tile models")
+        detail = "borders protected"
+        if method == "ADAPTIVE":
+            detail += f"; max height error {worst_error_m:.3f} m of {max_error_m:.3f} m allowed"
+        self.report({"INFO"}, f"Created {len(regions)} ADM tiles; "
+                    f"{output_triangles:,}/{original_triangles:,} triangles "
+                    f"({output_triangles / original_triangles:.1%} retained; {detail})")
         return {"FINISHED"}
 
 
