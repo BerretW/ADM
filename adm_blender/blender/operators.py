@@ -1201,7 +1201,7 @@ class ADM_OT_material_auto_animation_id(bpy.types.Operator):
 
 
 class ADM_OT_material_sync_params(bpy.types.Operator):
-    """Rebuild the material's parameter list from the selected custom shader definition"""
+    """Synchronize material parameters with the selected shader definition"""
     bl_idname = "adm.material_sync_params"
     bl_label = "Sync Parameters"
     bl_options = {"REGISTER", "UNDO"}
@@ -1209,16 +1209,47 @@ class ADM_OT_material_sync_params(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         mat = _active_material(context)
-        return mat is not None and mat.adm.shader == "CUSTOM"
+        return mat is not None and (mat.adm.shader == "CUSTOM" or mat.adm.shader_key() in K.OFFICIAL_SHADERS)
 
     def execute(self, context):
-        from .materials import sync_material_params
+        from .materials import refresh_shader_preview, sync_material_params, sync_official_shader_params
         mat = _active_material(context)
+        if mat.adm.shader != "CUSTOM":
+            sync_official_shader_params(mat)
+            refresh_shader_preview(mat)
+            return {"FINISHED"}
         sdef = context.scene.adm_anim.shaders.get(mat.adm.custom_shader)
         if sdef is None:
             self.report({"ERROR"}, f"shader definition '{mat.adm.custom_shader}' not found in the scene")
             return {"CANCELLED"}
         sync_material_params(mat, sdef)
+        return {"FINISHED"}
+
+
+class ADM_OT_material_terrain_from_pbr(bpy.types.Operator):
+    """Copy the portable PBR base color image and UV set to terrain layer 0"""
+    bl_idname = "adm.material_terrain_from_pbr"
+    bl_label = "Use PBR Base Color for Layer 0"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        mat = _active_material(context)
+        return mat is not None and mat.adm.shader == "TERRAIN_4"
+
+    def execute(self, context):
+        from .materials import slot_texture_node, slot_uv_index, sync_official_shader_params
+        mat = _active_material(context)
+        node = slot_texture_node(mat, "BASE_COLOR")
+        if node is None or node.image is None:
+            self.report({"ERROR"}, "Assign a PBR Base Color texture first")
+            return {"CANCELLED"}
+        sync_official_shader_params(mat)
+        param = mat.adm.params["layer0_texture"]
+        param.tex_coord = slot_uv_index(node, _uv_names(context))
+        param.image = node.image
+        if not param.use:
+            param.use = True
         return {"FINISHED"}
 
 
@@ -1460,7 +1491,8 @@ CLASSES = (
     ADM_OT_add_arkit_shape_keys, ADM_OT_auto_bind_face,
     ADM_OT_list_add, ADM_OT_list_remove, ADM_OT_list_move,
     ADM_OT_clips_from_actions, ADM_OT_play_clip, ADM_OT_events_from_markers, ADM_OT_expression_preview,
-    ADM_OT_material_auto_animation_id, ADM_OT_material_sync_params, ADM_OT_material_refresh_preview,
+    ADM_OT_material_auto_animation_id, ADM_OT_material_sync_params, ADM_OT_material_terrain_from_pbr,
+    ADM_OT_material_refresh_preview,
     ADM_OT_material_generate_mortar_mask, ADM_OT_material_layers_from_pbr,
     ADM_OT_material_texture_open, ADM_OT_material_texture_clear, ADM_OT_material_texture_adopt,
     ADM_OT_material_texture_uv,

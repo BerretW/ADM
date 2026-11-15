@@ -1046,6 +1046,9 @@ def _apply_shader(mat, m, scene, resolve_image):
             if v is not None and prm is not None:
                 v.use = True
                 _apply_shader_value(v, prm["type"], val, resolve_image)
+                if key[0] == K.SHADER_TERRAIN_4[0] and name.endswith(
+                        ("_metallic_texture", "_roughness_texture")) and v.image is not None:
+                    v.image.colorspace_settings.name = "Non-Color"
     else:
         a.shader = "CUSTOM"
         a.custom_shader = f"{key[0]}@{key[1]}"
@@ -1444,6 +1447,7 @@ def set_slot_image(mat, slot, image, source=None):
     if node is not None:
         node.image = image
         _set_colorspace(image, non_color)
+        _refresh_existing_preview(mat)
         return node
     nt = mat.node_tree
     bsdf = principled_of(mat)
@@ -1485,6 +1489,7 @@ def set_slot_image(mat, slot, image, source=None):
         nt.links.new(tn.outputs["Color"], bsdf.inputs["Emission Color"])
         if bsdf.inputs["Emission Strength"].default_value <= 0.0:
             bsdf.inputs["Emission Strength"].default_value = 1.0
+    _refresh_existing_preview(mat)
     return tn
 
 
@@ -1536,6 +1541,7 @@ def clear_slot(mat, slot):
         if all(link.to_node in doomed or link.to_node == bsdf
                for o in n.outputs for link in o.links):
             nt.nodes.remove(n)
+    _refresh_existing_preview(mat)
     return True
 
 
@@ -1570,6 +1576,7 @@ def set_slot_uv(mat, slot, index, uv_names):
         nm = normal_map_node(mat)
         if nm is not None:
             nm.uv_map = name
+    _refresh_existing_preview(mat)
     return True
 
 
@@ -1595,6 +1602,7 @@ def set_slot_alpha(mat, use):
             for link in list(sock.links):
                 nt.links.remove(link)
             nt.links.new(node.outputs["Alpha"], sock)
+            _refresh_existing_preview(mat)
         return True
     if slot_alpha_linked(mat):
         t = trace(sock)
@@ -1605,6 +1613,7 @@ def set_slot_alpha(mat, use):
         for n in doomed:
             if not any(link.to_node not in doomed for o in n.outputs for link in o.links):
                 nt.nodes.remove(n)
+        _refresh_existing_preview(mat)
     return True
 
 
@@ -1636,6 +1645,11 @@ def remove_shader_preview(mat):
     if out is not None:
         out.is_active_output = True
     return bool(doomed)
+
+
+def _refresh_existing_preview(mat):
+    if mat.node_tree and any(is_preview_node(node) for node in mat.node_tree.nodes):
+        refresh_shader_preview(mat)
 
 
 def _preview_mix(nt, kind, a, b, fac, x, y, name):

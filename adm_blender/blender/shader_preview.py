@@ -154,7 +154,15 @@ class _Graph:
 
     def uv(self, tex_coord=0):
         if tex_coord:
-            n = self.new("ShaderNodeUVMap", "UV1", uv_map=UV_NAMES[1])
+            obj = bpy.context.object
+            if obj is None or obj.type != "MESH" or not any(
+                    slot.material == self.mat for slot in obj.material_slots):
+                obj = next((candidate for candidate in bpy.data.objects
+                            if candidate.type == "MESH" and any(
+                                slot.material == self.mat for slot in candidate.material_slots)), None)
+            uv_name = obj.data.uv_layers[1].name if obj is not None and len(obj.data.uv_layers) > 1 \
+                else UV_NAMES[1]
+            n = self.new("ShaderNodeUVMap", "UV1", uv_map=uv_name)
             return n.outputs["UV"]
         return self.new("ShaderNodeTexCoord", "UV").outputs["UV"]
 
@@ -473,10 +481,25 @@ def _terrain(g):
             balpha = g.math("MULTIPLY", balpha, t.outputs["Alpha"])
         albedo = acc(albedo, wvec(i, base))
         alpha = acc(alpha, g.math("MULTIPLY", w[i], balpha))
-        metal = acc(metal, g.math("MULTIPLY", w[i], g.num(f"layer{i}_metallic")))
-        rough = acc(rough, g.math("MULTIPLY", w[i], g.num(f"layer{i}_roughness")))
+        for prop in ("metallic", "roughness"):
+            factor = g.num(f"layer{i}_{prop}")
+            name = f"layer{i}_{prop}_texture"
+            tex_param = g._param(name)
+            if tex_param is not None and tex_param.image is not None:
+                tex_uv = g.vmath("SCALE", g.uv(tex_param.tex_coord))
+                g.link(scales[i], tex_uv.node.inputs["Scale"])
+                factor = g.math("MULTIPLY", factor, g.red(g.tex(name, vector=tex_uv)))
+            weighted = g.math("MULTIPLY", w[i], factor)
+            if prop == "metallic":
+                metal = acc(metal, weighted)
+            else:
+                rough = acc(rough, weighted)
         emis = acc(emis, wvec(i, g.vec(f"layer{i}_emissive")))
-        nt = g.tex(f"layer{i}_normal", vector=uv)
+        normal_param = g._param(f"layer{i}_normal")
+        normal_uv = g.vmath("SCALE", g.uv(normal_param.tex_coord)) if normal_param and normal_param.image else None
+        if normal_uv is not None:
+            g.link(scales[i], normal_uv.node.inputs["Scale"])
+        nt = g.tex(f"layer{i}_normal", vector=normal_uv)
         tn = g.vmath("MULTIPLY_ADD", nt.outputs["Color"], (2.0, 2.0, 2.0), (-1.0, -1.0, -1.0)) \
             if nt is not None else g.combine((0.0, 0.0, 1.0))
         normal = acc(normal, wvec(i, tn))

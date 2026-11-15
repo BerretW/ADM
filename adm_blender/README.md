@@ -12,6 +12,9 @@ independent ADM conformance certification.
 - **Alternative:** `blender --command extension build --source-dir adm_blender` builds a smaller package
   without `tests/` and `__pycache__`.
 - The sidebar tab name is set in the extension preferences (default `ADM`).
+- After updating from 1.18.0 or earlier, save your work and restart Blender once. Those versions
+  could keep old material properties in memory after an update, causing `shader_version` errors
+  during **Convert Materials To ADM**. New versions reload the extension's modules together.
 
 ## Workflow
 
@@ -161,9 +164,12 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
 
 - Empty slot: pick an existing image, create a **New** one or **Open** a file. The colour space is set
   automatically (sRGB for colour, Non-Color for data maps).
-- Filled slot: swap or reload the image, choose **UV0/UV1**, interpolation and extension, and edit
+- Filled slot: the current image is shown above the picker. Pick a replacement, choose
+  **UV0/UV1**, interpolation and extension, and edit
   slot extras (Alpha From Texture, normal Scale, occlusion strength, emission strength).
-  **X** removes the texture and keeps the factor values.
+  **X** removes the texture and keeps the factor values. Texture and UV changes through ADM
+  refresh an existing preview automatically; after manually changing nodes or sampler settings,
+  use **Refresh Shader Preview**.
 - The slots edit the same node chain the exporter traces, so nothing new is stored in the file.
   Imported or hand-built node setups are shown as *custom node setup*. The slot lists the best
   textures found in that setup (**Use Albedo: …**, ranked by node label/image name and colour space;
@@ -186,6 +192,15 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
 - A parameter is used only when its **Override** checkbox is enabled; otherwise the contract
   default applies. Editing a value enables Override automatically. Overridden numbers are connected
   through drivers, so they update live and can be keyframed. **Refresh Preview** rebuilds the nodes.
+- Terrain Four Layer uses its own `layer0_texture` through `layer3_texture` parameters, not the
+  portable PBR Base Color texture. Without a blend mask, layer 0 is visible. Assign `layer0_texture`
+  under **Shader Texture Parameters**, or click **Use PBR Base Color for Layer 0** to copy the
+  existing PBR image and UV set. This changes layer 0 only and preserves the PBR fallback. When a
+  material is shared, use the same second UV map name on its meshes for a consistent preview.
+- Each terrain layer also has `layer{i}_metallic_texture` and `layer{i}_roughness_texture` slots.
+  Their Non-Color red channels multiply the corresponding factors and use their own UV selection
+  and the layer's `uv_scale`. Set the metallic factor to 1 to use the full map (its default is 0).
+  Existing terrain materials may need **Sync Parameters (out of date)** to expose the new slots.
 - Masks are grayscale Non-Color images; the red channel is read. Example for Brick: in `mortar_mask`,
   white = mortar joint and black = brick face. It is sampled at UV × `uv_scale`, like the base texture.
   `dirt_mask` darkens the color to 35 % where it is white. **Generate Mortar Mask** creates a packed

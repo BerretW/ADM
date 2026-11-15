@@ -216,6 +216,14 @@ OFFICIAL_SHADERS = {
             for i in range(4)
         ],
         *[
+            _texture_param(f"layer{i}_metallic_texture", f"Linear metallic map (red channel) for layer {i}.")
+            for i in range(4)
+        ],
+        *[
+            _texture_param(f"layer{i}_roughness_texture", f"Linear roughness map (red channel) for layer {i}.")
+            for i in range(4)
+        ],
+        *[
             _shader_param(f"layer{i}_emissive", "VEC3", [0.0, 0.0, 0.0],
                           f"Linear emissive factor for layer {i}.", [0.0, 0.0, 0.0], None)
             for i in range(4)

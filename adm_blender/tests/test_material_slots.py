@@ -4,6 +4,7 @@ Run: blender -b --factory-startup --python adm_blender/tests/test_material_slots
 Checks that slot editing builds node chains the exporter reads, survives export/import, and that
 removing a slot keeps factors and leaves no orphan nodes.
 """
+import importlib
 import os
 import sys
 import tempfile
@@ -33,7 +34,21 @@ def image(name, rgba, size=4):
 
 
 def main(tmp):
+    from adm_blender.blender import props
+
+    # Simulate updating an enabled version predating shader profile versions.
+    props.ADMMaterialProps.__annotations__.pop("shader_version")
     adm_blender.register()
+    existing = bpy.data.materials.new("BeforeUpdate")
+    existing.adm.alpha_cutoff = 0.3
+    adm_blender.unregister()
+    importlib.reload(adm_blender)
+    adm_blender.register()
+    check("shader_version" in existing.adm.bl_rna.properties,
+          "extension reload registers the new material schema")
+    check(abs(existing.adm.alpha_cutoff - 0.3) < 1e-6,
+          "extension reload preserves existing material settings")
+
     from adm_blender.blender import materials as M
     from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
@@ -47,6 +62,74 @@ def main(tmp):
     check(bpy.ops.adm.create_model_root(name="Box") == {"FINISHED"}, "create_model_root")
     root = bpy.data.objects["Box"]
     bpy.context.view_layer.objects.active = cube
+    check(bpy.ops.adm.convert_materials() == {"FINISHED"},
+          "material conversion after extension update")
+    check(mat.adm.shader_version == "1.0.0" and mat.adm.vertex_controls_enabled,
+          "converted material uses legacy shader version and enabled vertex controls")
+    check(all(name in cube.data.color_attributes for name in ("COLOR_0", "COLOR_1")),
+          "material conversion initializes both vertex control layers")
+    check(bpy.ops.adm.convert_materials() == {"FINISHED"},
+          "repeated material conversion after extension update")
+
+    def preview_image(name):
+        return next((n.image for n in mat.node_tree.nodes
+                     if M.is_preview_node(n) and n.type == "TEX_IMAGE" and n.label.endswith(name)), None)
+
+    first = image("preview_first", (1.0, 0.1, 0.1, 1.0))
+    second = image("preview_second", (0.1, 0.8, 0.1, 1.0))
+    mat.adm.pick_base_color = first
+    check(preview_image("Clone Image Texture") == first,
+          "adding a PBR texture refreshes the active vertex-control preview")
+    mat.adm.pick_base_color = second
+    check(preview_image("Clone Image Texture") == second,
+          "replacing a PBR texture refreshes the active preview")
+    check(bpy.ops.adm.material_texture_uv(slot="BASE_COLOR", index=1) == {"FINISHED"},
+          "change base color UV")
+    preview_texture = next((n for n in mat.node_tree.nodes
+                            if M.is_preview_node(n) and n.type == "TEX_IMAGE" and n.image == second), None)
+    uv = M._from(preview_texture.inputs["Vector"]) if preview_texture else None
+    check(uv is not None and uv.node.type == "UVMAP" and uv.node.uv_map == "Detail",
+          "changing a PBR texture UV refreshes the active preview")
+    check(bpy.ops.adm.material_texture_clear(slot="BASE_COLOR") == {"FINISHED"},
+          "clear preview base color texture")
+    check(preview_image("Clone Image Texture") is None,
+          "removing a PBR texture refreshes the active preview")
+
+    mat.adm.pick_base_color = first
+    check(bpy.ops.adm.material_texture_uv(slot="BASE_COLOR", index=1) == {"FINISHED"},
+          "set PBR texture UV before copying to terrain")
+    mat.adm.shader = "TERRAIN_4"
+    mat.adm.params["layer1_texture"].image = second
+    missing = mat.adm.params.find("layer0_metallic_texture")
+    mat.adm.params.remove(missing)
+    check(bpy.ops.adm.material_sync_params() == {"FINISHED"}
+          and mat.adm.params.get("layer0_metallic_texture") is not None
+          and mat.adm.params["layer1_texture"].image == second,
+          "sync an older terrain material without losing existing parameters")
+    check(bpy.ops.adm.material_terrain_from_pbr() == {"FINISHED"},
+          "copy PBR base texture to terrain layer 0")
+    check(mat.adm.params["layer0_texture"].image == first
+          and mat.adm.params["layer0_texture"].use
+          and mat.adm.params["layer0_texture"].tex_coord == 1,
+          "terrain layer 0 retains the PBR image and UV as a shader parameter")
+    check(preview_image("layer0_texture") == first,
+          "terrain preview uses the copied layer 0 texture")
+    check(mat.adm.params["layer1_texture"].image == second
+          and M.slot_texture_node(mat, "BASE_COLOR").image == first,
+          "copying to terrain preserves other layers and the PBR fallback")
+    mat.adm.animation_id = "terrain_test"
+    _, terrain_report = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True)).export()
+    check(terrain_report.ok, "terrain with copied texture validates for export")
+    if terrain_report.ok:
+        terrain = terrain_report.doc["materials"][0]
+        check(terrain["shaderParameters"]["layer0_texture"]["texCoord"] == 1,
+              "terrain export contains the copied layer 0 texture and UV")
+        check("baseColorTexture" in terrain,
+              "terrain export retains the portable PBR base color texture")
+    mat.adm.shader = "CORE"
+    check(bpy.ops.adm.material_texture_uv(slot="BASE_COLOR", index=0) == {"FINISHED"},
+          "restore PBR base texture UV")
+    mat.adm.vertex_controls_enabled = False
 
     print("== slot authoring")
     mat.adm.alpha_mode = "AUTO"

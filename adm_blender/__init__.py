@@ -6,9 +6,18 @@ except ImportError:  # imported outside Blender, e.g. ``python -m adm_blender.co
     bpy = None
 
 if bpy is not None:
+    import importlib
+    import sys
+
     from bpy.props import StringProperty
 
-    from . import blender as _blender
+    # Blender unregisters before reloading only this entry point on an update.
+    # Reimport our submodules together so old RNA classes cannot mix with new code.
+    if "_blender" in locals():
+        for module_name in tuple(sys.modules):
+            if module_name.startswith(__name__ + "."):
+                del sys.modules[module_name]
+    _blender = importlib.import_module(".blender", __name__)
 
     def _category_update(self, _context):
         from .blender import ui

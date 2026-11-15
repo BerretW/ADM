@@ -325,6 +325,54 @@
           "maximum": 1.0
         },
         {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 0."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 1."
+        },
+        {
+          "name": "layer2_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 2."
+        },
+        {
+          "name": "layer3_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 3."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 0."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 1."
+        },
+        {
+          "name": "layer2_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 2."
+        },
+        {
+          "name": "layer3_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 3."
+        },
+        {
           "name": "layer0_emissive",
           "type": "VEC3",
           "default": [
@@ -2532,6 +2580,54 @@
           "description": "Roughness factor for layer 3.",
           "minimum": 0.0,
           "maximum": 1.0
+        },
+        {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 0."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 1."
+        },
+        {
+          "name": "layer2_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 2."
+        },
+        {
+          "name": "layer3_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map (red channel) for layer 3."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 0."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 1."
+        },
+        {
+          "name": "layer2_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 2."
+        },
+        {
+          "name": "layer3_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map (red channel) for layer 3."
         },
         {
           "name": "layer0_emissive",

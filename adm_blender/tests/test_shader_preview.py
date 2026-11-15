@@ -130,6 +130,39 @@ def main():
     root = bpy.data.objects["PreviewRoot"]
     tex = image("any_tex", lambda x, y: (0.5, 0.5, 1.0, 1.0))
 
+    # Texture edits must affect the active preview, not just the portable fallback.
+    mat = bpy.data.materials.new("texture_refresh")
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    mat.adm.vertex_controls_enabled = True
+    red = image("preview_red", lambda x, y: (1.0, 0.0, 0.0, 1.0), non_color=False)
+    green = image("preview_green", lambda x, y: (0.0, 1.0, 0.0, 1.0), non_color=False)
+    for img, expected in ((red, (1.0, 0.0, 0.0)), (green, (0.0, 1.0, 0.0))):
+        mat.adm.pick_base_color = img
+        bsdf = preview_bsdf(mat, M)
+        pixel = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+        check(close(pixel, expected), f"PBR: assigned texture appears in preview ({pixel})")
+    mat.adm.shader = "TERRAIN_4"
+    bpy.context.view_layer.objects.active = plane
+    plane.select_set(True)
+    check(bpy.ops.adm.material_terrain_from_pbr() == {"FINISHED"},
+          "TERRAIN_4: copy PBR base texture to layer 0")
+    bsdf = preview_bsdf(mat, M)
+    pixel = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: copied texture appears in preview ({pixel})")
+    uv1 = plane.data.uv_layers.new(name="Detail")
+    for uv in uv1.data:
+        uv.uv = (0.75, 0.5)
+    split = image("preview_uv1", lambda x, y: (1.0, 0.0, 0.0, 1.0) if x < RES // 2
+                  else (0.0, 1.0, 0.0, 1.0), non_color=False)
+    mat.adm.pick_base_color = split
+    M.set_slot_uv(mat, "BASE_COLOR", 1, [uv.name for uv in plane.data.uv_layers])
+    check(bpy.ops.adm.material_terrain_from_pbr() == {"FINISHED"},
+          "TERRAIN_4: copy a UV1 PBR texture")
+    bsdf = preview_bsdf(mat, M)
+    pixel = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: copied texture uses named UV1 ({pixel})")
+
     # 1. every builder with every parameter overridden ------------------------------------------
     profile_cases = sorted(
         (key, kind) for key, kind in K.OFFICIAL_SHADER_KINDS.items()
@@ -312,6 +345,56 @@ def main():
     alb = bake(plane, mat, "DIFFUSE")
     check(close(alb[8, 8, :3], (0.9, 0.1, 0.1)),
           f"TERRAIN_4@2.0.0: zero weights fall back to layer 0 ({alb[8, 8, :3]})")
+
+    # Terrain scalar maps use their own UV set, layer tiling and normalized layer weights.
+    for version in ("1.0.0", K.SHADER_PROFILE_V2):
+        mat = bpy.data.materials.new(f"terrain_maps_{version}")
+        plane.data.materials.clear()
+        plane.data.materials.append(mat)
+        M.convert_to_adm_material(mat)
+        mat.adm.vertex_controls_enabled = False
+        mat.adm.shader = "TERRAIN_4"
+        mat.adm.shader_version = version
+        for uv in plane.data.uv_layers[1].data:
+            uv.uv = (0.375, 0.5)
+        set_param(mat, "uv_scale", (2.0, 1.0, 1.0, 1.0))
+        set_param(mat, "blend_mask", image(f"weights_{version}", lambda x, y: (1.0, 1.0, 1.0, 1.0)))
+        color1.data.foreach_set("color", np.ones(len(color1.data) * 4, dtype=np.float32))
+        for i in range(4):
+            set_param(mat, f"layer{i}_metallic", 0.5)
+            set_param(mat, f"layer{i}_roughness", 0.8)
+            metallic = image(f"metal_{version}_{i}",
+                             lambda x, y, i=i: ((0.1 if x < RES // 2 else 0.8) if i == 0
+                                                else i * 0.2, 0.95, 0.05, 1.0))
+            set_param(mat, f"layer{i}_metallic_texture", metallic)
+            if i < 3:
+                roughness = image(f"rough_{version}_{i}", lambda x, y, i=i: ((i + 1) * 0.1, 0.9, 0.9, 1.0))
+                set_param(mat, f"layer{i}_roughness_texture", roughness)
+        mat.adm.params["layer0_metallic_texture"].tex_coord = 1
+        bsdf = preview_bsdf(mat, M)
+        metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(metal[8, 3, :1], (0.25,)),
+              f"TERRAIN_4@{version}: tiled UV1 metallic red maps blend with factors ({metal[8, 3, 0]:.3f})")
+        check(close(rough[8, 3, :1], (0.32,)),
+              f"TERRAIN_4@{version}: roughness red maps and missing-map factor blend ({rough[8, 3, 0]:.3f})")
+        mat.adm.params["layer0_metallic_texture"].image = None
+        bsdf = preview_bsdf(mat, M)
+        metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        check(close(metal[8, 3, :1], (0.275,)),
+              f"TERRAIN_4@{version}: removing a metallic map restores its factor ({metal[8, 3, 0]:.3f})")
+        set_param(mat, "blend_mask", image(f"one_hot_{version}", lambda x, y: (0.0, 0.0, 0.0, 1.0)))
+        bsdf = preview_bsdf(mat, M)
+        metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(metal[8, 3, :1], (0.3,)) and close(rough[8, 3, :1], (0.8,)),
+              f"TERRAIN_4@{version}: one-hot mask selects layer 3 maps and fallback")
+        set_param(mat, "blend_mask", image(f"zero_{version}", lambda x, y: (0.0, 0.0, 0.0, 0.0)))
+        bsdf = preview_bsdf(mat, M)
+        metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(metal[8, 3, :1], (0.5,)) and close(rough[8, 3, :1], (0.08,)),
+              f"TERRAIN_4@{version}: zero mask selects layer 0 maps and fallback")
 
     # 4. Vertex controls are evaluated after the profile's material operations ---------------------
     mat = bpy.data.materials.new("vertex_controls")

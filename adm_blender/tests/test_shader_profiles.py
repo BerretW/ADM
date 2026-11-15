@@ -29,6 +29,7 @@ def main(tmp):
     bpy.ops.wm.read_homefile(use_empty=True)
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     cube = bpy.context.active_object
+    cube.data.uv_layers.new(name="Detail")
     mat = bpy.data.materials.new("Core20")
     cube.data.materials.append(mat)
     M.convert_to_adm_material(mat)
@@ -38,6 +39,15 @@ def main(tmp):
     for key, kind in K.OFFICIAL_SHADER_KINDS.items():
         mat.adm.shader = kind
         mat.adm.shader_version = key[1]
+        if kind == "TERRAIN_4":
+            for i in range(4):
+                for prop in ("metallic", "roughness"):
+                    name = f"layer{i}_{prop}_texture"
+                    img = bpy.data.images.new(f"{key[1]}_{name}", 2, 2, alpha=True)
+                    img.pixels = [0.2 + i * 0.1, 0.7, 0.9, 1.0] * 4
+                    img.pack()
+                    mat.adm.params[name].image = img
+                    mat.adm.params[name].tex_coord = i % 2
         if kind == "INTERACTIVE":
             bpy.context.view_layer.objects.active = cube
             cube.select_set(True)
@@ -57,6 +67,12 @@ def main(tmp):
         if not report.ok:
             continue
         material = report.doc["materials"][0]
+        if kind == "TERRAIN_4":
+            for i in range(4):
+                for prop in ("metallic", "roughness"):
+                    name = f"layer{i}_{prop}_texture"
+                    check(material["shaderParameters"][name].get("texCoord", 0) == i % 2,
+                          f"TERRAIN_4@{key[1]}: export {name} UV")
         check(material.get("shader", {"id": K.SHADER_CORE[0], "version": K.SHADER_CORE[1]}) ==
               {"id": key[0], "version": key[1]}, f"{kind}: exact shader ID/version")
         if kind != "CORE":
@@ -74,6 +90,18 @@ def main(tmp):
             expected_params = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             actual_params = {p.name for p in imported.adm.params}
             check(actual_params == expected_params, f"{kind}: typed parameter schema restored")
+            if kind == "TERRAIN_4":
+                for i in range(4):
+                    for prop in ("metallic", "roughness"):
+                        name = f"layer{i}_{prop}_texture"
+                        value = imported.adm.params[name]
+                        check(value.use and value.image is not None and value.tex_coord == i % 2
+                              and value.image.colorspace_settings.name == "Non-Color",
+                              f"TERRAIN_4@{key[1]}: import {name} image and UV")
+                        if value.image is not None:
+                            source = mat.adm.params[name].image
+                            check(abs(value.image.pixels[0] - source.pixels[0]) <= 1 / 255,
+                                  f"TERRAIN_4@{key[1]}: import {name} linear red value")
         if key[1] == K.SHADER_PROFILE_V2 or kind not in (
                 "CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
             check(not any("portable PBR fallback" in warning for warning in exporter.warnings),

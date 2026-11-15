@@ -1029,7 +1029,9 @@ def draw_texture_slots(lay, context, mat):
             col.template_ID(p, "pick_" + sid.lower(), new="image.new", open="image.open")
             continue
         head.operator("adm.material_texture_clear", text="", icon="X").slot = sid
-        col.template_ID(node, "image", new="image.new", open="image.open")
+        if node.image is not None:
+            col.label(text=f"Current: {node.image.name}", icon="IMAGE_DATA")
+        col.template_ID(p, "pick_" + sid.lower(), new="image.new", open="image.open")
         if node.image is None:
             col.label(text="Empty slot: pick an image or remove it", icon="ERROR")
         row = col.row(align=True)
@@ -1058,6 +1060,9 @@ def draw_texture_slots(lay, context, mat):
             sub.prop(bsdf.inputs["Emission Strength"], "default_value", text="Strength")
     if uv_names and len(uv_names) < 2:
         box.label(text="UV1 needs a second UV map on the mesh", icon="INFO")
+    if any(M.is_preview_node(node) for node in mat.node_tree.nodes):
+        box.operator("adm.material_refresh_preview", icon="FILE_REFRESH")
+        box.label(text="Refresh after manual node or sampler changes", icon="INFO")
 
 
 # Short how-to shown under the shader selector (what the masks do and which UV they use).
@@ -1072,7 +1077,8 @@ PROFILE_HINTS = {
     "ROCK": ("detail_texture/detail_normal: object-space triplanar (no UVs needed),",
              "frequency = triplanar_scale × detail_scale. moss_mask (UV) darkens to 40 %."),
     "TERRAIN_4": ("blend_mask RGBA = weights of layers 0-3 (normalized; empty mask = layer 0).",
-                  "Each layer: texture × base_color, tiled by uv_scale[i]."),
+                  "Set layer0_texture below; the PBR Base Color is only a fallback.",
+                  "Metallic/roughness maps multiply their layer factors; use metallic 1 for full map."),
     "GLASS": ("Color = mix(glass_tint, reflection_tint, Fresnel); alpha from transparency.",),
     "WATER": ("Color = mix(water_tint, white, Fresnel); uv_velocity scrolls core textures.",),
 }
@@ -1158,6 +1164,8 @@ def draw_material(lay, context, mat):
             col.label(text="Export: portable PBR fallback + shader parameters", icon="EXPORT")
         for line in PROFILE_HINTS.get(p.shader, ()):
             col.label(text=line)
+        if p.shader == "TERRAIN_4":
+            col.operator("adm.material_terrain_from_pbr", icon="IMPORT")
         col.operator("adm.material_refresh_preview", icon="FILE_REFRESH")
     if p.shader == "CUSTOM":
         col.prop_search(p, "custom_shader", context.scene.adm_anim, "shaders", icon="SCRIPT")
@@ -1194,8 +1202,8 @@ def draw_material(lay, context, mat):
             if p.shader == "CUSTOM":
                 col.label(text="Pick a shader definition (ADM > Shaders)", icon="ERROR")
         else:
-            if p.shader == "CUSTOM":
-                in_sync = sorted(v.name for v in p.params) == sorted(params)
+            in_sync = sorted(v.name for v in p.params) == sorted(params)
+            if p.shader == "CUSTOM" or not in_sync:
                 r = box.row()
                 r.alert = not in_sync
                 r.operator("adm.material_sync_params", icon="FILE_REFRESH",
