@@ -1,0 +1,79 @@
+import json
+import os
+import tempfile
+import unittest
+
+import numpy as np
+from PIL import Image
+
+from awt.material import TerrainMaterial
+from awt.terrain_presets import list_presets, load_preset, save_preset
+from awt.terrain_setup import apply_profile
+
+
+class TerrainSetupTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.heights = np.linspace(-20.0, 900.0, 10000, dtype=np.float32).reshape(100, 100)
+
+    def test_profiles_fit_known_biome_bands_and_keep_surface_assets(self):
+        material = TerrainMaterial()
+        texture = os.path.join(self.tmp.name, "grass.png")
+        Image.new("RGB", (4, 4), (70, 120, 45)).save(texture)
+        material.surface("grass").albedo = texture
+
+        levels = apply_profile(material, self.heights, "alpine")
+
+        mountains = next(biome for biome in material.biomes if biome.name == "mountains")
+        self.assertAlmostEqual(mountains.height.min, levels["snow_start_m"])
+        self.assertEqual(material.surface("grass").albedo, texture)
+        material.validate()
+
+    def test_arid_profile_uses_sand_and_places_snow_above_the_heightmap(self):
+        material = TerrainMaterial()
+
+        levels = apply_profile(material, self.heights, "arid")
+
+        self.assertEqual(material.biomes[0].surfaces[0].surface, "sand")
+        self.assertGreater(levels["snow_start_m"], float(self.heights.max()))
+        material.validate_rules()
+
+    def test_preset_copies_textures_and_excludes_map_specific_paint(self):
+        material = TerrainMaterial()
+        texture = os.path.join(self.tmp.name, "albedo.png")
+        Image.new("RGB", (8, 8), (45, 80, 120)).save(texture)
+        material.surface("grass").albedo = texture
+        material.ensure_paint(8, 8)
+        material.paint[0, 0] = 1
+
+        folder = save_preset(os.path.join(self.tmp.name, "presets"), "Alpine World", material)
+        presets = list_presets(os.path.dirname(folder))
+        loaded = load_preset(os.path.dirname(folder), presets[0][1])
+
+        copied = loaded.surface("grass").albedo
+        self.assertTrue(copied.startswith(os.path.join(folder, "textures")))
+        self.assertTrue(os.path.isfile(copied))
+        self.assertIsNone(loaded.paint)
+        self.assertEqual(loaded.surface_names(), material.surface_names())
+        self.assertEqual(loaded.biomes[0].surface_names(), material.biomes[0].surface_names())
+
+    def test_preset_rejects_texture_paths_outside_its_directory(self):
+        root = os.path.join(self.tmp.name, "presets")
+        folder = save_preset(root, "safe", TerrainMaterial())
+        path = os.path.join(folder, "preset.json")
+        with open(path, encoding="utf-8") as handle:
+            document = json.load(handle)
+        document["material"]["surfaces"][0]["albedo"] = "..\\outside.png"
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(document, handle)
+
+        with self.assertRaisesRegex(ValueError, "outside its folder"):
+            load_preset(root, "safe")
+
+    def test_duplicate_preset_needs_explicit_replacement(self):
+        root = os.path.join(self.tmp.name, "presets")
+        save_preset(root, "Terrain", TerrainMaterial())
+        with self.assertRaises(FileExistsError):
+            save_preset(root, "Terrain", TerrainMaterial())
+

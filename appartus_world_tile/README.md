@@ -65,6 +65,10 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   blend those surfaces. The six starter biomes are lowland, forest, shore, water, mountains
   and rocky terrain. Each biome can be placed automatically by height/slope bands or painted
   manually; its surface list can also limit individual surfaces by height and slope.
+  **Terrain setup wizard** starts from current rules or a temperate, alpine, coastal/island or
+  arid profile, then lets you edit each biome's height/slope limits and choose albedo images
+  for its shared surfaces. **Save preset** copies the material setup and its textures into the
+  AWT user-data folder; **Load preset** restores it. Presets do not include map-specific paint.
   Neighbouring biomes should share at least one surface so the transition uses a common
   texture rather than changing abruptly. Texture repeat is rounded to a whole number per tile,
   so textures continue across tiles. The selected surface has a lit **Sphere** and tiled

@@ -8,10 +8,10 @@ import os
 import time
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QSettings, QStandardPaths, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
-                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+                               QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
                                QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
                                QVBoxLayout, QWidget)
 
@@ -23,8 +23,10 @@ from ..material import PAINT_AUTO, Band, TerrainMaterial
 from ..pipeline import (BuildParams, Cancelled, build, estimate_memory, fit_material, height_transform, hillshade,
                         load_manifest, tile_grid)
 from ..project import PROJECT_EXTENSION, PROJECT_FILTER, Project, load_project
+from ..terrain_presets import list_presets, load_preset, preset_key, save_preset
 from .map_view import MapView
 from .material_panel import MaterialPanel, swatch
+from .terrain_wizard import TerrainSetupWizard
 from .viewer3d import MATERIAL_MODE, TRIANGLE_BUDGET, Viewer3D, triangle_count
 
 HEIGHTMAP_FILTER = "Heightmaps (*.png *.tif *.tiff *.r16 *.raw *.npy *.pgm);;All files (*)"
@@ -511,6 +513,9 @@ class MainWindow(QMainWindow):
         self.map.paintStroke.connect(self._paint_stroke)
         self.map.paintFinished.connect(self._paint_finished)
         self.material_panel.fit_requested.connect(self._fit_material)
+        self.material_panel.terrain_setup_requested.connect(self._terrain_setup)
+        self.material_panel.save_preset_requested.connect(self._save_terrain_preset)
+        self.material_panel.load_preset_requested.connect(self._load_terrain_preset)
         self.material_panel.terrain_preview_requested.connect(self._show_material_on_terrain)
 
         self.browse_export.clicked.connect(self._choose_export)
@@ -824,6 +829,72 @@ class MainWindow(QMainWindow):
         self._material_changed()
         self._schedule_check()
         self._mark_dirty()
+
+    def _terrain_preset_dir(self) -> str:
+        root = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        if not root:
+            raise OSError("The system has no writable application data folder")
+        return os.path.join(root, "terrain_presets")
+
+    def _terrain_setup(self) -> None:
+        if self.hm is None:
+            QMessageBox.information(self, APP_NAME, "Open the heightmap first.")
+            return
+        scale, offset = self._transform()
+        heights = preview(self.hm.data, 512) * scale + offset
+        wizard = TerrainSetupWizard(self._material(), heights, self)
+        if wizard.exec() != wizard.DialogCode.Accepted:
+            return
+        self.material_panel.set_material(wizard.material())
+        self.material_panel.changed.emit()
+
+    def _save_terrain_preset(self) -> None:
+        name, accepted = QInputDialog.getText(self, "Save terrain preset", "Preset name:")
+        if not accepted:
+            return
+        try:
+            root = self._terrain_preset_dir()
+            key = preset_key(name)
+            existing = os.path.join(root, key)
+            overwrite = os.path.exists(existing)
+            if overwrite and QMessageBox.question(
+                    self, "Replace terrain preset",
+                    f"A preset named '{name.strip()}' already exists. Replace its settings?") \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            save_preset(root, name, self._material(), overwrite=overwrite)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Save terrain preset", str(error))
+            return
+        self.status.setText(f"Saved terrain preset “{name.strip()}” with its textures.")
+
+    def _load_terrain_preset(self) -> None:
+        try:
+            root = self._terrain_preset_dir()
+            presets = list_presets(root)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Load terrain preset", str(error))
+            return
+        if not presets:
+            QMessageBox.information(self, "Load terrain preset", "No saved terrain presets yet.")
+            return
+        names = [name for name, _key in presets]
+        name, accepted = QInputDialog.getItem(self, "Load terrain preset", "Terrain preset:", names, 0, False)
+        if not accepted:
+            return
+        if self._material().has_paint() and QMessageBox.question(
+                self, "Replace terrain setup",
+                "Loading a preset replaces the biome and surface setup and clears map-specific biome paint. Continue?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        key = presets[names.index(name)][1]
+        try:
+            material = load_preset(root, key)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Load terrain preset", str(error))
+            return
+        self.material_panel.set_material(material)
+        self.material_panel.changed.emit()
 
     def _show_material_on_terrain(self) -> None:
         self.viewer.color.setCurrentIndex(MATERIAL_MODE)

@@ -561,6 +561,9 @@ class MaterialPanel(QWidget):
     changed = Signal()
     fit_requested = Signal()
     terrain_preview_requested = Signal()
+    terrain_setup_requested = Signal()
+    save_preset_requested = Signal()
+    load_preset_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -625,11 +628,20 @@ class MaterialPanel(QWidget):
         self.paint_softness.setToolTip("Painted biome borders fade over about this distance")
         self.double_sided = QCheckBox("Double-sided")
         self.double_sided.setToolTip("Render back faces too (off for normal terrain)")
+        self.terrain_setup = QPushButton("Terrain setup wizard…")
+        self.terrain_setup.setToolTip("Choose a terrain type, tune biome thresholds and assign surface textures")
+        self.save_preset = QPushButton("Save preset…")
+        self.load_preset = QPushButton("Load preset…")
         self.fit = QPushButton("Fit biome heights to the heightmap")
         self.fit.setToolTip("Place water, shore and snow levels of the default biomes from the height distribution")
         form.addRow("Slope radius", self.slope_radius)
         form.addRow("Paint softness", self.paint_softness)
         form.addRow(self.double_sided)
+        form.addRow(self.terrain_setup)
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(self.save_preset)
+        preset_row.addWidget(self.load_preset)
+        form.addRow(preset_row)
         form.addRow(self.fit)
 
         layout = QVBoxLayout(self)
@@ -657,6 +669,9 @@ class MaterialPanel(QWidget):
             spin.valueChanged.connect(self._global_edited)
         self.double_sided.toggled.connect(self._global_edited)
         self.fit.clicked.connect(self.fit_requested)
+        self.terrain_setup.clicked.connect(self.terrain_setup_requested)
+        self.save_preset.clicked.connect(self.save_preset_requested)
+        self.load_preset.clicked.connect(self.load_preset_requested)
         self.set_material(self._material)
 
     # ------------------------------------------------------------ public
