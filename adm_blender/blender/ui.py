@@ -1,5 +1,7 @@
 """Sollumz-style UI: 3D View sidebar tab "ADM", Properties editor panels, Add menu."""
 
+import json
+
 import bpy
 
 from ..core import constants as K
@@ -546,6 +548,46 @@ class ADM_PT_tools(_Side, bpy.types.Panel):
         row = box.row(align=True)
         row.operator("import_anim.adm_anim", text="Import Anim", icon="IMPORT")
         row.operator("export_anim.adm_anim", text="Export Anim", icon="EXPORT")
+
+
+class ADM_PT_terrain_tools(_Side, bpy.types.Panel):
+    bl_label = "Terrain Tools"
+    bl_order = 1
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == "MESH" \
+            and ("adm_terrain_source_image" in obj or "adm_terrain_tile_id" in obj)
+
+    def draw(self, context):
+        obj = context.active_object
+        layout = self.layout
+        if "adm_terrain_tile_id" in obj:
+            layout.label(text=f"Tile: {obj['adm_terrain_tile_id']}")
+            layout.operator("adm.terrain_sync_borders", icon="SNAP_ON")
+            layout.operator("adm.generate_lods", icon="MOD_DECIM")
+            layout.operator("export_scene.adm", text="Export Tile", icon="EXPORT")
+            layout.label(text="Use Export > All Model Roots for a tile set")
+            return
+        layout.label(text=f"Working grid: {obj.get('adm_terrain_samples_x', 0)} x "
+                          f"{obj.get('adm_terrain_samples_y', 0)} samples")
+        layout.label(text=f"Area: {obj.get('adm_terrain_width_m', 0):g} x "
+                          f"{obj.get('adm_terrain_depth_m', 0):g} m")
+        layout.operator("adm.terrain_preview_fixed_grid",
+                        text="Regenerate Preview" if "adm_terrain_preview_settings" in obj
+                        else "Preview Tiling", icon="MESH_GRID")
+        if "adm_terrain_preview_settings" in obj:
+            settings = obj["adm_terrain_preview_settings"]
+            try:
+                mode = json.loads(settings).get("mode", "FIXED").replace("_", " ").title()
+            except (TypeError, ValueError):
+                mode = "Terrain"
+            layout.label(text=f"{mode} boundary preview is active", icon="HIDE_OFF")
+            row = layout.row(align=True)
+            row.operator("adm.terrain_apply_tiling", icon="CHECKMARK")
+            row.operator("adm.terrain_cancel_preview", icon="CANCEL")
+        layout.operator("adm.terrain_guide", text="Terrain Preparation Guide", icon="HELP")
 
 
 class ADM_PT_object(_Side, bpy.types.Panel):
@@ -1485,7 +1527,7 @@ def menu_add(self, context):
     self.layout.menu(ADM_MT_add.bl_idname, icon="MOD_BUILD")
 
 
-SIDEBAR_PANELS = (ADM_PT_tools, ADM_PT_object, ADM_PT_vertex_colors,
+SIDEBAR_PANELS = (ADM_PT_tools, ADM_PT_terrain_tools, ADM_PT_object, ADM_PT_vertex_colors,
                   ADM_PT_skeleton, ADM_PT_skel_roles, ADM_PT_skel_reference, ADM_PT_ik,
                   ADM_PT_skel_sockets, ADM_PT_skel_skin, ADM_PT_skel_anim, ADM_PT_skel_report,
                   ADM_PT_face, ADM_PT_expressions, ADM_PT_shaders, ADM_PT_animation, ADM_PT_validation)

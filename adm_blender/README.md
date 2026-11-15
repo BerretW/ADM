@@ -224,6 +224,51 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
    The operator does not infer a blend mask from height or slope. For an existing mesh, create a grid
    and UV map, apply a height displacement to its geometry, then assign the same shader and mask.
 
+The heightmap dialog can also load a file directly, interpret the red channel as absolute metres,
+flip either axis, apply a height scale and offset, and place the center or lower-left corner at the
+3D cursor. Alternatively, enter metres per source pixel: the physical dimensions use the number of
+intervals (`samples - 1`), not the number of samples. Non-finite pixels and a configured NoData
+value are rejected. The generated object stores its source image name and settings as custom
+properties. The existing 513-sample-per-axis and 16,777,216-source-pixel limits still apply.
+Direct file loading uses Blender's image decoder; a format Blender cannot decode is reported as an
+error. The importer does not read GeoTIFF georeferencing or infer NoData metadata: enter dimensions
+and any NoData value explicitly. It creates a working mesh only; use the separate terrain-tiling
+workflow below to preview and apply tile boundaries.
+
+### Terrain tiling and tile export
+
+Select the generated working terrain and open **N-panel › ADM › Terrain Tools**. **Preview Tiling**
+offers three modes. Each displays proposed boundaries as a non-destructive curve following the
+working mesh; **Regenerate Preview** replaces the preview and **Cancel** removes it.
+
+- **Fixed Grid** uses the requested tile width and length in metres. Boundaries snap to the nearest
+  source-grid interval, so no triangle is split and the terrain dimensions are not stretched.
+- **Adaptive** grows connected, irregular regions across the grid. Target, minimum and maximum tile
+  areas are in square metres; terrain sensitivity and natural-boundary preference bias the growth
+  toward slope and elevation changes. The maximum cell count also bounds each tile's complexity.
+- **Hybrid** first divides the grid into regular sectors, then applies the same connected adaptive
+  partitioning inside each sector. Sector width and length are in metres.
+
+Adaptive modes partition existing grid cells; they do not remesh or create density-adaptive geometry.
+Their area limits are quantized to the working grid and infeasible settings are rejected. A preview
+stores the source geometry signature and parameters; applying after editing the working mesh is
+rejected until the preview is regenerated. One apply operation is limited to 4,096 tiles to prevent
+accidental creation of an unresponsive Blender scene.
+
+**Apply Tiling** creates a collection of separate ADM Model Roots and uniquely editable mesh
+datablocks. Each tile retains the source material, UV maps, `COLOR_0`/`COLOR_1`, supported point
+attributes and sampled vertex positions. The original working mesh is retained, hidden and excluded
+from export. The first tile becomes active. Use Blender's existing **Generate LODs** on a tile to add
+an ADM LOD Group, **Sync Terrain Borders** after editing coincident border samples, and **Export Tile**
+for an individual model. To export a set, use the standard ADM export dialog's **All Model Roots**
+scope.
+
+Border synchronization averages matching XY samples shared by generated tiles; it does not add
+vertices, reconcile differently transformed roots or repair mismatched edge topology. Tiling requires
+the regular-grid topology produced by this heightmap tool; topological edits are unsupported.
+Polygon-aware manual split/merge editing, density-adaptive mesh generation, LOD seam stitching/skirts,
+synchronization of simplified LOD borders, and export manifests are not implemented.
+
 ### Shader profile previews
 
 - Selecting an official profile (Brick, Concrete, Roof, Bark, Rock, Terrain 4, Glass, Water, Vehicle

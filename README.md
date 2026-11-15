@@ -110,7 +110,6 @@ The [CI workflow](.github/workflows/ci.yml) runs core/reference tests and verifi
 on Windows and Linux. A separate Ubuntu job tries Blender's download host and two mirrors, verifies the
 same pinned Blender 5.2.4 SHA-256 for each successful download, and runs headless Blender integration
 scripts. This does not certify independent renderer/IK conformance.
-The terrain workflow script above is currently a manual test and is not included in the CI Blender job.
 
 ## Publishing
 
