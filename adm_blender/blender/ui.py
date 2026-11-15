@@ -529,6 +529,9 @@ class ADM_PT_tools(_Side, bpy.types.Panel):
         col.operator("adm.create_scene", icon="SCENE_DATA")
         col.operator("adm.create_terrain_heightmap", icon="MESH_GRID")
         row = col.row(align=True)
+        row.operator("adm.import_world_tiles", icon="WORLD")
+        row.operator("adm.sync_world_terrain_materials", text="Sync Materials", icon="FILE_REFRESH")
+        row = col.row(align=True)
         row.operator("adm.create_collider", icon="MESH_ICOSPHERE")
         row.prop(wm, "collider_shape", text="")
         col.operator("adm.create_lod_group", icon="MOD_DECIM")
@@ -558,11 +561,23 @@ class ADM_PT_terrain_tools(_Side, bpy.types.Panel):
     def poll(cls, context):
         obj = context.active_object
         return obj is not None and obj.type == "MESH" \
-            and ("adm_terrain_source_image" in obj or "adm_terrain_tile_id" in obj)
+            and ("adm_terrain_source_image" in obj or "adm_terrain_tile_id" in obj
+                 or "adm_world_tile_id" in obj or "adm_world_terrain_template" in obj)
 
     def draw(self, context):
         obj = context.active_object
         layout = self.layout
+        if "adm_world_tile_id" in obj or "adm_world_terrain_template" in obj:
+            if "adm_world_tile_id" in obj:
+                layout.label(text=f"World tile {obj['adm_world_tile_id']}, LOD {obj.get('adm_world_tile_lod', 0)}")
+                layout.label(text=f"Height error ≤ {obj.get('adm_world_tile_max_error_m', 0):g} m "
+                                  f"(measured {obj.get('adm_world_tile_measured_error_m', 0):.3f} m)")
+            else:
+                layout.label(text="Template for every world tile material")
+                layout.label(text="Edit its material, then sync")
+            layout.operator("adm.sync_world_terrain_materials", icon="FILE_REFRESH")
+            layout.operator("export_scene.adm", text="Export", icon="EXPORT")
+            return
         if "adm_terrain_tile_id" in obj:
             layout.label(text=f"Tile: {obj['adm_terrain_tile_id']}")
             layout.operator("adm.terrain_sync_borders", icon="SNAP_ON")

@@ -3,9 +3,10 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import file_io, lod_gen, operators, props, skeleton_ops, ui, vertex_colors
+from . import file_io, lod_gen, operators, props, skeleton_ops, ui, vertex_colors, world_tiles
 
-CLASSES = operators.CLASSES + skeleton_ops.CLASSES + vertex_colors.CLASSES + lod_gen.CLASSES
+CLASSES = (operators.CLASSES + skeleton_ops.CLASSES + vertex_colors.CLASSES + lod_gen.CLASSES
+           + world_tiles.CLASSES)
 
 
 @persistent
