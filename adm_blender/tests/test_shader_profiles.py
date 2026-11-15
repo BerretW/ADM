@@ -39,8 +39,14 @@ def main(tmp):
     for key, kind in K.OFFICIAL_SHADER_KINDS.items():
         mat.adm.shader = kind
         mat.adm.shader_version = key[1]
-        if kind == "TERRAIN_4":
-            for i in range(4):
+        if kind in ("TERRAIN_4", "TWO_LAYER"):
+            if kind == "TWO_LAYER":
+                mask = bpy.data.images.new("two_layer_mask", 2, 2, alpha=True)
+                mask.pixels = [0.35, 0.1, 0.8, 1.0] * 4
+                mask.pack()
+                mat.adm.params["blend_mask"].image = mask
+                mat.adm.params["blend_mask"].tex_coord = 1
+            for i in range(2 if kind == "TWO_LAYER" else 4):
                 for prop in ("metallic", "roughness"):
                     name = f"layer{i}_{prop}_texture"
                     img = bpy.data.images.new(f"{key[1]}_{name}", 2, 2, alpha=True)
@@ -70,8 +76,8 @@ def main(tmp):
         if not report.ok:
             continue
         material = report.doc["materials"][0]
-        if kind == "TERRAIN_4":
-            for i in range(4):
+        if kind in ("TERRAIN_4", "TWO_LAYER"):
+            for i in range(2 if kind == "TWO_LAYER" else 4):
                 for prop in ("metallic", "roughness"):
                     name = f"layer{i}_{prop}_texture"
                     check(material["shaderParameters"][name].get("texCoord", 0) == i % 2,
@@ -98,8 +104,14 @@ def main(tmp):
             expected_params = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             actual_params = {p.name for p in imported.adm.params}
             check(actual_params == expected_params, f"{kind}: typed parameter schema restored")
-            if kind == "TERRAIN_4":
-                for i in range(4):
+            if kind in ("TERRAIN_4", "TWO_LAYER"):
+                if kind == "TWO_LAYER":
+                    mask = imported.adm.params["blend_mask"]
+                    check(mask.use and mask.tex_coord == 1 and mask.image is not None
+                          and mask.image.colorspace_settings.name == "Non-Color"
+                          and abs(mask.image.pixels[0] - 0.35) < 0.02,
+                          "TWO_LAYER: mask and UV survive export and import")
+                for i in range(2 if kind == "TWO_LAYER" else 4):
                     for prop in ("metallic", "roughness"):
                         name = f"layer{i}_{prop}_texture"
                         value = imported.adm.params[name]

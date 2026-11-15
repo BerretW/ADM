@@ -152,8 +152,8 @@ weapon animation and equipment fit remain engine responsibilities. See the
 
 ### Material textures (Sollumz-style)
 
-The machine-readable registry contains the original Core 20 profiles plus the interactive surface
-profile, each with a typed parameter schema.
+The machine-readable registry contains the original Core 20 profiles, the interactive surface and
+two-layer surface profiles, each with a typed parameter schema.
 Blender preserves their IDs, parameter values and portable PBR fallback through import/export.
 Cutout, emissive and decal have profile-specific validation; glass, water and foliage also enforce
 their alpha/two-sided requirements. Interactive surfaces show the authored PBR fallback, not a live
@@ -175,6 +175,11 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   textures found in that setup (**Use Albedo: …**, ranked by node label/image name and colour space;
   palettes are skipped) and a picker. Either one replaces the setup with the simple exportable chain;
   the original nodes are only disconnected, never deleted.
+- The shared PBR Metallic-Roughness slot supports selecting R/G/B/A and inversion independently
+  for roughness and metallic on traceable image chains. Export repacks the results into the ADM PBR
+  G/B channels; reimport preserves the appearance, not the original channel choices. Profile-specific
+  shader operations may override those PBR inputs. The controls are disabled for unsupported node
+  chains; use the existing texture picker to replace such a chain.
 - Switching **Shader** updates the viewport like Sollumz: *PBR Metallic-Roughness* shows the
   material's own Principled BSDF chain (created if missing), *PBR Layered* builds an `ADM Preview`
   node group (base/overlay mix driven by `layer_factor` and the mask's red channel) as the active
@@ -202,6 +207,11 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   inversion. The selected Non-Color channel multiplies its factor and uses the map's own UV
   selection and the layer's `uv_scale`. Set the metallic factor to 1 to use the full map (default 0).
   Existing terrain materials may need **Sync Parameters (out of date)** to expose the new slots.
+- **PBR Two Layer** blends two independent textured PBR layers using the red channel of a Non-Color
+  `blend_mask`: black selects layer 0 and white selects layer 1. Without a mask it shows layer 0.
+  Each layer provides albedo, normal, metallic and roughness textures, plus independent channel and
+  inversion controls for metallic and roughness. The profile uses a portable PBR fallback in readers
+  that do not support it; it does not require vertex colors.
 - Masks are grayscale Non-Color images; the red channel is read. Example for Brick: in `mortar_mask`,
   white = mortar joint and black = brick face. It is sampled at UV × `uv_scale`, like the base texture.
   `dirt_mask` darkens the color to 35 % where it is white. **Generate Mortar Mask** creates a packed

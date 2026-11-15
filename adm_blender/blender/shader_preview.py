@@ -424,7 +424,10 @@ def _rock(g):
 def _terrain(g):
     b = g.bsdf()
     mask = g.tex("blend_mask")
-    if g.a.shader_version == K.SHADER_PROFILE_V2:
+    if g.a.shader == "TWO_LAYER":
+        blend = g.math("MINIMUM", g.math("MAXIMUM", g.red(mask), 0.0), 1.0) if mask else 0.0
+        w = [g.math("SUBTRACT", 1.0, blend), blend]
+    elif g.a.shader_version == K.SHADER_PROFILE_V2:
         weights = list(_vertex_color(g, "COLOR_1"))
         weights = [
             g.math("MULTIPLY", weights[i], g.num(f"color1_{channel.lower()}_strength"), clamp=True)
@@ -466,7 +469,7 @@ def _terrain(g):
         g.link(w[i], n.node.inputs["Scale"])
         return n
 
-    for i in range(4):
+    for i in range(2 if g.a.shader == "TWO_LAYER" else 4):
         if not isinstance(w[i], bpy.types.NodeSocket) and w[i] == 0.0:
             continue
         base = g.combine((g.comp(f"layer{i}_base_color", 0), g.comp(f"layer{i}_base_color", 1),
@@ -863,7 +866,7 @@ def _apply_vertex_controls(g, bsdf):
 
 BUILDERS = {
     "BRICK": _brick, "CONCRETE": _concrete, "ROOF": _roof, "BARK": _bark, "ROCK": _rock,
-    "TERRAIN_4": _terrain, "GLASS": _glass, "WATER": _water, "VEHICLE_PAINT": _vehicle_paint,
+    "TERRAIN_4": _terrain, "TWO_LAYER": _terrain, "GLASS": _glass, "WATER": _water, "VEHICLE_PAINT": _vehicle_paint,
     "SKIN": _skin, "FUR": _fur, "FABRIC": _fabric, "FEATHER": _feather, "SCALES": _scales,
     "FOLIAGE": _foliage,
 }

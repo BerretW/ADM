@@ -146,6 +146,14 @@ def main(tmp):
     check(base.colorspace_settings.name == "sRGB", "base color stays sRGB")
     check(M.slot_texture_node(mat, "METALLIC_ROUGHNESS").image.colorspace_settings.name == "Non-Color",
           "metallic-roughness is Non-Color")
+    mat.adm.pbr_roughness_channel = "B"
+    mat.adm.pbr_roughness_invert = True
+    mat.adm.pbr_metallic_channel = "A"
+    mr_rough = M.pbr_channel_settings(mat, "Roughness")
+    mr_metal = M.pbr_channel_settings(mat, "Metallic")
+    check(mr_rough["channel"] == "B" and mr_rough["invert"]
+          and mr_metal["channel"] == "A" and not mr_metal["invert"],
+          "shared PBR slot selects channels and inversion independently")
     npath = os.path.join(tmp, "normal.png")
     nimg = image("normal_src", (0.5, 0.5, 1.0, 1.0))
     nimg.filepath_raw, nimg.file_format = npath, "PNG"
@@ -183,6 +191,10 @@ def main(tmp):
     mat2 = next(x for x in bpy.data.materials if x != mat and x.name.startswith("Slots"))
     check(all(M.slot_state(mat2, s)[0] == "TEXTURE" for s in M.SLOT_IDS), "imported material shows all slots")
     check(M.slot_uv_index(M.slot_texture_node(mat2, "NORMAL"), M.UV_NAMES) == 1, "imported normal on UV1")
+    imported_mr = M.slot_texture_node(mat2, "METALLIC_ROUGHNESS").image
+    imported_mr.colorspace_settings.name = "Non-Color"
+    check(abs(imported_mr.pixels[1] - 0.2) < 0.02 and abs(imported_mr.pixels[2] - 1.0) < 0.02,
+          "inverted and alpha-selected PBR maps export as correct packed G/B and reimport")
 
     print("== remove slots")
     bsdf = M.principled_of(mat)

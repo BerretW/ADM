@@ -47,7 +47,7 @@ python3 tools/container.py fixtures/valid/triangle.adm
 - Small viewers can implement basic PBR and skip optional shader technology.
 - Every advanced material contains explicitly serialized portable PBR fallback fields.
 - The machine-readable shader registry preserves Core 20 `1.0.0` profiles, adds 20 compatible
-  `2.0.0` `COLOR_1` profiles and retains the unchanged interactive surface profile. Blender previews
+  `2.0.0` `COLOR_1` profiles, the interactive surface and a two-layer surface profile. Blender previews
   the registered mask operations; skin, fur and fabric remain approximations. Interactive surfaces
   preview their authored static PBR fallback; custom shaders report PBR fallback. See `SPEC_GAPS.md`.
 - `AMA0` animation libraries store searchable clip descriptions and may animate bones, morph targets, expressions and numeric shader/PBR fields.
@@ -87,7 +87,8 @@ These tests are executed by the reference Blender toolkit (`adm_blender/tests/te
 
 ## Shader registry
 
-- `shaders/registry.json` contains the Core 20 and the versioned interactive shader and typed schemas.
+- `shaders/registry.json` contains the Core 20, interactive and two-layer shader profiles and typed schemas.
+- `shaders/adm.surface.two_layer.v1.md` defines the grayscale-mask two-layer PBR profile.
 - `shaders/*.v1.md` contains a contract annex for each non-core profile; §8 retains the existing core and layered semantics.
 - `tools/build_shader_registry.py --check` detects drift between Blender's normative parameter tables and the generated registry.
 - `tools/test_shader_registry.py` validates IDs, parameter defaults and annex presence. `adm_blender/tests/test_shader_math.py` checks independent scalar/vector reference values.

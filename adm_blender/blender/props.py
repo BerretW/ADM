@@ -256,6 +256,8 @@ SHADER_KINDS = [
     ("CUSTOM", "Custom Shader", "Custom shader with an embedded typed parameter schema", "NODE_MATERIAL", 20),
     ("INTERACTIVE", "Interactive Surface", "adm.surface.interactive@1.0.0: runtime display with PBR fallback",
      "NODE_MATERIAL", 21),
+    ("TWO_LAYER", "PBR Two Layer", "Two textured PBR layers blended by a grayscale mask",
+     "RENDERLAYERS", 22),
 ]
 PARAM_TYPES = [(t, t, "") for t in K.SHADER_PARAM_TYPES]
 
@@ -378,6 +380,8 @@ def _preview_update(self, context):
 
 
 def _shader_update(self, context):
+    if self.shader == "TWO_LAYER" and self.shader_version != "1.0.0":
+        self.shader_version = "1.0.0"
     required_alpha = {
         "CUTOUT": "MASK", "DECAL": "BLEND", "GLASS": "BLEND", "WATER": "BLEND",
         "FOLIAGE": "MASK",
@@ -400,7 +404,7 @@ def _shader_update(self, context):
 
 
 def _shader_version_update(self, context):
-    if self.shader == "INTERACTIVE" and self.shader_version != "1.0.0":
+    if self.shader in ("INTERACTIVE", "TWO_LAYER") and self.shader_version != "1.0.0":
         self.shader_version = "1.0.0"
         return
     from .materials import sync_official_shader_params, refresh_shader_preview
@@ -470,12 +474,58 @@ def _pick(slot, label):
                            description=f"Pick or open an image for the {label} texture slot")
 
 
+def _pbr_channel_get(target, default):
+    def get(self):
+        from .materials import pbr_channel_settings
+        info = pbr_channel_settings(self.id_data, target)
+        return "RGBA".index(info["channel"] or "R") if info else default
+    return get
+
+
+def _pbr_channel_set(target):
+    def set_value(self, value):
+        from .materials import pbr_channel_settings, set_pbr_channel
+        info = pbr_channel_settings(self.id_data, target)
+        if info:
+            set_pbr_channel(self.id_data, target, "RGBA"[value], info["invert"])
+    return set_value
+
+
+def _pbr_invert_get(target):
+    def get(self):
+        from .materials import pbr_channel_settings
+        info = pbr_channel_settings(self.id_data, target)
+        return bool(info and info["invert"])
+    return get
+
+
+def _pbr_invert_set(target):
+    def set_value(self, value):
+        from .materials import pbr_channel_settings, set_pbr_channel
+        info = pbr_channel_settings(self.id_data, target)
+        if info:
+            set_pbr_channel(self.id_data, target, info["channel"] or "R", value)
+    return set_value
+
+
+_CHANNEL_ITEMS = [("R", "R", "Red", 0), ("G", "G", "Green", 1),
+                  ("B", "B", "Blue", 2), ("A", "A", "Alpha", 3)]
+
+
 class ADMMaterialProps(PropertyGroup):
     pick_base_color: _pick("BASE_COLOR", "Base Color")
     pick_metallic_roughness: _pick("METALLIC_ROUGHNESS", "Metallic-Roughness")
     pick_normal: _pick("NORMAL", "Normal")
     pick_occlusion: _pick("OCCLUSION", "Occlusion")
     pick_emissive: _pick("EMISSIVE", "Emissive")
+    pbr_roughness_channel: EnumProperty(name="Roughness Channel", items=_CHANNEL_ITEMS,
+                                        get=_pbr_channel_get("Roughness", 1), set=_pbr_channel_set("Roughness"))
+    pbr_metallic_channel: EnumProperty(name="Metallic Channel", items=_CHANNEL_ITEMS,
+                                       get=_pbr_channel_get("Metallic", 2), set=_pbr_channel_set("Metallic"))
+    pbr_roughness_invert: BoolProperty(name="Invert", get=_pbr_invert_get("Roughness"),
+                                       set=_pbr_invert_set("Roughness"))
+    pbr_metallic_invert: BoolProperty(name="Invert", get=_pbr_invert_get("Metallic"),
+                                     set=_pbr_invert_set("Metallic"))
     alpha_mode: EnumProperty(name="Alpha Mode", default="AUTO", items=[
         ("AUTO", "Auto", "Derive from the node tree / render method"),
         ("OPAQUE", "Opaque", ""), ("MASK", "Mask", ""), ("BLEND", "Blend", "")])

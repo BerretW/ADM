@@ -1050,6 +1050,12 @@ def draw_texture_slots(lay, context, mat):
             r = sub.row(align=True)
             r.operator("adm.material_texture_alpha", text="Alpha From Texture", icon="IMAGE_RGB_ALPHA",
                        depress=linked).use = not linked
+        elif sid == "METALLIC_ROUGHNESS":
+            for target in ("roughness", "metallic"):
+                r = sub.row(align=True)
+                r.enabled = M.pbr_channel_settings(mat, target.title()) is not None
+                r.prop(p, f"pbr_{target}_channel", text=target.title())
+                r.prop(p, f"pbr_{target}_invert", text="Invert")
         elif sid == "NORMAL":
             nm = M.normal_map_node(mat)
             if nm is not None:
@@ -1079,6 +1085,8 @@ PROFILE_HINTS = {
     "TERRAIN_4": ("blend_mask RGBA = weights of layers 0-3 (normalized; empty mask = layer 0).",
                   "Set layer0_texture below; the PBR Base Color is only a fallback.",
                   "Metallic/roughness maps multiply their layer factors; use metallic 1 for full map."),
+    "TWO_LAYER": ("blend_mask red: black = layer 0, white = layer 1; absent = layer 0.",
+                  "Each layer has independent color, normal, metallic and roughness maps."),
     "GLASS": ("Color = mix(glass_tint, reflection_tint, Fresnel); alpha from transparency.",),
     "WATER": ("Color = mix(water_tint, white, Fresnel); uv_velocity scrolls core textures.",),
 }
@@ -1139,7 +1147,7 @@ def draw_material(lay, context, mat):
         col.label(text="Mask alpha and two-sided rendering are required", icon="INFO")
     else:
         col.prop(p, "shader")
-    if p.shader not in ("CUSTOM", "INTERACTIVE"):
+    if p.shader not in ("CUSTOM", "INTERACTIVE", "TWO_LAYER"):
         col.prop(p, "shader_version")
     if p.shader == "LAYERED" and p.shader_version == "1.0.0":
         col.label(text="Viewport: layered preview (ADM Preview nodes, not exported)", icon="INFO")
@@ -1211,7 +1219,7 @@ def draw_material(lay, context, mat):
             tex = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") == "TEXTURE"]
             val = [(v, params[v.name]) for v in p.params if v.name in params
                    and params[v.name].get("type") != "TEXTURE"
-                   and not (p.shader == "TERRAIN_4" and v.name.endswith(
+                   and not (p.shader in ("TERRAIN_4", "TWO_LAYER") and v.name.endswith(
                        ("_metallic_channel", "_roughness_channel", "_metallic_invert", "_roughness_invert")))]
             if tex:
                 tb = box.box()
@@ -1223,7 +1231,7 @@ def draw_material(lay, context, mat):
                     r.label(text=v.name)
                     r.prop(v, "tex_coord", text="UV")
                     c.template_ID(v, "image", new="image.new", open="image.open")
-                    if p.shader == "TERRAIN_4" and v.name.endswith(("_metallic_texture", "_roughness_texture")):
+                    if p.shader in ("TERRAIN_4", "TWO_LAYER") and v.name.endswith(("_metallic_texture", "_roughness_texture")):
                         prefix = v.name[:-len("_texture")]
                         channel = p.params.get(prefix + "_channel")
                         invert = p.params.get(prefix + "_invert")

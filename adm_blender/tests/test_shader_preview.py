@@ -428,6 +428,51 @@ def main():
         check(close(metal[8, 3, :1], (0.4,)) and close(rough[8, 3, :1], (0.6,)),
               f"TERRAIN_4@{version}: inversion can be disabled or reset to default")
 
+    # Two-layer mask directly interpolates all layer properties without vertex colors.
+    mat = bpy.data.materials.new("two_layer")
+    plane.data.materials.clear()
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    mat.adm.shader = "TWO_LAYER"
+    set_param(mat, "layer0_base_color", (0.2, 0.4, 0.6, 1.0))
+    set_param(mat, "layer1_base_color", (0.8, 0.2, 0.1, 1.0))
+    set_param(mat, "layer0_metallic", 0.2)
+    set_param(mat, "layer1_metallic", 0.8)
+    set_param(mat, "layer0_roughness", 0.4)
+    set_param(mat, "layer1_roughness", 0.8)
+    bsdf = preview_bsdf(mat, M)
+    base = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(close(base[8, 8, :3], (0.2, 0.4, 0.6)), "TWO_LAYER: absent mask selects layer 0")
+    set_param(mat, "blend_mask", image("two_mask",
+                                       lambda x, y: (0.0, 0.0, 0.0, 1.0) if x < 5
+                                       else (0.5, 0.0, 0.0, 1.0) if x < 10
+                                       else (1.0, 0.0, 0.0, 1.0)))
+    bsdf = preview_bsdf(mat, M)
+    base = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+    rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+    check(close(base[8, 2, :3], (0.2, 0.4, 0.6))
+          and close(base[8, 7, :3], (0.5, 0.3, 0.35))
+          and close(base[8, 13, :3], (0.8, 0.2, 0.1)),
+          "TWO_LAYER: black, gray and white mask blend albedo")
+    check(close(metal[8, 7, :1], (0.5,)) and close(rough[8, 7, :1], (0.6,)),
+          "TWO_LAYER: gray mask blends metallic and roughness")
+    for i, pixel in enumerate(((0.1, 0.2, 0.1, 1.0), (0.1, 0.8, 0.5, 1.0))):
+        tex = image(f"two_layer_packed_{i}", lambda x, y, p=pixel: p)
+        set_param(mat, f"layer{i}_metallic", 1.0)
+        set_param(mat, f"layer{i}_roughness", 1.0)
+        set_param(mat, f"layer{i}_metallic_texture", tex)
+        set_param(mat, f"layer{i}_roughness_texture", tex)
+        mat.adm.params[f"layer{i}_metallic_channel"].texture_channel = "G"
+        mat.adm.params[f"layer{i}_roughness_channel"].texture_channel = "B"
+    mat.adm.params["layer1_metallic_invert"].texture_invert = True
+    mat.adm.params["layer1_roughness_invert"].texture_invert = True
+    bsdf = preview_bsdf(mat, M)
+    metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+    rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+    check(close(metal[8, 7, :1], (0.2,)) and close(rough[8, 7, :1], (0.3,)),
+          "TWO_LAYER: packed maps select and invert each layer's channels independently")
+
     # 4. Vertex controls are evaluated after the profile's material operations ---------------------
     mat = bpy.data.materials.new("vertex_controls")
     plane.data.materials.clear()

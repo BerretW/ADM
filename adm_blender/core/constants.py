@@ -90,6 +90,7 @@ SHADER_DECAL = ("adm.surface.decal", "1.0.0")
 SHADER_GLASS = ("adm.surface.glass", "1.0.0")
 SHADER_FOLIAGE = ("adm.surface.foliage", "1.0.0")
 SHADER_TERRAIN_4 = ("adm.terrain.four_layer", "1.0.0")
+SHADER_TWO_LAYER = ("adm.surface.two_layer", "1.0.0")
 SHADER_VEHICLE_PAINT = ("adm.vehicle.paint", "1.0.0")
 SHADER_SKIN = ("adm.character.skin", "1.0.0")
 SHADER_FUR = ("adm.animal.fur", "1.0.0")
@@ -540,15 +541,25 @@ for _key, _kind in tuple(OFFICIAL_SHADER_KINDS.items()):
     OFFICIAL_SHADERS[_v2_key] = _params
     OFFICIAL_SHADER_KINDS[_v2_key] = _kind
 
+OFFICIAL_SHADER_KINDS[SHADER_TWO_LAYER] = "TWO_LAYER"
+OFFICIAL_SHADER_KEYS["TWO_LAYER"] = SHADER_TWO_LAYER
+OFFICIAL_SHADERS[SHADER_TWO_LAYER] = [
+    dict(p, description="Linear red channel blends layer 0 (black) into layer 1 (white).")
+    if p["name"] == "blend_mask" else dict(p)
+    for p in OFFICIAL_SHADERS[SHADER_TERRAIN_4]
+    if not p["name"].startswith(("layer2_", "layer3_"))
+]
+
 OFFICIAL_SHADER_IDS = {kind: key[0] for key, kind in OFFICIAL_SHADER_KINDS.items()}
 OFFICIAL_SHADER_V2_KEYS = {
     kind: (shader_id, SHADER_PROFILE_V2) for kind, shader_id in OFFICIAL_SHADER_IDS.items()
-    if kind != "INTERACTIVE"
+    if kind not in ("INTERACTIVE", "TWO_LAYER")
 }
 SHADER_COLOR_TEXTURES = frozenset(
     set(SHADER_COLOR_TEXTURES) | {
         p["name"] for key, params in OFFICIAL_SHADERS.items() if key[1] == SHADER_PROFILE_V2
         for p in params if p["type"] == "TEXTURE" and p["name"].endswith("_texture")
+        and not p["name"].endswith(("_metallic_texture", "_roughness_texture"))
     }
 )
 

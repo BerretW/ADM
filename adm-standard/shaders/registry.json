@@ -5520,6 +5520,254 @@
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
+    },
+    {
+      "id": "adm.surface.two_layer",
+      "version": "1.0.0",
+      "parameters": [
+        {
+          "name": "layer0_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 0."
+        },
+        {
+          "name": "layer1_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 1."
+        },
+        {
+          "name": "layer0_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer1_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer0_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 0."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 1."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 0."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 1."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 roughness texture channel."
+        },
+        {
+          "name": "layer0_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer1_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer0_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 0."
+        },
+        {
+          "name": "layer1_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 1."
+        },
+        {
+          "name": "blend_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear red channel blends layer 0 (black) into layer 1 (white)."
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Per-layer UV tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001,
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0,
+            1000.0,
+            1000.0
+          ]
+        }
+      ],
+      "contract": "adm.surface.two_layer.v1.md"
     }
   ]
 }

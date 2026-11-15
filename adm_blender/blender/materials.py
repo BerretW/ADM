@@ -70,7 +70,7 @@ def _color_inputs(node):
     return [s for s in node.inputs if s.name in ("A", "B", "Color1", "Color2") and s.type == "RGBA" and s.enabled]
 
 
-def trace(socket):
+def trace(socket, allow_invert=False):
     """Walk back from an input socket to an Image Texture node.
 
     Returns None (unlinked), or a dict with ``node`` (TEX_IMAGE or None if unsupported), ``channel``
@@ -79,7 +79,8 @@ def trace(socket):
     s = _from(socket)
     if s is None:
         return None
-    info = {"node": None, "channel": None, "factor": 1.0, "clip": None, "unsupported": None}
+    info = {"node": None, "channel": None, "factor": 1.0, "clip": None, "unsupported": None,
+            "invert": False}
     guard = 0
     while s is not None and guard < 16:
         guard += 1
@@ -93,6 +94,12 @@ def trace(socket):
             info["channel"] = {"Red": "R", "Green": "G", "Blue": "B", "R": "R", "G": "G", "B": "B"}.get(s.name)
             s = _from(n.inputs[0])
             continue
+        if allow_invert and n.type == "MATH" and n.operation == "SUBTRACT":
+            a, b = n.inputs[0], n.inputs[1]
+            if not a.is_linked and abs(a.default_value - 1.0) < 1e-6 and b.is_linked:
+                info["invert"] = not info["invert"]
+                s = _from(b)
+                continue
         if n.type == "MATH" and n.operation in ("MULTIPLY", "GREATER_THAN", "ROUND"):
             a, b = n.inputs[0], n.inputs[1]
             if n.operation == "GREATER_THAN":
@@ -103,6 +110,9 @@ def trace(socket):
                 info["clip"] = 0.5
                 s = _from(a)
                 continue
+            if info["invert"]:
+                info["unsupported"] = n
+                return info
             if a.is_linked and not b.is_linked:
                 info["factor"] = info["factor"] * float(b.default_value)
                 s = _from(a)
@@ -416,7 +426,8 @@ class MaterialExporter:
     def texture_composite_mr(self, rough, metal, name):
         """Pack roughness->G and metallic->B into one generated image."""
         key = ("mr", id(rough["node"]) if rough else 0, rough["channel"] if rough else None,
-               id(metal["node"]) if metal else 0, metal["channel"] if metal else None)
+               rough["invert"] if rough else False, id(metal["node"]) if metal else 0,
+               metal["channel"] if metal else None, metal["invert"] if metal else False)
         entry = self._img_cache.get(key)
         if entry is None:
             srcs = [t for t in (rough, metal) if t]
@@ -426,9 +437,11 @@ class MaterialExporter:
             out = np.ones((h, w, 4), dtype=np.float32)
             chan = {"R": 0, "G": 1, "B": 2, "A": 3, None: 0}
             if rough:
-                out[..., 1] = _resize_nearest(arrays[0], h, w)[..., chan[rough["channel"]]]
+                values = _resize_nearest(arrays[0], h, w)[..., chan[rough["channel"]]]
+                out[..., 1] = 1.0 - values if rough["invert"] else values
             if metal:
-                out[..., 2] = _resize_nearest(arrays[-1], h, w)[..., chan[metal["channel"]]]
+                values = _resize_nearest(arrays[-1], h, w)[..., chan[metal["channel"]]]
+                out[..., 2] = 1.0 - values if metal["invert"] else values
             entry = self._add_image(key, name + "_metallicRoughness", pixels=out)
         node = (rough or metal)["node"]
         return self._texture(entry, self._sampler(node))
@@ -684,8 +697,8 @@ class MaterialExporter:
             out["baseColorFactor"] = bcf
 
         # metallic / roughness
-        mt = trace(bsdf.inputs["Metallic"])
-        rt = trace(bsdf.inputs["Roughness"])
+        mt = trace(bsdf.inputs["Metallic"], allow_invert=True)
+        rt = trace(bsdf.inputs["Roughness"], allow_invert=True)
         metallic = float(bsdf.inputs["Metallic"].default_value) if mt is None else float(_scalar(mt["factor"]))
         rough = float(bsdf.inputs["Roughness"].default_value) if rt is None else float(_scalar(rt["factor"]))
         mt = mt if mt and mt["node"] is not None and mt["node"].image else None
@@ -697,8 +710,10 @@ class MaterialExporter:
                 if metal_ref.get("texCoord", 0) != rough_ref.get("texCoord", 0):
                     raise ShaderExportError(f"interactive material '{interactive}': metallic and roughness "
                                             "textures use different UV sets")
-            same = (mt and rt and mt["node"].image == rt["node"].image and mt["channel"] == "B" and rt["channel"] == "G")
-            only_ok = (not mt and rt["channel"] == "G") or (not rt and mt["channel"] == "B")
+            same = (mt and rt and mt["node"].image == rt["node"].image and mt["channel"] == "B"
+                    and rt["channel"] == "G" and not mt["invert"] and not rt["invert"])
+            only_ok = ((not mt and rt["channel"] == "G" and not rt["invert"])
+                       or (not rt and mt["channel"] == "B" and not mt["invert"]))
             if same or only_ok:
                 node = (rt or mt)["node"]
                 ti = self.texture_from_node(node, False)
@@ -1046,8 +1061,11 @@ def _apply_shader(mat, m, scene, resolve_image):
             if v is not None and prm is not None:
                 v.use = True
                 _apply_shader_value(v, prm["type"], val, resolve_image)
-                if key[0] == K.SHADER_TERRAIN_4[0] and name.endswith(
-                        ("_metallic_texture", "_roughness_texture")) and v.image is not None:
+                if v.image is not None and (
+                        (key[0] == K.SHADER_TERRAIN_4[0] and name.endswith(
+                            ("_metallic_texture", "_roughness_texture")))
+                        or (key == K.SHADER_TWO_LAYER and prm["type"] == "TEXTURE"
+                            and name not in K.SHADER_COLOR_TEXTURES)):
                     v.image.colorspace_settings.name = "Non-Color"
     else:
         a.shader = "CUSTOM"
@@ -1333,7 +1351,7 @@ def slot_state(mat, slot):
         sock = bsdf.inputs[name]
         if not sock.is_linked:
             continue
-        t = trace(sock)
+        t = trace(sock, allow_invert=slot == "METALLIC_ROUGHNESS")
         if t is not None and t["node"] is not None:
             return "TEXTURE", t["node"]
         custom = True
@@ -1343,6 +1361,56 @@ def slot_state(mat, slot):
 def slot_texture_node(mat, slot):
     state, node = slot_state(mat, slot)
     return node if state == "TEXTURE" else None
+
+
+def pbr_channel_settings(mat, target):
+    bsdf = principled_of(mat)
+    if bsdf is None:
+        return None
+    info = trace(bsdf.inputs[target], allow_invert=True)
+    return info if info and info["node"] is not None and not info["unsupported"] else None
+
+
+def set_pbr_channel(mat, target, channel, invert):
+    info = pbr_channel_settings(mat, target)
+    if info is None:
+        return
+    nt = mat.node_tree
+    bsdf = principled_of(mat)
+    socket = bsdf.inputs[target]
+    texture = info["node"]
+    old = _chain_nodes(socket, texture) - {texture}
+    for link in list(socket.links):
+        nt.links.remove(link)
+    if channel == "A":
+        source = texture.outputs["Alpha"]
+    else:
+        sep = nt.nodes.new("ShaderNodeSeparateColor")
+        sep.location = (texture.location.x + 320, texture.location.y)
+        nt.links.new(texture.outputs["Color"], sep.inputs[0])
+        source = sep.outputs[{"R": "Red", "G": "Green", "B": "Blue"}[channel]]
+    if invert:
+        inverse = nt.nodes.new("ShaderNodeMath")
+        inverse.operation = "SUBTRACT"
+        inverse.inputs[0].default_value = 1.0
+        nt.links.new(source, inverse.inputs[1])
+        source = inverse.outputs[0]
+    factor = float(_scalar(info["factor"]))
+    if abs(factor - 1.0) > 1e-6:
+        mul = nt.nodes.new("ShaderNodeMath")
+        mul.operation = "MULTIPLY"
+        mul.inputs[1].default_value = factor
+        nt.links.new(source, mul.inputs[0])
+        source = mul.outputs[0]
+    nt.links.new(source, socket)
+    while old:
+        unused = [n for n in old if not any(o.is_linked for o in n.outputs)]
+        if not unused:
+            break
+        for n in unused:
+            old.remove(n)
+            nt.nodes.remove(n)
+    _refresh_existing_preview(mat)
 
 
 def _slot_sockets(mat, slot):
@@ -1518,7 +1586,7 @@ def clear_slot(mat, slot):
     doomed = {node}
     for name in _SLOT_INPUTS[slot]:
         sock = bsdf.inputs[name]
-        t = trace(sock)
+        t = trace(sock, allow_invert=slot == "METALLIC_ROUGHNESS")
         if t is None or t["node"] != node:
             continue
         doomed |= _chain_nodes(sock, node)
