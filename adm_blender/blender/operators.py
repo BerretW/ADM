@@ -1,8 +1,10 @@
 """ADM tool operators (Sollumz-style create / convert / setup tools)."""
 
+import math
 import re
 
 import bpy
+import numpy as np
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from mathutils import Matrix, Vector
 
@@ -10,7 +12,7 @@ from ..core import constants as K
 from ..core.validate import PARAM_NAME_RE, validate_file
 from . import props as P
 from .colliders import new_collider_object, refresh_collider_mesh, style_collider_object
-from .export_adm import ExportError, ExportOptions, ModelExporter, compute_rig_id, find_model_root
+from .export_adm import ExportError, ModelExporter, compute_rig_id, default_export_options, find_model_root
 from .materials import convert_to_adm_material
 
 
@@ -563,6 +565,127 @@ class ADM_OT_convert_materials(bpy.types.Operator):
                 mat.adm.vertex_controls_enabled = True
             sync_control_meshes(explicit=targets)
         self.report({"INFO"}, f"converted {n} of {len(mats)} material(s) (others were already ADM-ready)")
+        return {"FINISHED"}
+
+
+class ADM_OT_terrain_guide(bpy.types.Operator):
+    """Show the steps for preparing a terrain mesh and layer mask"""
+    bl_idname = "adm.terrain_guide"
+    bl_label = "Terrain Setup Guide"
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=440)
+
+    def draw(self, context):
+        for text in (
+            "1. Create a grid and unwrap it to a UV map.",
+            "2. Displace its vertices using a Non-Color heightmap.",
+            "3. Paint an RGBA mask: R/G/B/A select layers 0/1/2/3.",
+            "4. Assign the mask, UV tiling and layer textures below.",
+            "Or use Create Terrain from Heightmap in ADM Tools > Create.",
+        ):
+            self.layout.label(text=text)
+
+    def execute(self, context):
+        return {"FINISHED"}
+
+
+class ADM_OT_create_terrain_heightmap(bpy.types.Operator):
+    """Create an editable terrain mesh from a loaded linear heightmap"""
+    bl_idname = "adm.create_terrain_heightmap"
+    bl_label = "Create Terrain from Heightmap"
+    bl_options = {"REGISTER", "UNDO"}
+
+    image_name: StringProperty(name="Heightmap")
+    width_m: FloatProperty(name="Width (m)", default=0.0, min=0.0)
+    depth_m: FloatProperty(name="Depth (m)", default=0.0, min=0.0)
+    min_height_m: FloatProperty(name="Minimum height (m)", default=0.0)
+    max_height_m: FloatProperty(name="Maximum height (m)", default=1.0)
+    samples_x: IntProperty(name="Samples X", default=193, min=2, max=513)
+    samples_y: IntProperty(name="Samples Y", default=193, min=2, max=513)
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT"
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop_search(self, "image_name", bpy.data, "images", text="Heightmap")
+        layout.label(text="Load a heightmap in Blender and set it to Non-Color", icon="INFO")
+        for name in ("width_m", "depth_m", "min_height_m", "max_height_m", "samples_x", "samples_y"):
+            layout.prop(self, name)
+        layout.label(text=f"Triangles: {2 * (self.samples_x - 1) * (self.samples_y - 1):,}")
+        if self.width_m <= 0 or self.depth_m <= 0:
+            layout.label(text="Enter the real-world width and depth", icon="ERROR")
+
+    def execute(self, context):
+        image = bpy.data.images.get(self.image_name)
+        if image is None or not image.has_data:
+            self.report({"ERROR"}, "Choose a loaded heightmap image")
+            return {"CANCELLED"}
+        width, height = image.size
+        if width < 2 or height < 2 or width * height > 16_777_216:
+            self.report({"ERROR"}, "Heightmap must be at least 2 x 2 and at most 16,777,216 pixels")
+            return {"CANCELLED"}
+        if not image.colorspace_settings.is_data:
+            self.report({"ERROR"}, "Set the heightmap image color space to Non-Color")
+            return {"CANCELLED"}
+        if not all(math.isfinite(value) for value in (self.width_m, self.depth_m,
+                                                        self.min_height_m, self.max_height_m)) \
+                or self.width_m <= 0 or self.depth_m <= 0 or self.max_height_m < self.min_height_m:
+            self.report({"ERROR"}, "Enter positive width and depth and a valid height range")
+            return {"CANCELLED"}
+        unit = context.scene.unit_settings.scale_length
+        if unit <= 0:
+            self.report({"ERROR"}, "Scene unit scale must be positive")
+            return {"CANCELLED"}
+
+        pixels = np.empty(width * height * 4, dtype=np.float32)
+        image.pixels.foreach_get(pixels)
+        heights = pixels.reshape(height, width, 4)[:, :, 0]
+        if not np.isfinite(heights).all() or np.any(heights < 0) or np.any(heights > 1):
+            self.report({"ERROR"}, "Heightmap values must be finite and between 0 and 1")
+            return {"CANCELLED"}
+        x = np.linspace(0, width - 1, self.samples_x)
+        y = np.linspace(0, height - 1, self.samples_y)
+        x0, y0 = x.astype(np.int32), y.astype(np.int32)
+        x1, y1 = np.minimum(x0 + 1, width - 1), np.minimum(y0 + 1, height - 1)
+        fx, fy = (x - x0)[None, :], (y - y0)[:, None]
+        z = ((1 - fy) * ((1 - fx) * heights[np.ix_(y0, x0)] + fx * heights[np.ix_(y0, x1)])
+             + fy * ((1 - fx) * heights[np.ix_(y1, x0)] + fx * heights[np.ix_(y1, x1)]))
+        u, v = np.meshgrid(np.linspace(0, 1, self.samples_x), np.linspace(0, 1, self.samples_y))
+        coords = np.column_stack(((u.ravel() - 0.5) * self.width_m / unit,
+                                  (v.ravel() - 0.5) * self.depth_m / unit,
+                                  (self.min_height_m + z.ravel()
+                                   * (self.max_height_m - self.min_height_m)) / unit))
+        indices = np.arange(self.samples_x * self.samples_y).reshape(self.samples_y, self.samples_x)
+        faces = np.column_stack((indices[:-1, :-1].ravel(), indices[:-1, 1:].ravel(),
+                                 indices[1:, 1:].ravel(), indices[1:, :-1].ravel()))
+        mesh = bpy.data.meshes.new("ADM Terrain")
+        mesh.from_pydata(coords.tolist(), [], faces.tolist())
+        uv = mesh.uv_layers.new(name="UVMap")
+        loop_indices = np.empty(len(mesh.loops), dtype=np.int32)
+        mesh.loops.foreach_get("vertex_index", loop_indices)
+        uv.uv.foreach_set("vector", np.column_stack((u.ravel(), v.ravel()))[loop_indices].ravel())
+        mesh.update()
+        obj = bpy.data.objects.new("ADM Terrain", mesh)
+        link_to_active_collection(context, obj)
+        obj.matrix_world = Matrix.Translation(context.scene.cursor.location)
+        root = active_root(context)
+        if root is not None:
+            parent_keep_transform(obj, root)
+        mat = bpy.data.materials.new("ADM Terrain")
+        mat.use_nodes = True
+        mat.adm.shader = "TERRAIN_4"
+        from .materials import unique_animation_id
+        taken = {m.adm.animation_id.strip() for m in bpy.data.materials if m != mat} - {""}
+        mat.adm.animation_id = unique_animation_id(mat.name, taken)
+        mesh.materials.append(mat)
+        make_active(context, obj)
+        self.report({"INFO"}, f"Created terrain with {len(faces) * 2:,} triangles")
         return {"FINISHED"}
 
 
@@ -1401,6 +1524,30 @@ class ADM_OT_material_key_param(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ADM_OT_material_set_map_factor(bpy.types.Operator):
+    """Set a scalar map's factor to one so the map has its full effect"""
+    bl_idname = "adm.material_set_map_factor"
+    bl_label = "Set Factor to 1"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: StringProperty()
+
+    def execute(self, context):
+        mat = _active_material(context)
+        if mat is None or mat.adm.shader == "CUSTOM" or not self.name.endswith(("_metallic", "_roughness")):
+            self.report({"ERROR"}, "Select an official material map factor")
+            return {"CANCELLED"}
+        from .materials import scene_shader_registry
+        schema = scene_shader_registry(context.scene).get(mat.adm.shader_key(), {})
+        factor = mat.adm.params.get(self.name)
+        if factor is None or schema.get(self.name, {}).get("type") != "F32" \
+                or schema.get(self.name + "_texture", {}).get("type") != "TEXTURE":
+            self.report({"ERROR"}, f"Map factor '{self.name}' is unavailable; sync parameters first")
+            return {"CANCELLED"}
+        factor.value_f = 1.0
+        return {"FINISHED"}
+
+
 # --------------------------------------------------------------------------------------------------
 # validation
 # --------------------------------------------------------------------------------------------------
@@ -1411,8 +1558,9 @@ class ADM_OT_validate_model(bpy.types.Operator):
 
     def execute(self, context):
         root = active_root(context)
-        exp = ModelExporter(context, root, ExportOptions())
-        title = f"Model: {root.name if root else 'Scene'}"
+        selected = root is None and bool(context.selected_objects)
+        exp = ModelExporter(context, root, default_export_options(context, root, selected))
+        title = f"Model: {root.name if root else 'Selected Objects' if selected else 'Scene'}"
         try:
             _data, report = exp.export()
         except ExportError as exc:
@@ -1497,6 +1645,7 @@ CLASSES = (
     ADM_OT_material_texture_open, ADM_OT_material_texture_clear, ADM_OT_material_texture_adopt,
     ADM_OT_material_texture_uv,
     ADM_OT_material_texture_alpha,
-    ADM_OT_material_link_clip, ADM_OT_material_key_param,
+    ADM_OT_material_link_clip, ADM_OT_material_key_param, ADM_OT_material_set_map_factor,
+    ADM_OT_create_terrain_heightmap, ADM_OT_terrain_guide,
     ADM_OT_validate_model, ADM_OT_validate_library, ADM_OT_validate_file, ADM_OT_clear_report,
 )

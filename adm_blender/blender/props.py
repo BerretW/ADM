@@ -348,6 +348,8 @@ def _param_image_update(self, context):
             self.image.colorspace_settings.name = "Non-Color"
         except TypeError:
             pass
+        if self.id_data.adm.shader == "TERRAIN_4" and self.name == "blend_mask":
+            self.image.alpha_mode = "CHANNEL_PACKED"
     if self.image is not None and not self.use:
         self.use = True
     else:

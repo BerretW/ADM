@@ -525,6 +525,7 @@ class ADM_PT_tools(_Side, bpy.types.Panel):
         col = box.column(align=True)
         col.operator("adm.create_model_root", icon="OUTLINER_OB_EMPTY")
         col.operator("adm.create_scene", icon="SCENE_DATA")
+        col.operator("adm.create_terrain_heightmap", icon="MESH_GRID")
         row = col.row(align=True)
         row.operator("adm.create_collider", icon="MESH_ICOSPHERE")
         row.prop(wm, "collider_shape", text="")
@@ -1082,7 +1083,7 @@ PROFILE_HINTS = {
     "BARK": ("uv_scale tiles every bark texture. moss_mask red × moss_amount darkens to 45 %.",),
     "ROCK": ("detail_texture/detail_normal: object-space triplanar (no UVs needed),",
              "frequency = triplanar_scale × detail_scale. moss_mask (UV) darkens to 40 %."),
-    "TERRAIN_4": ("blend_mask RGBA = weights of layers 0-3 (normalized; empty mask = layer 0).",
+    "TERRAIN_4": ("blend_mask RGBA = weights of layers 0-3 (normalized).",
                   "Set layer0_texture below; the PBR Base Color is only a fallback.",
                   "Metallic/roughness maps multiply their layer factors; use metallic 1 for full map."),
     "TWO_LAYER": ("blend_mask red: black = layer 0, white = layer 1; absent = layer 0.",
@@ -1183,8 +1184,40 @@ def _draw_shader_params(layout, p, params):
             if prm.get("type") == "TEXTURE":
                 _draw_shader_texture(layout, p, v, prm, label,
                                      name[:-len("_texture")] + "_channel" in paired_options)
+                if prefix and name.endswith(("_metallic_texture", "_roughness_texture")):
+                    factor_name = name[:-len("_texture")]
+                    factor = available.get(factor_name)
+                    default = params.get(factor_name, {}).get("default")
+                    if factor is not None and v.use and v.image is not None \
+                            and (factor.value_f if factor.use else default) == 0:
+                        warning = layout.row(align=True)
+                        warning.label(text="Map has zero effect", icon="ERROR")
+                        warning.operator("adm.material_set_map_factor", text="Set Factor to 1").name = factor_name
             else:
                 _draw_param_row(layout, v, prm, prm.get("type"), label)
+
+    if p.shader in ("TERRAIN_4", "TWO_LAYER") and any(name in available for name in ("blend_mask", "uv_scale")):
+        header, body = layout.panel("adm_shader_blend_tiling", default_closed=False)
+        header.label(text="Blend & Tiling")
+        if body is not None:
+            if "blend_mask" in available:
+                body.label(text=("RGBA: R/G/B/A = Layers 0/1/2/3" if p.shader == "TERRAIN_4"
+                                 else "Red: black = Layer 0; white = Layer 1"))
+                if p.shader == "TERRAIN_4" and p.shader_version == K.SHADER_PROFILE_V2:
+                    body.label(text="Mask multiplies COLOR_1; zero weights select Layer 0", icon="INFO")
+                else:
+                    body.label(text="No mask: Layer 0", icon="INFO")
+                _draw_shader_texture(body, p, available["blend_mask"], params["blend_mask"], "Blend mask")
+            if "uv_scale" in available:
+                scale = available["uv_scale"]
+                row = body.row(align=True)
+                row.prop(scale, "use", text="")
+                row.label(text="UV tiling")
+                for i in range(4 if p.shader == "TERRAIN_4" else 2):
+                    row = body.row(align=True)
+                    row.active = scale.use
+                    row.prop(scale, "value_vec", index=i, text=f"Layer {i}")
+        remaining = [name for name in remaining if name not in ("blend_mask", "uv_scale")]
 
     if groups:
         layout.label(text="Shader layers and effects", icon="TEXTURE")
@@ -1276,6 +1309,7 @@ def draw_material(lay, context, mat):
         for line in PROFILE_HINTS.get(p.shader, ()):
             col.label(text=line)
         if p.shader == "TERRAIN_4":
+            col.operator("adm.terrain_guide", icon="INFO")
             col.operator("adm.material_terrain_from_pbr", icon="IMPORT")
         col.operator("adm.material_refresh_preview", icon="FILE_REFRESH")
     if p.shader == "CUSTOM":

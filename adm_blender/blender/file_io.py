@@ -6,7 +6,7 @@ import bpy
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .export_adm import ExportError, ExportOptions, export_model, find_model_root
+from .export_adm import ExportError, ExportOptions, default_export_options, export_model, find_model_root
 from .import_adm import ImportError_, ImportOptions, import_model
 from .operators import active_armature, show_report
 
@@ -61,6 +61,26 @@ class ADM_OT_import(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
+def _update_export_scope(self, context):
+    if self.get("_vertex_controls_manual", False):
+        return
+    root = find_model_root(context.active_object) if context.active_object else None
+    if self.scope == "ALL_ROOTS":
+        enabled = any(default_export_options(context, obj).vertex_controls
+                      for obj in context.view_layer.objects if obj.adm.adm_type == "MODEL")
+    else:
+        enabled = default_export_options(context, root if self.scope == "ROOT" else None,
+                                         self.scope == "SELECTED").vertex_controls
+    self["_setting_vertex_controls"] = True
+    self.vertex_controls = enabled
+    self["_setting_vertex_controls"] = False
+
+
+def _update_export_vertex_controls(self, context):
+    if not self.get("_setting_vertex_controls", False):
+        self["_vertex_controls_manual"] = True
+
+
 class ADM_OT_export(bpy.types.Operator, ExportHelper):
     """Export an ADM 1.0 model (.adm). Uses the Model Root of the active object when there is one"""
     bl_idname = "export_scene.adm"
@@ -74,7 +94,7 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
         ("ROOT", "Active Model Root", "The Model Root containing the active object"),
         ("ALL_ROOTS", "All Model Roots", "Every Model Root in the view layer, one file per root (named after it)"),
         ("SELECTED", "Selected Objects", "Selection as one scene (no Model Root needed)"),
-        ("SCENE", "Visible Scene", "Whole view layer as one scene")])
+        ("SCENE", "Visible Scene", "Whole view layer as one scene")], update=_update_export_scope)
     apply_modifiers: BoolProperty(name="Apply Modifiers", default=True)
     export_normals: BoolProperty(name="Normals", default=True)
     export_tangents: EnumProperty(name="Tangents", default="AUTO", items=[
@@ -86,7 +106,7 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
     embed_textures: BoolProperty(name="Embed Textures", default=True,
                                  description="Store images inside the ADM. When disabled, write safe relative "
                                              "references and copy images under textures/")
-    vertex_controls: BoolProperty(name="ADM Vertex Controls", default=False,
+    vertex_controls: BoolProperty(name="ADM Vertex Controls", default=False, update=_update_export_vertex_controls,
                                   description="Use ADM_vertex_control_v1 semantics for COLOR_0 and COLOR_1; "
                                               "required to export authored COLOR_1 masks for 2.0.0 profiles")
     image_format: EnumProperty(name="Images", default="PNG", items=[
@@ -106,23 +126,14 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
                               description="Store a full mip chain in the KTX2/DDS image")
 
     def invoke(self, context, event):
+        explicit_vertex_controls = self.properties.is_property_set("vertex_controls")
         root = find_model_root(context.active_object) if context.active_object else None
         if root is not None:
             self.filepath = bpy.path.clean_name(root.name) + self.filename_ext
-        elif not any(o.adm.adm_type == "MODEL" for o in context.view_layer.objects):
+        elif not self.properties.is_property_set("scope"):
             self.scope = "SELECTED" if context.selected_objects else "SCENE"
-        if not self.properties.is_property_set("vertex_controls"):
-            objects = ((root, *root.children_recursive) if root is not None and self.scope == "ROOT"
-                       else context.selected_objects if self.scope == "SELECTED" else context.view_layer.objects)
-            self.vertex_controls = any(
-                obj.type == "MESH" and obj.adm.adm_type != "COLLIDER"
-                and (
-                    obj.data.color_attributes.get("COLOR_1") is not None
-                    or any(slot.material is not None and slot.material.adm.vertex_controls_enabled
-                           for slot in obj.material_slots)
-                )
-                for obj in objects
-            )
+        if not explicit_vertex_controls:
+            _update_export_scope(self, context)
         return super().invoke(context, event)
 
     def draw(self, context):

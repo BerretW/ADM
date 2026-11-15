@@ -99,6 +99,9 @@ the actual Blender color attributes, not a separate color system.
   The export dialog preselects vertex controls when its scope contains enabled materials or a
   `COLOR_1` attribute unless an explicit setting/preset overrides it. Exporting an authored v2
   `COLOR_1` with that option disabled is rejected rather than silently dropping or reinterpreting it.
+  **Validate Model** uses the same automatic default and object scope as the default export: the
+  active model root, or selected objects when no root is active, otherwise the visible scene.
+  Changing the export scope updates the automatic choice until the checkbox is explicitly edited.
   Scripted exports must pass `vertex_controls=True` to include the masks.
 
 ### ADM Skeleton & Animation panel
@@ -193,6 +196,28 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   section to edit it; other profile parameters remain in the texture and value sections below.
   Each checkbox still controls its individual override, and metallic/roughness channel and inversion
   controls belong to the texture directly above them.
+- Terrain Four Layer and PBR Two Layer put their blend mask, its UV set and per-layer tiling above
+  the layers in **Blend & Tiling**. Terrain uses R/G/B/A for layers 0/1/2/3; Two Layer uses red
+  (black = layer 0, white = layer 1). Without a mask, layer 0 is selected except in Terrain 2.0,
+  which uses the `COLOR_1` weights; a mask multiplies those weights and a zero total selects layer 0.
+  Assigning a terrain mask
+  sets its image datablock to **Non-Color** and **Channel Packed**; this affects all uses of that image.
+  An enabled metallic or roughness map with a zero effective factor displays a warning and
+  **Set Factor to 1**. The button changes the factor only when clicked.
+
+### Terrain from a heightmap
+
+1. Load a heightmap in Blender's Image Editor and set its color space to **Non-Color**. The operator
+   samples the red channel as linear values from 0 to 1; 16-bit grayscale images are supported.
+2. In Object Mode choose **ADM Tools › Create › Create Terrain from Heightmap**. Select the loaded
+   image, enter its real-world width and depth in metres, and set the minimum and maximum elevations
+   in metres. The source image does not supply these dimensions.
+3. Choose samples in X and Y; the dialog shows the resulting triangle count. The mesh is an editable
+   grid with UVs and a Terrain Four Layer material. Heights are baked into the vertices. Sample counts
+   are limited to 513 per axis and source images to 16,777,216 pixels.
+4. Assign the four layer textures and a painted or generated RGBA weight mask under **Blend & Tiling**.
+   The operator does not infer a blend mask from height or slope. For an existing mesh, create a grid
+   and UV map, apply a height displacement to its geometry, then assign the same shader and mask.
 
 ### Shader profile previews
 
@@ -204,7 +229,7 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   default applies. Editing a value enables Override automatically. Overridden numbers are connected
   through drivers, so they update live and can be keyframed. **Refresh Preview** rebuilds the nodes.
 - Terrain Four Layer uses its own `layer0_texture` through `layer3_texture` parameters, not the
-  portable PBR Base Color texture. Without a blend mask, layer 0 is visible. Assign `layer0_texture`
+  portable PBR Base Color texture. In version 1.0, layer 0 is visible without a blend mask. Assign `layer0_texture`
   under **Layer 0**, or click **Use PBR Base Color for Layer 0** to copy the
   existing PBR image and UV set. This changes layer 0 only and preserves the PBR fallback. When a
   material is shared, use the same second UV map name on its meshes for a consistent preview.
@@ -223,7 +248,7 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   Each layer provides albedo, normal, metallic and roughness textures, plus independent channel and
   inversion controls for metallic and roughness. The profile uses a portable PBR fallback in readers
   that do not support it; it does not require vertex colors.
-- Masks are grayscale Non-Color images; the red channel is read. Example for Brick: in `mortar_mask`,
+- Profile-specific grayscale masks use Non-Color images and read the red channel. Example for Brick: in `mortar_mask`,
   white = mortar joint and black = brick face. It is sampled at UV × `uv_scale`, like the base texture.
   `dirt_mask` darkens the color to 35 % where it is white. **Generate Mortar Mask** creates a packed
   running-bond mask (rows, columns, joint width, offset).

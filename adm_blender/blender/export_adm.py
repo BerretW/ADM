@@ -25,7 +25,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.18.7 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.18.8 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -82,6 +82,39 @@ def find_model_root(obj):
             return o
         o = o.parent
     return None
+
+
+def export_objects(context, root=None, selected_only=False):
+    """Return the objects in the same scope used by the exporter."""
+    if root is not None:
+        objects = []
+        stack = list(root.children)
+        while stack:
+            obj = stack.pop()
+            if obj.adm.export_exclude:
+                continue
+            objects.append(obj)
+            stack.extend(obj.children)
+        return objects
+    objects = []
+    for obj in context.view_layer.objects:
+        parent = obj
+        while parent is not None and not parent.adm.export_exclude:
+            parent = parent.parent
+        if parent is None and (not selected_only or obj.select_get()):
+            objects.append(obj)
+    return objects
+
+
+def default_export_options(context, root=None, selected_only=False):
+    objects = export_objects(context, root, selected_only)
+    vertex_controls = any(
+        obj.type == "MESH" and obj.adm.adm_type != "COLLIDER"
+        and (obj.data.color_attributes.get("COLOR_1") is not None
+             or any(slot.material is not None and slot.material.adm.vertex_controls_enabled
+                    for slot in obj.material_slots))
+        for obj in objects)
+    return ExportOptions(selected_only=selected_only, vertex_controls=vertex_controls)
 
 
 class RestPose:
@@ -174,32 +207,7 @@ class ModelExporter:
     # phase 1: node graph
     # ---------------------------------------------------------------------------------------------
     def _allowed_objects(self):
-        vl_objs = list(self.context.view_layer.objects)
-        names = set()
-
-        def excluded(o):
-            while o is not None:
-                if o.adm.export_exclude:
-                    return True
-                o = o.parent
-            return False
-
-        if self.root is not None:
-            stack = list(self.root.children)
-            while stack:
-                o = stack.pop()
-                if o.adm.export_exclude:
-                    continue
-                names.add(o.name)
-                stack.extend(o.children)
-            return names
-        for o in vl_objs:
-            if excluded(o):
-                continue
-            if self.opts.selected_only and not o.select_get():
-                continue
-            names.add(o.name)
-        return names
+        return {obj.name for obj in export_objects(self.context, self.root, self.opts.selected_only)}
 
     def _children(self, obj):
         return sorted((c for c in obj.children if c.name in self.allowed), key=lambda o: o.name)
@@ -489,6 +497,14 @@ class ModelExporter:
                 uvs.append(uvs[0].copy())
         for uv in uvs:
             columns.append(uv[tri_loops])
+        if not collision and not self.opts.vertex_controls and me.color_attributes.get("COLOR_1") is not None:
+            v2_materials = [slot.material for slot in obj.material_slots if slot.material is not None
+                            and slot.material.adm.shader_version == K.SHADER_PROFILE_V2]
+            if v2_materials:
+                names = ", ".join(sorted({material.name for material in v2_materials}))
+                raise ExportError(
+                    f"'{obj.name}': COLOR_1 masks for {names} require the ADM Vertex Controls "
+                    "export option (ADM Tools > Files > Export > Material > ADM Vertex Controls)")
         colors = None
         colors1 = None
         if not collision and self.opts.export_colors:
@@ -503,15 +519,6 @@ class ModelExporter:
             else:
                 ca1 = me.color_attributes.get("COLOR_1")
                 if ca1 is not None:
-                    v2_materials = [
-                        slot.material for slot in obj.material_slots if slot.material is not None
-                        and slot.material.adm.shader_version == K.SHADER_PROFILE_V2
-                    ]
-                    if v2_materials:
-                        names = ", ".join(sorted({material.name for material in v2_materials}))
-                        raise ExportError(
-                            f"'{obj.name}': COLOR_1 masks for {names} require the ADM Vertex Controls "
-                            "export option")
                     self.warn(f"'{obj.name}': COLOR_1 was not exported because ADM Vertex Controls "
                               "are disabled")
                 ca1 = None

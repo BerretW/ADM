@@ -5,6 +5,7 @@ unaffected, and bakes Brick / Terrain with Cycles to verify the node math agains
 """
 import os
 import sys
+import tempfile
 import traceback
 
 import numpy as np
@@ -118,6 +119,7 @@ def main():
     from adm_blender.blender import materials as M
     from adm_blender.blender import shader_preview as SP
     from adm_blender.blender.export_adm import ExportOptions, ModelExporter
+    from adm_blender.blender.import_adm import ImportOptions, import_model
 
     bpy.ops.wm.read_homefile(use_empty=True)
     scene = bpy.context.scene
@@ -374,6 +376,51 @@ def main():
     alb = bake(plane, mat, "DIFFUSE")
     check(close(alb[8, 3, :3], (0.1, 0.9, 0.1)), f"TERRAIN_4: one-hot G selects layer 1 ({alb[8, 3, :3]})")
     check(close(alb[8, 12, :3], (0.9, 0.1, 0.1)), f"TERRAIN_4: zero mask falls back to layer 0 ({alb[8, 12, :3]})")
+    color0 = plane.data.color_attributes.get("COLOR_0")
+    if color0 is not None:
+        color0.data.foreach_set("color", np.tile((0.0, 1.0, 1.0, 0.0), len(color0.data)).ravel())
+        plane.data.update()
+    layer_colors = ((0.9, 0.1, 0.1), (0.1, 0.9, 0.1), (0.1, 0.1, 0.9), (0.5, 0.5, 0.1))
+    for i, expected in enumerate(layer_colors):
+        rgba = tuple(float(n == i) for n in range(4))
+        one_hot = image(f"one_hot_layer_{i}", lambda x, y, rgba=rgba: rgba)
+        set_param(mat, "blend_mask", one_hot)
+        check(one_hot.colorspace_settings.name == "Non-Color" and one_hot.alpha_mode == "CHANNEL_PACKED",
+              f"TERRAIN_4: channel {i} mask uses linear packed channels")
+        alb = bake(plane, mat, "DIFFUSE")
+        check(close(alb[8, 8, :3], expected), f"TERRAIN_4: channel {i} selects layer {i}")
+        data, report = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True)).export()
+        check(report.ok and "blend_mask" in report.doc["materials"][0]["shaderParameters"],
+              f"TERRAIN_4: channel {i} mask exports")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "one_hot.adm")
+            with open(path, "wb") as stream:
+                stream.write(data)
+            _, imported_root = import_model(bpy.context, path, ImportOptions())
+            imported = next(obj for obj in imported_root.children_recursive if obj.type == "MESH")
+            imported_mat = imported.active_material
+            imported_mask = imported_mat.adm.params["blend_mask"].image
+            check(imported_mask.colorspace_settings.name == "Non-Color"
+                  and imported_mask.alpha_mode == "CHANNEL_PACKED",
+                  f"TERRAIN_4: imported channel {i} mask remains linear and packed")
+            imported_bsdf = preview_bsdf(imported_mat, M)
+            imported_color = bake_socket(imported, imported_mat,
+                                         imported_bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+            check(close(imported_color, expected),
+                  f"TERRAIN_4: exported channel {i} selects layer {i} ({imported_color})")
+
+    set_param(mat, "blend_mask", image("metal_layer_0", lambda x, y: (1.0, 0.0, 0.0, 0.0)))
+    set_param(mat, "layer0_metallic_texture", image("metal_factor_map", lambda x, y: (0.8, 0.0, 0.0, 1.0)))
+    set_param(mat, "layer0_metallic", 0.0)
+    bsdf = preview_bsdf(mat, M)
+    before = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)[8, 8, 0]
+    check(bpy.ops.adm.material_set_map_factor(name="layer0_metallic") == {"FINISHED"},
+          "TERRAIN_4: enable metallic map factor")
+    bsdf = preview_bsdf(mat, M)
+    after = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)[8, 8, 0]
+    check(close((before, after), (0.0, 0.8)), "TERRAIN_4: setting factor to 1 changes metallic preview")
+    mat.adm.params["layer0_metallic_texture"].use = False
+    mat.adm.params["layer0_metallic"].use = False
 
     # 3b. Terrain 2.0.0 uses normalized COLOR_1 weights and the zero-sum layer-0 fallback.
     mat.adm.shader_version = K.SHADER_PROFILE_V2
@@ -639,6 +686,35 @@ def main():
     surface = M._from(active_output.inputs["Surface"])
     check(surface is not None and surface.node.type == "MIX_SHADER",
           "layered preview wires vertex-controlled F0 output")
+
+    # Verify live drivers and COLOR_1 data survive a real save/reopen.
+    saved = bpy.data.materials.new("reopen_preview")
+    saved.use_nodes = True
+    plane.data.materials.clear()
+    plane.data.materials.append(saved)
+    saved.adm.shader_version = K.SHADER_PROFILE_V2
+    set_param(saved, "color1_r_roughness", 0.2)
+    set_param(saved, "color1_r_strength", 1.0)
+    color1 = plane.data.color_attributes["COLOR_1"]
+    color1.data.foreach_set("color", np.tile((0.0, 0.0, 0.0, 0.0), len(color1.data)).ravel())
+    bsdf = preview_bsdf(saved, M)
+    rough_before = bake_socket(plane, saved, bsdf.inputs["Roughness"].links[0].from_socket)[8, 8, 0]
+    set_param(saved, "color1_r_roughness", 0.8)
+    color1.data.foreach_set("color", np.tile((1.0, 0.0, 0.0, 0.0), len(color1.data)).ravel())
+    plane.data.update()
+    bsdf = preview_bsdf(saved, M)
+    rough_changed = bake_socket(plane, saved, bsdf.inputs["Roughness"].links[0].from_socket)[8, 8, 0]
+    check(abs(rough_before - rough_changed) > 0.1, "COLOR_1 and roughness edits affect preview")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "preview.blend")
+        plane_name = plane.name
+        bpy.ops.wm.save_as_mainfile(filepath=path)
+        bpy.ops.wm.open_mainfile(filepath=path)
+        plane = bpy.data.objects[plane_name]
+        saved = bpy.data.materials["reopen_preview"]
+        bsdf = preview_bsdf(saved, M)
+        rough_reopened = bake_socket(plane, saved, bsdf.inputs["Roughness"].links[0].from_socket)[8, 8, 0]
+        check(close((rough_reopened,), (rough_changed,)), "COLOR_1 roughness preview survives save/reopen")
 
     adm_blender.unregister()
 

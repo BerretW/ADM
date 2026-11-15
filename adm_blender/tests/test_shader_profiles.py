@@ -28,26 +28,30 @@ def check_shader_ui(K):
             return next((item for item in self if item.name == name), None)
 
     class Layout:
-        def __init__(self, seen, panel_allowed=True):
+        def __init__(self, seen, panel_allowed=True, trace=None):
             self.seen = seen
             self.panel_allowed = panel_allowed
+            self.trace = [] if trace is None else trace
 
         def row(self, **kwargs):
-            return Layout(self.seen, panel_allowed=False)
+            return Layout(self.seen, panel_allowed=False, trace=self.trace)
 
         column = row
         box = row
 
         def panel(self, *args, **kwargs):
             assert self.panel_allowed, "collapsible panels need the full region width"
-            return Layout(self.seen, panel_allowed=False), Layout(self.seen)
+            self.trace.append(("panel", args[0]))
+            return Layout(self.seen, panel_allowed=False, trace=self.trace), Layout(self.seen, trace=self.trace)
 
         def label(self, **kwargs):
-            pass
+            self.trace.append(("label", kwargs.get("text", "")))
 
         def prop(self, owner, prop, **kwargs):
             if prop in ("use", "texture_channel", "texture_invert"):
                 self.seen.append(owner.name)
+            if prop == "value_vec":
+                self.trace.append(("component", owner.name, kwargs.get("index")))
 
         def template_ID(self, *args, **kwargs):
             pass
@@ -62,7 +66,7 @@ def check_shader_ui(K):
         partition = [name for _, _, _, items in groups for name in items] + remaining
         check(len(partition) == len(names) and set(partition) == set(names),
               f"{kind}@{key[1]}: UI groups preserve every parameter once")
-        values = Params(SimpleNamespace(name=name, use=True) for name in names)
+        values = Params(SimpleNamespace(name=name, use=True, image=None, value_f=0.0) for name in names)
         seen = []
         ui._draw_shader_params(Layout(seen), SimpleNamespace(shader=kind, shader_version=key[1], params=values),
                                schema)
@@ -92,8 +96,29 @@ def check_shader_ui(K):
     seen = []
     ui._draw_shader_params(Layout(seen), SimpleNamespace(
         shader="TWO_LAYER", shader_version="1.0.0",
-        params=Params(SimpleNamespace(name=name, use=True) for name in incomplete)), schema)
+        params=Params(SimpleNamespace(name=name, use=True, image=None, value_f=0.0) for name in incomplete)), schema)
     check(set(seen) == set(incomplete), "out-of-sync channel remains visible without its invert parameter")
+
+    for kind in ("TERRAIN_4", "TWO_LAYER"):
+        key = K.SHADER_TERRAIN_4 if kind == "TERRAIN_4" else K.SHADER_TWO_LAYER
+        schema = {item["name"]: item for item in K.OFFICIAL_SHADERS[key]}
+        values = Params(SimpleNamespace(name=name, use=True, image=None, value_f=0.0) for name in schema)
+        values.get("layer0_metallic_texture").image = object()
+        values.get("layer0_roughness_texture").image = object()
+        layout = Layout([])
+        ui._draw_shader_params(layout, SimpleNamespace(shader=kind, shader_version=key[1], params=values), schema)
+        check(layout.trace.index(("panel", "adm_shader_blend_tiling"))
+              < layout.trace.index(("panel", "adm_shader_layer_0")), f"{kind}: blend controls precede layers")
+        count = 4 if kind == "TERRAIN_4" else 2
+        check([event[2] for event in layout.trace if event[:2] == ("component", "uv_scale")] == list(range(count)),
+              f"{kind}: each used tiling component is editable")
+        check(layout.trace.count(("label", "Map has zero effect")) == 2,
+              f"{kind}: zero metallic and roughness factors show warnings")
+        values.get("layer0_roughness").use = False
+        layout = Layout([])
+        ui._draw_shader_params(layout, SimpleNamespace(shader=kind, shader_version=key[1], params=values), schema)
+        check(layout.trace.count(("label", "Map has zero effect")) == 1,
+              f"{kind}: disabled override uses the nonzero roughness default")
 
 
 def main(tmp):
