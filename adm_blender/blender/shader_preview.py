@@ -488,7 +488,19 @@ def _terrain(g):
             if tex_param is not None and tex_param.image is not None:
                 tex_uv = g.vmath("SCALE", g.uv(tex_param.tex_coord))
                 g.link(scales[i], tex_uv.node.inputs["Scale"])
-                factor = g.math("MULTIPLY", factor, g.red(g.tex(name, vector=tex_uv)))
+                tex = g.tex(name, vector=tex_uv)
+                channel = g._param(f"layer{i}_{prop}_channel")
+                index = max(0, min(3, int(channel.value_f + 0.5))) if channel else 0
+                if index == 3:
+                    sample = tex.outputs["Alpha"]
+                else:
+                    separate = g.new("ShaderNodeSeparateColor", f"{name} Channel")
+                    g.link(tex.outputs["Color"], separate.inputs[0])
+                    sample = separate.outputs[index]
+                invert = g._param(f"layer{i}_{prop}_invert")
+                if invert is not None and invert.value_bool:
+                    sample = g.math("SUBTRACT", 1.0, sample)
+                factor = g.math("MULTIPLY", factor, sample)
             weighted = g.math("MULTIPLY", w[i], factor)
             if prop == "metallic":
                 metal = acc(metal, weighted)

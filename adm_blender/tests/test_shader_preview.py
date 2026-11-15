@@ -183,7 +183,9 @@ def main():
                 set_param(mat, prm["name"], tex)
             elif prm["type"] == "F32":
                 set_param(mat, prm["name"], float(prm.get("maximum", 1.0)) * 0.5)
-            elif prm["type"] != "BOOL":
+            elif prm["type"] == "BOOL":
+                mat.adm.params[prm["name"]].value_bool = True
+            else:
                 set_param(mat, prm["name"], [0.5] * K.SHADER_NUMERIC_DIMS[prm["type"]])
         check(all(v.use for v in mat.adm.params), f"{kind}: editing values enables Override")
         out = next((n for n in mat.node_tree.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
@@ -395,6 +397,36 @@ def main():
         rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
         check(close(metal[8, 3, :1], (0.5,)) and close(rough[8, 3, :1], (0.08,)),
               f"TERRAIN_4@{version}: zero mask selects layer 0 maps and fallback")
+
+        packed = image(f"packed_{version}", lambda x, y: (0.2, 0.4, 0.6, 0.8))
+        set_param(mat, "layer0_metallic_texture", packed)
+        set_param(mat, "layer0_roughness_texture", packed)
+        set_param(mat, "layer0_metallic", 1.0)
+        set_param(mat, "layer0_roughness", 1.0)
+        for channel, expected in zip(("R", "G", "B", "A"), (0.2, 0.4, 0.6, 0.8)):
+            mat.adm.params["layer0_metallic_channel"].texture_channel = channel
+            mat.adm.params["layer0_roughness_channel"].texture_channel = channel
+            bsdf = preview_bsdf(mat, M)
+            metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+            rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+            check(close(metal[8, 3, :1], (expected,)) and close(rough[8, 3, :1], (expected,)),
+                  f"TERRAIN_4@{version}: metallic and roughness select packed {channel}")
+        mat.adm.params["layer0_metallic_channel"].texture_channel = "G"
+        mat.adm.params["layer0_roughness_channel"].texture_channel = "B"
+        mat.adm.params["layer0_metallic_invert"].texture_invert = True
+        mat.adm.params["layer0_roughness_invert"].texture_invert = True
+        bsdf = preview_bsdf(mat, M)
+        metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(metal[8, 3, :1], (0.6,)) and close(rough[8, 3, :1], (0.4,)),
+              f"TERRAIN_4@{version}: independently selected channels invert before multiplication")
+        mat.adm.params["layer0_metallic_invert"].texture_invert = False
+        mat.adm.params["layer0_roughness_invert"].use = False
+        bsdf = preview_bsdf(mat, M)
+        metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(metal[8, 3, :1], (0.4,)) and close(rough[8, 3, :1], (0.6,)),
+              f"TERRAIN_4@{version}: inversion can be disabled or reset to default")
 
     # 4. Vertex controls are evaluated after the profile's material operations ---------------------
     mat = bpy.data.materials.new("vertex_controls")

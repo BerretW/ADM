@@ -306,8 +306,28 @@ def _param_owner_refresh(self):
 def _param_value_update(self, context):
     # Editing a value means "use it": enabling Override rebuilds the preview with a live driver.
     from .materials import param_updates_quiet
-    if not param_updates_quiet() and not self.use:
-        self.use = True
+    if not param_updates_quiet():
+        if not self.use:
+            self.use = True
+        elif self.name.endswith(("_metallic_channel", "_roughness_channel",
+                                 "_metallic_invert", "_roughness_invert")):
+            _param_owner_refresh(self)
+
+
+def _texture_channel_get(self):
+    return max(0, min(3, int(self.value_f + 0.5))) if self.use else 0
+
+
+def _texture_channel_set(self, value):
+    self.value_f = float(value)
+
+
+def _texture_invert_get(self):
+    return self.use and self.value_bool
+
+
+def _texture_invert_set(self, value):
+    self.value_bool = value
 
 
 def _param_use_update(self, context):
@@ -341,6 +361,11 @@ class ADMShaderParamValue(PropertyGroup):
     value_f: FloatProperty(name="Value", update=_param_value_update)
     value_vec: FloatVectorProperty(name="Value", size=4, update=_param_value_update)
     value_bool: BoolProperty(name="Value", update=_param_value_update)
+    texture_channel: EnumProperty(
+        name="Channel", items=[("R", "R", "Red", 0), ("G", "G", "Green", 1),
+                               ("B", "B", "Blue", 2), ("A", "A", "Alpha", 3)],
+        get=_texture_channel_get, set=_texture_channel_set)
+    texture_invert: BoolProperty(name="Invert", get=_texture_invert_get, set=_texture_invert_set)
     image: PointerProperty(name="Texture", type=bpy.types.Image, update=_param_image_update)
     tex_coord: IntProperty(name="UV", min=0, max=1, update=_param_use_update)
 

@@ -198,8 +198,9 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   existing PBR image and UV set. This changes layer 0 only and preserves the PBR fallback. When a
   material is shared, use the same second UV map name on its meshes for a consistent preview.
 - Each terrain layer also has `layer{i}_metallic_texture` and `layer{i}_roughness_texture` slots.
-  Their Non-Color red channels multiply the corresponding factors and use their own UV selection
-  and the layer's `uv_scale`. Set the metallic factor to 1 to use the full map (its default is 0).
+  Choose R, G, B or A and optional inversion separately for each map; defaults are R without
+  inversion. The selected Non-Color channel multiplies its factor and uses the map's own UV
+  selection and the layer's `uv_scale`. Set the metallic factor to 1 to use the full map (default 0).
   Existing terrain materials may need **Sync Parameters (out of date)** to expose the new slots.
 - Masks are grayscale Non-Color images; the red channel is read. Example for Brick: in `mortar_mask`,
   white = mortar joint and black = brick face. It is sampled at UV × `uv_scale`, like the base texture.

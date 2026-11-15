@@ -1209,7 +1209,10 @@ def draw_material(lay, context, mat):
                 r.operator("adm.material_sync_params", icon="FILE_REFRESH",
                            text="Sync Parameters" if in_sync else "Sync Parameters (out of date)")
             tex = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") == "TEXTURE"]
-            val = [(v, params[v.name]) for v in p.params if v.name in params and params[v.name].get("type") != "TEXTURE"]
+            val = [(v, params[v.name]) for v in p.params if v.name in params
+                   and params[v.name].get("type") != "TEXTURE"
+                   and not (p.shader == "TERRAIN_4" and v.name.endswith(
+                       ("_metallic_channel", "_roughness_channel", "_metallic_invert", "_roughness_invert")))]
             if tex:
                 tb = box.box()
                 tb.label(text="Shader Texture Parameters", icon="TEXTURE")
@@ -1220,6 +1223,14 @@ def draw_material(lay, context, mat):
                     r.label(text=v.name)
                     r.prop(v, "tex_coord", text="UV")
                     c.template_ID(v, "image", new="image.new", open="image.open")
+                    if p.shader == "TERRAIN_4" and v.name.endswith(("_metallic_texture", "_roughness_texture")):
+                        prefix = v.name[:-len("_texture")]
+                        channel = p.params.get(prefix + "_channel")
+                        invert = p.params.get(prefix + "_invert")
+                        if channel is not None and invert is not None:
+                            options = c.row(align=True)
+                            options.prop(channel, "texture_channel", text="Channel")
+                            options.prop(invert, "texture_invert", text="Invert")
                     if prm.get("description"):
                         c.label(text=prm["description"])
                     if v.name == "mortar_mask":

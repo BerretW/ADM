@@ -328,49 +328,161 @@
           "name": "layer0_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 0."
+          "description": "Linear metallic map for layer 0."
         },
         {
           "name": "layer1_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 1."
+          "description": "Linear metallic map for layer 1."
         },
         {
           "name": "layer2_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 2."
+          "description": "Linear metallic map for layer 2."
         },
         {
           "name": "layer3_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 3."
+          "description": "Linear metallic map for layer 3."
         },
         {
           "name": "layer0_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 0."
+          "description": "Linear roughness map for layer 0."
         },
         {
           "name": "layer1_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 1."
+          "description": "Linear roughness map for layer 1."
         },
         {
           "name": "layer2_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 2."
+          "description": "Linear roughness map for layer 2."
         },
         {
           "name": "layer3_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 3."
+          "description": "Linear roughness map for layer 3."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 roughness texture channel."
+        },
+        {
+          "name": "layer2_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 metallic texture channel."
+        },
+        {
+          "name": "layer2_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 roughness texture channel."
+        },
+        {
+          "name": "layer3_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 metallic texture channel."
+        },
+        {
+          "name": "layer3_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 roughness texture channel."
         },
         {
           "name": "layer0_emissive",
@@ -2585,49 +2697,161 @@
           "name": "layer0_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 0."
+          "description": "Linear metallic map for layer 0."
         },
         {
           "name": "layer1_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 1."
+          "description": "Linear metallic map for layer 1."
         },
         {
           "name": "layer2_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 2."
+          "description": "Linear metallic map for layer 2."
         },
         {
           "name": "layer3_metallic_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear metallic map (red channel) for layer 3."
+          "description": "Linear metallic map for layer 3."
         },
         {
           "name": "layer0_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 0."
+          "description": "Linear roughness map for layer 0."
         },
         {
           "name": "layer1_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 1."
+          "description": "Linear roughness map for layer 1."
         },
         {
           "name": "layer2_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 2."
+          "description": "Linear roughness map for layer 2."
         },
         {
           "name": "layer3_roughness_texture",
           "type": "TEXTURE",
           "default": null,
-          "description": "Linear roughness map (red channel) for layer 3."
+          "description": "Linear roughness map for layer 3."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 roughness texture channel."
+        },
+        {
+          "name": "layer2_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 metallic texture channel."
+        },
+        {
+          "name": "layer2_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 roughness texture channel."
+        },
+        {
+          "name": "layer3_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 metallic texture channel."
+        },
+        {
+          "name": "layer3_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 roughness texture channel."
         },
         {
           "name": "layer0_emissive",

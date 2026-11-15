@@ -44,10 +44,13 @@ def main(tmp):
                 for prop in ("metallic", "roughness"):
                     name = f"layer{i}_{prop}_texture"
                     img = bpy.data.images.new(f"{key[1]}_{name}", 2, 2, alpha=True)
-                    img.pixels = [0.2 + i * 0.1, 0.7, 0.9, 1.0] * 4
+                    img.pixels = [0.2 + i * 0.1, 0.7, 0.9, 0.65] * 4
                     img.pack()
                     mat.adm.params[name].image = img
                     mat.adm.params[name].tex_coord = i % 2
+                    mat.adm.params[f"layer{i}_{prop}_channel"].texture_channel = (
+                        ("R", "G", "B", "A")[(i + (prop == "roughness")) % 4])
+                    mat.adm.params[f"layer{i}_{prop}_invert"].value_bool = (i % 2 == 1)
         if kind == "INTERACTIVE":
             bpy.context.view_layer.objects.active = cube
             cube.select_set(True)
@@ -73,6 +76,11 @@ def main(tmp):
                     name = f"layer{i}_{prop}_texture"
                     check(material["shaderParameters"][name].get("texCoord", 0) == i % 2,
                           f"TERRAIN_4@{key[1]}: export {name} UV")
+                    channel = f"layer{i}_{prop}_channel"
+                    invert = f"layer{i}_{prop}_invert"
+                    check(material["shaderParameters"][channel] == (i + (prop == "roughness")) % 4
+                          and material["shaderParameters"][invert] == (i % 2 == 1),
+                          f"TERRAIN_4@{key[1]}: export {prop} channel and inversion for layer {i}")
         check(material.get("shader", {"id": K.SHADER_CORE[0], "version": K.SHADER_CORE[1]}) ==
               {"id": key[0], "version": key[1]}, f"{kind}: exact shader ID/version")
         if kind != "CORE":
@@ -102,6 +110,14 @@ def main(tmp):
                             source = mat.adm.params[name].image
                             check(abs(value.image.pixels[0] - source.pixels[0]) <= 1 / 255,
                                   f"TERRAIN_4@{key[1]}: import {name} linear red value")
+                            check(abs(value.image.pixels[3] - source.pixels[3]) <= 1 / 255,
+                                  f"TERRAIN_4@{key[1]}: import {name} alpha value")
+                        channel = f"layer{i}_{prop}_channel"
+                        invert = f"layer{i}_{prop}_invert"
+                        check(imported.adm.params[channel].texture_channel
+                              == ("R", "G", "B", "A")[(i + (prop == "roughness")) % 4]
+                              and imported.adm.params[invert].value_bool == (i % 2 == 1),
+                              f"TERRAIN_4@{key[1]}: import {prop} channel and inversion for layer {i}")
         if key[1] == K.SHADER_PROFILE_V2 or kind not in (
                 "CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
             check(not any("portable PBR fallback" in warning for warning in exporter.warnings),

@@ -102,8 +102,11 @@ def main(tmp):
     mat.adm.params["layer1_texture"].image = second
     missing = mat.adm.params.find("layer0_metallic_texture")
     mat.adm.params.remove(missing)
+    missing_channel = mat.adm.params.find("layer1_roughness_channel")
+    mat.adm.params.remove(missing_channel)
     check(bpy.ops.adm.material_sync_params() == {"FINISHED"}
           and mat.adm.params.get("layer0_metallic_texture") is not None
+          and mat.adm.params.get("layer1_roughness_channel") is not None
           and mat.adm.params["layer1_texture"].image == second,
           "sync an older terrain material without losing existing parameters")
     check(bpy.ops.adm.material_terrain_from_pbr() == {"FINISHED"},

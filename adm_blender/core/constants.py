@@ -216,12 +216,22 @@ OFFICIAL_SHADERS = {
             for i in range(4)
         ],
         *[
-            _texture_param(f"layer{i}_metallic_texture", f"Linear metallic map (red channel) for layer {i}.")
+            _texture_param(f"layer{i}_metallic_texture", f"Linear metallic map for layer {i}.")
             for i in range(4)
         ],
         *[
-            _texture_param(f"layer{i}_roughness_texture", f"Linear roughness map (red channel) for layer {i}.")
+            _texture_param(f"layer{i}_roughness_texture", f"Linear roughness map for layer {i}.")
             for i in range(4)
+        ],
+        *[
+            _shader_param(f"layer{i}_{prop}_channel", "F32", 0.0,
+                          f"Texture channel for layer {i} {prop}: 0=R, 1=G, 2=B, 3=A.", 0.0, 3.0)
+            for i in range(4) for prop in ("metallic", "roughness")
+        ],
+        *[
+            _shader_param(f"layer{i}_{prop}_invert", "BOOL", False,
+                          f"Invert the selected layer {i} {prop} texture channel.")
+            for i in range(4) for prop in ("metallic", "roughness")
         ],
         *[
             _shader_param(f"layer{i}_emissive", "VEC3", [0.0, 0.0, 0.0],

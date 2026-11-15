@@ -90,9 +90,11 @@ normalizes that result; if the result has zero length it uses `(0,0,1)`. Thus al
 same weights and no layer is implicitly overlaid after another.
 
 For terrain, each layer also has optional linear `layer{i}_metallic_texture` and
-`layer{i}_roughness_texture` maps. Their red channels multiply the respective factors before
-weighting; absent maps leave the factors unchanged. Each uses its own `texCoord` and the layer's
-`uv_scale`. These additional maps do not apply to `adm.pbr.layered@2.0.0`.
+`layer{i}_roughness_texture` maps. Their independently selected R/G/B/A channels optionally invert
+and then multiply the respective factors before weighting, as specified in the terrain 1.0.0
+contract; defaults select R without inversion. Absent maps leave the factors unchanged. Each uses
+its own `texCoord` and the layer's `uv_scale`. These maps and channel settings do not apply to
+`adm.pbr.layered@2.0.0`.
 
 `adm.pbr.layered@1.0.0` retains its existing `ADM_material_layers_v1` two-layer contract and does
 not use `COLOR_1`.
