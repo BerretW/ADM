@@ -39,6 +39,22 @@ def main(tmp):
     for key, kind in K.OFFICIAL_SHADER_KINDS.items():
         mat.adm.shader = kind
         mat.adm.shader_version = key[1]
+        scalar_maps = []
+        if key[1] == K.SHADER_PROFILE_V2:
+            scalar_maps = [
+                p["name"] for p in K.OFFICIAL_SHADERS[key]
+                if p["name"].endswith(("_metallic_texture", "_roughness_texture"))
+                and (p["name"].startswith("color1_") or kind == "LAYERED")
+            ]
+            for index, name in enumerate(scalar_maps):
+                img = bpy.data.images.new(f"{kind}_{name}", 2, 2, alpha=True)
+                img.pixels = [0.2, 0.4, 0.7, 0.6] * 4
+                img.pack()
+                mat.adm.params[name].image = img
+                mat.adm.params[name].tex_coord = index % 2
+                prefix = name[:-len("_texture")]
+                mat.adm.params[prefix + "_channel"].texture_channel = ("R", "G", "B", "A")[index % 4]
+                mat.adm.params[prefix + "_invert"].texture_invert = index % 2 == 1
         if kind in ("TERRAIN_4", "TWO_LAYER"):
             if kind == "TWO_LAYER":
                 mask = bpy.data.images.new("two_layer_mask", 2, 2, alpha=True)
@@ -76,6 +92,13 @@ def main(tmp):
         if not report.ok:
             continue
         material = report.doc["materials"][0]
+        for index, name in enumerate(scalar_maps):
+            prefix = name[:-len("_texture")]
+            values = material["shaderParameters"]
+            check(values[name].get("texCoord", 0) == index % 2
+                  and values[prefix + "_channel"] == index % 4
+                  and values[prefix + "_invert"] == (index % 2 == 1),
+                  f"{kind}@2.0.0: export {name} UV, channel and inversion")
         if kind in ("TERRAIN_4", "TWO_LAYER"):
             for i in range(2 if kind == "TWO_LAYER" else 4):
                 for prop in ("metallic", "roughness"):
@@ -104,6 +127,17 @@ def main(tmp):
             expected_params = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             actual_params = {p.name for p in imported.adm.params}
             check(actual_params == expected_params, f"{kind}: typed parameter schema restored")
+            for index, name in enumerate(scalar_maps):
+                value = imported.adm.params[name]
+                prefix = name[:-len("_texture")]
+                check(value.use and value.image is not None and value.tex_coord == index % 2
+                      and value.image.colorspace_settings.name == "Non-Color"
+                      and abs(value.image.pixels[0] - 0.2) < 0.02
+                      and abs(value.image.pixels[3] - 0.6) < 0.02
+                      and imported.adm.params[prefix + "_channel"].texture_channel
+                      == ("R", "G", "B", "A")[index % 4]
+                      and imported.adm.params[prefix + "_invert"].texture_invert == (index % 2 == 1),
+                      f"{kind}@2.0.0: import {name} linear data and settings")
             if kind in ("TERRAIN_4", "TWO_LAYER"):
                 if kind == "TWO_LAYER":
                     mask = imported.adm.params["blend_mask"]

@@ -207,6 +207,11 @@ box with one slot per PBR texture: Base Color, Metallic-Roughness, Normal, Occlu
   inversion. The selected Non-Color channel multiplies its factor and uses the map's own UV
   selection and the layer's `uv_scale`. Set the metallic factor to 1 to use the full map (default 0).
   Existing terrain materials may need **Sync Parameters (out of date)** to expose the new slots.
+- PBR Layered 2.0 has the same maps and channel/inversion controls for each layer. The surface
+  overlays of all 2.0 profiles also provide independent metallic and roughness maps for each
+  `COLOR_1` surface channel. Maps multiply the corresponding factors; set a factor to 1 to use its
+  full range. Non-surface mask effects keep their original scalar, color or normal-only behavior.
+  Existing materials may need **Sync Parameters (out of date)** to show the added slots.
 - **PBR Two Layer** blends two independent textured PBR layers using the red channel of a Non-Color
   `blend_mask`: black selects layer 0 and white selects layer 1. Without a mask it shows layer 0.
   Each layer provides albedo, normal, metallic and roughness textures, plus independent channel and

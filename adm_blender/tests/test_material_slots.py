@@ -129,7 +129,16 @@ def main(tmp):
               "terrain export contains the copied layer 0 texture and UV")
         check("baseColorTexture" in terrain,
               "terrain export retains the portable PBR base color texture")
+    mat.adm.shader = "LAYERED"
+    mat.adm.shader_version = "2.0.0"
+    mat.adm.params["layer1_texture"].image = second
+    mat.adm.params.remove(mat.adm.params.find("layer1_roughness_texture"))
+    check(bpy.ops.adm.material_sync_params() == {"FINISHED"}
+          and mat.adm.params.get("layer1_roughness_texture") is not None
+          and mat.adm.params["layer1_texture"].image == second,
+          "sync an older PBR Layered 2.0 material without losing its textures")
     mat.adm.shader = "CORE"
+    mat.adm.shader_version = "1.0.0"
     check(bpy.ops.adm.material_texture_uv(slot="BASE_COLOR", index=0) == {"FINISHED"},
           "restore PBR base texture UV")
     mat.adm.vertex_controls_enabled = False

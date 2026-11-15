@@ -152,6 +152,30 @@ class _Graph:
         self.nt.links.new(tex_node.outputs["Color"], sep.inputs[0])
         return sep.outputs["Red"]
 
+    def scalar_map_factor(self, name, scale=None):
+        factor = self.num(name)
+        tex_name = f"{name}_texture"
+        param = self._param(tex_name)
+        if param is None or param.image is None:
+            return factor
+        uv = None
+        if scale is not None:
+            uv = self.vmath("SCALE", self.uv(param.tex_coord))
+            self.link(scale, uv.node.inputs["Scale"])
+        tex = self.tex(tex_name, vector=uv)
+        channel = self._param(f"{name}_channel")
+        index = max(0, min(3, int(channel.value_f + 0.5))) if channel else 0
+        if index == 3:
+            sample = tex.outputs["Alpha"]
+        else:
+            separate = self.new("ShaderNodeSeparateColor", f"{tex_name} Channel")
+            self.link(tex.outputs["Color"], separate.inputs[0])
+            sample = separate.outputs[index]
+        invert = self._param(f"{name}_invert")
+        if invert is not None and invert.value_bool:
+            sample = self.math("SUBTRACT", 1.0, sample)
+        return self.math("MULTIPLY", factor, sample)
+
     def uv(self, tex_coord=0):
         if tex_coord:
             obj = bpy.context.object
@@ -485,25 +509,7 @@ def _terrain(g):
         albedo = acc(albedo, wvec(i, base))
         alpha = acc(alpha, g.math("MULTIPLY", w[i], balpha))
         for prop in ("metallic", "roughness"):
-            factor = g.num(f"layer{i}_{prop}")
-            name = f"layer{i}_{prop}_texture"
-            tex_param = g._param(name)
-            if tex_param is not None and tex_param.image is not None:
-                tex_uv = g.vmath("SCALE", g.uv(tex_param.tex_coord))
-                g.link(scales[i], tex_uv.node.inputs["Scale"])
-                tex = g.tex(name, vector=tex_uv)
-                channel = g._param(f"layer{i}_{prop}_channel")
-                index = max(0, min(3, int(channel.value_f + 0.5))) if channel else 0
-                if index == 3:
-                    sample = tex.outputs["Alpha"]
-                else:
-                    separate = g.new("ShaderNodeSeparateColor", f"{name} Channel")
-                    g.link(tex.outputs["Color"], separate.inputs[0])
-                    sample = separate.outputs[index]
-                invert = g._param(f"layer{i}_{prop}_invert")
-                if invert is not None and invert.value_bool:
-                    sample = g.math("SUBTRACT", 1.0, sample)
-                factor = g.math("MULTIPLY", factor, sample)
+            factor = g.scalar_map_factor(f"layer{i}_{prop}", scale=scales[i])
             weighted = g.math("MULTIPLY", w[i], factor)
             if prop == "metallic":
                 metal = acc(metal, weighted)
@@ -694,7 +700,7 @@ def _apply_color1_masks(g, bsdf):
                 ("Roughness", f"color1_{suffix}_roughness"),
             ):
                 current = _socket_source(g, bsdf.inputs[socket_name])
-                g.link(g.mix("FLOAT", current, g.num(parameter), mask), bsdf.inputs[socket_name])
+                g.link(g.mix("FLOAT", current, g.scalar_map_factor(parameter), mask), bsdf.inputs[socket_name])
             if texture is not None:
                 current_alpha = _socket_source(g, bsdf.inputs["Alpha"])
                 overlay_alpha = g.math("MULTIPLY", current_alpha, texture.outputs["Alpha"])

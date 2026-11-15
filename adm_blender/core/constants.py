@@ -172,6 +172,20 @@ def _texture_param(name, description):
     return _shader_param(name, "TEXTURE", None, description)
 
 
+def _scalar_map_params(prefix):
+    return [
+        item
+        for prop in ("metallic", "roughness")
+        for item in (
+            _texture_param(f"{prefix}_{prop}_texture", f"Optional linear {prop} map for {prefix}."),
+            _shader_param(f"{prefix}_{prop}_channel", "F32", 0.0,
+                          f"Texture channel for {prefix} {prop}: 0=R, 1=G, 2=B, 3=A.", 0.0, 3.0),
+            _shader_param(f"{prefix}_{prop}_invert", "BOOL", False,
+                          f"Invert the selected {prefix} {prop} texture channel."),
+        )
+    ]
+
+
 # Official registry snapshot: (id, version) -> list of parameter definitions.
 OFFICIAL_SHADERS = {
     SHADER_CORE: [],
@@ -488,6 +502,7 @@ for _key, _kind in tuple(OFFICIAL_SHADER_KINDS.items()):
                               f"Roughness factor for layer {i + 1}.", 0.0, 1.0)
                 for i in range(4)
             ],
+            *[param for i in range(4) for param in _scalar_map_params(f"layer{i}")],
             *[
                 _shader_param(f"layer{i}_emissive", "VEC3", [0.0, 0.0, 0.0],
                               f"Linear emissive factor for layer {i + 1}.",
@@ -521,6 +536,7 @@ for _key, _kind in tuple(OFFICIAL_SHADER_KINDS.items()):
                                f"Optional sRGB albedo overlay for COLOR_1.{_channel}."),
                 _texture_param(f"color1_{_channel.lower()}_normal",
                                f"Optional linear tangent-space normal overlay for COLOR_1.{_channel}."),
+                *_scalar_map_params(f"color1_{_channel.lower()}"),
             ])
         elif _effect["op"] in ("factor", "multiply", "contrast"):
             maximum = 4.0 if _effect["op"] in ("multiply", "contrast") \

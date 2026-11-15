@@ -1062,7 +1062,7 @@ def _apply_shader(mat, m, scene, resolve_image):
                 v.use = True
                 _apply_shader_value(v, prm["type"], val, resolve_image)
                 if v.image is not None and (
-                        (key[0] == K.SHADER_TERRAIN_4[0] and name.endswith(
+                        (prm["type"] == "TEXTURE" and name.endswith(
                             ("_metallic_texture", "_roughness_texture")))
                         or (key == K.SHADER_TWO_LAYER and prm["type"] == "TEXTURE"
                             and name not in K.SHADER_COLOR_TEXTURES)):

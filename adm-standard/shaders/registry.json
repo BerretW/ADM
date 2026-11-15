@@ -1276,6 +1276,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
         },
         {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
+        },
+        {
           "name": "color1_g_strength",
           "type": "F32",
           "default": 1.0,
@@ -1332,6 +1372,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
         },
         {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
+        },
+        {
           "name": "color1_b_strength",
           "type": "F32",
           "default": 1.0,
@@ -1386,6 +1466,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
+        },
+        {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
         },
         {
           "name": "color1_a_strength",
@@ -1589,6 +1709,166 @@
           "description": "Roughness factor for layer 4.",
           "minimum": 0.0,
           "maximum": 1.0
+        },
+        {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer0."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer0."
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer1."
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer1."
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 roughness texture channel."
+        },
+        {
+          "name": "layer2_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer2."
+        },
+        {
+          "name": "layer2_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 metallic texture channel."
+        },
+        {
+          "name": "layer2_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer2."
+        },
+        {
+          "name": "layer2_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 roughness texture channel."
+        },
+        {
+          "name": "layer3_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer3."
+        },
+        {
+          "name": "layer3_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 metallic texture channel."
+        },
+        {
+          "name": "layer3_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer3."
+        },
+        {
+          "name": "layer3_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 roughness texture channel."
         },
         {
           "name": "layer0_emissive",
@@ -1825,6 +2105,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -1879,6 +2199,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -2036,6 +2396,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
         },
         {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
+        },
+        {
           "name": "color1_b_strength",
           "type": "F32",
           "default": 1.0,
@@ -2092,6 +2492,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -2146,6 +2586,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -2300,6 +2780,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -2435,6 +2955,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
         },
         {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
+        },
+        {
           "name": "color1_b_strength",
           "type": "F32",
           "default": 1.0,
@@ -2505,6 +3065,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -3124,6 +3724,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
         },
         {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
+        },
+        {
           "name": "color1_b_strength",
           "type": "F32",
           "default": 1.0,
@@ -3178,6 +3818,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
+        },
+        {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
         },
         {
           "name": "color1_a_strength",
@@ -3337,6 +4017,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -3458,6 +4178,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
+        },
+        {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
         },
         {
           "name": "color1_b_strength",
@@ -3585,6 +4345,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
+        },
+        {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
         },
         {
           "name": "color1_g_strength",
@@ -3782,6 +4582,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -3882,6 +4722,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
         },
         {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
+        },
+        {
           "name": "color1_g_strength",
           "type": "F32",
           "default": 1.0,
@@ -3936,6 +4816,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
+        },
+        {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
         },
         {
           "name": "color1_b_strength",
@@ -3994,6 +4914,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -4048,6 +5008,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -4178,6 +5178,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
         },
         {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
+        },
+        {
           "name": "color1_g_strength",
           "type": "F32",
           "default": 1.0,
@@ -4232,6 +5272,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
+        },
+        {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
         },
         {
           "name": "color1_b_strength",
@@ -4290,6 +5370,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -4344,6 +5464,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -4444,6 +5604,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
         },
         {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
+        },
+        {
           "name": "color1_g_strength",
           "type": "F32",
           "default": 1.0,
@@ -4498,6 +5698,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
+        },
+        {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
         },
         {
           "name": "color1_b_strength",
@@ -4556,6 +5796,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -4610,6 +5890,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -4713,6 +6033,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
         },
         {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
+        },
+        {
           "name": "color1_g_strength",
           "type": "F32",
           "default": 1.0,
@@ -4783,6 +6143,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -4837,6 +6237,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -4936,6 +6376,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
         },
         {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
+        },
+        {
           "name": "color1_g_strength",
           "type": "F32",
           "default": 1.0,
@@ -4990,6 +6470,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
+        },
+        {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
         },
         {
           "name": "color1_b_strength",
@@ -5048,6 +6568,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -5102,6 +6662,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"
@@ -5220,6 +6820,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.R."
+        },
+        {
+          "name": "color1_r_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_r."
+        },
+        {
+          "name": "color1_r_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r metallic texture channel."
+        },
+        {
+          "name": "color1_r_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_r."
+        },
+        {
+          "name": "color1_r_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_r roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_r_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_r roughness texture channel."
         },
         {
           "name": "color1_g_strength",
@@ -5407,6 +7047,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.G."
         },
         {
+          "name": "color1_g_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_g."
+        },
+        {
+          "name": "color1_g_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g metallic texture channel."
+        },
+        {
+          "name": "color1_g_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_g."
+        },
+        {
+          "name": "color1_g_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_g roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_g_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_g roughness texture channel."
+        },
+        {
           "name": "color1_b_strength",
           "type": "F32",
           "default": 1.0,
@@ -5463,6 +7143,46 @@
           "description": "Optional linear tangent-space normal overlay for COLOR_1.B."
         },
         {
+          "name": "color1_b_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_b."
+        },
+        {
+          "name": "color1_b_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b metallic texture channel."
+        },
+        {
+          "name": "color1_b_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_b."
+        },
+        {
+          "name": "color1_b_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_b roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_b_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_b roughness texture channel."
+        },
+        {
           "name": "color1_a_strength",
           "type": "F32",
           "default": 1.0,
@@ -5517,6 +7237,46 @@
           "type": "TEXTURE",
           "default": null,
           "description": "Optional linear tangent-space normal overlay for COLOR_1.A."
+        },
+        {
+          "name": "color1_a_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for color1_a."
+        },
+        {
+          "name": "color1_a_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a metallic texture channel."
+        },
+        {
+          "name": "color1_a_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for color1_a."
+        },
+        {
+          "name": "color1_a_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for color1_a roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "color1_a_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected color1_a roughness texture channel."
         }
       ],
       "contract": "ADM_shader_vertex_masks_v2.md"

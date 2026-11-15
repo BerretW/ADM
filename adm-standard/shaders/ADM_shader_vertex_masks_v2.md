@@ -30,13 +30,17 @@ reflectivity and wetness operations are applied last. Neither operation modifies
 ### Surface overlay
 
 An overlay channel has `color1_<c>_color` (linear `VEC3`), `color1_<c>_metallic`,
-`color1_<c>_roughness`, and optional `color1_<c>_texture` and `color1_<c>_normal` texture
-parameters. The factors default to the profile-specific values in the registry. Texture defaults
-are absent.
+`color1_<c>_roughness`, and optional `color1_<c>_texture`, `color1_<c>_normal`,
+`color1_<c>_metallic_texture` and `color1_<c>_roughness_texture` parameters. Each scalar map has
+its own `_channel` and `_invert` parameters; they select R/G/B/A and optional inversion as in the
+terrain contract. The factors default to the profile-specific values in the registry. Texture
+defaults are absent, and channel selection defaults to R without inversion.
 
 If an albedo texture is present, its RGB is decoded from sRGB to linear and multiplied by the
 linear color factor. If absent, the color factor is the complete overlay albedo. Metallic and
-roughness targets are linear scalars in `[0,1]`. For the current base color `C`, metallic `M`,
+roughness targets are linear scalars in `[0,1]`. Each optional scalar map is sampled using its own
+`texCoord`, then its selected and optionally inverted linear channel multiplies the corresponding
+factor. Without a scalar map the factor is unchanged. For the current base color `C`, metallic `M`,
 roughness `R`, and alpha `A`:
 
 ```text
@@ -89,12 +93,11 @@ alpha, metallic, roughness and emission. It computes the weighted sum of decoded
 normalizes that result; if the result has zero length it uses `(0,0,1)`. Thus all layers use the
 same weights and no layer is implicitly overlaid after another.
 
-For terrain, each layer also has optional linear `layer{i}_metallic_texture` and
+For both profiles, each layer also has optional linear `layer{i}_metallic_texture` and
 `layer{i}_roughness_texture` maps. Their independently selected R/G/B/A channels optionally invert
 and then multiply the respective factors before weighting, as specified in the terrain 1.0.0
 contract; defaults select R without inversion. Absent maps leave the factors unchanged. Each uses
-its own `texCoord` and the layer's `uv_scale`. These maps and channel settings do not apply to
-`adm.pbr.layered@2.0.0`.
+its own `texCoord` and the layer's `uv_scale`.
 
 `adm.pbr.layered@1.0.0` retains its existing `ADM_material_layers_v1` two-layer contract and does
 not use `COLOR_1`.

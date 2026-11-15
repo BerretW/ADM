@@ -36,4 +36,15 @@ for entry in entries:
         assert prm.get("description", "").strip(), f"missing description: {entry['id']}/{prm['name']}"
         assert prm["type"] in K.SHADER_PARAM_TYPES, f"invalid type: {entry['id']}/{prm['name']}"
         assert not param_value_error(prm, prm["default"], None), f"invalid default: {entry['id']}/{prm['name']}"
+for kind, effects in K.COLOR1_CONTRACTS.items():
+    params = {p["name"]: p for p in K.OFFICIAL_SHADERS[K.OFFICIAL_SHADER_V2_KEYS[kind]]}
+    prefixes = [f"color1_{channel.lower()}" for channel, effect in zip(K.SHADER_MASK_CHANNELS, effects)
+                if effect["op"] == "surface"]
+    if kind == "LAYERED":
+        prefixes.extend(f"layer{i}" for i in range(4))
+    for prefix in prefixes:
+        for prop in ("metallic", "roughness"):
+            for suffix, typ in (("texture", "TEXTURE"), ("channel", "F32"), ("invert", "BOOL")):
+                name = f"{prefix}_{prop}_{suffix}"
+                assert name in params and params[name]["type"] == typ, f"{kind} missing {name}"
 print(f"PASS shader registry ({len(entries)} official profiles)")

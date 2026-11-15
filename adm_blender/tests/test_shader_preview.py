@@ -239,6 +239,24 @@ def main():
               f"COLOR_1.R surface overlay blends metallic ({metallic[8, 8, 0]:.3f})")
         check(close(roughness[8, 8, :1], (0.75,)),
               f"COLOR_1.R surface overlay blends roughness ({roughness[8, 8, 0]:.3f})")
+        packed = image("overlay_packed", lambda x, y: (0.2, 0.4, 0.6, 0.8))
+        set_param(mat, "color1_r_metallic_texture", packed)
+        set_param(mat, "color1_r_roughness_texture", packed)
+        mat.adm.params["color1_r_metallic_channel"].texture_channel = "G"
+        mat.adm.params["color1_r_metallic_invert"].texture_invert = True
+        mat.adm.params["color1_r_roughness_channel"].texture_channel = "B"
+        bsdf = preview_bsdf(mat, M)
+        metallic = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        roughness = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(metallic[8, 8, :1], (0.27,)) and close(roughness[8, 8, :1], (0.66,)),
+              "COLOR_1.R uses independently selected/inverted scalar map channels before blending")
+        mat.adm.params["color1_r_metallic_texture"].use = False
+        mat.adm.params["color1_r_roughness_texture"].use = False
+        bsdf = preview_bsdf(mat, M)
+        metallic = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+        roughness = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+        check(close(metallic[8, 8, :1], (0.35,)) and close(roughness[8, 8, :1], (0.75,)),
+              "COLOR_1.R absent scalar maps retain the factor-only behavior")
         mat.adm.vertex_controls_enabled = True
         color0 = plane.data.color_attributes.get("COLOR_0")
         color0.data.foreach_set("color", np.tile((0.0, 1.0, 1.0, 0.5), len(color0.data)).ravel())
@@ -313,6 +331,34 @@ def main():
     alb = bake(plane, mat, "DIFFUSE")
     k = 1.0 + (0.35 - 1.0) * 0.5
     check(close(alb[8, 6, :3], (0.8 * k, 0.1 * k, 0.1 * k)), f"BRICK: dirt multiplies by mix(1,0.35,d) ({alb[8, 6, :3]})")
+
+    # PBR Layered 2.0 uses the same scalar maps and independently tiled UVs as terrain.
+    mat = bpy.data.materials.new("layered_scalar_maps")
+    plane.data.materials.clear()
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    mat.adm.shader = "LAYERED"
+    mat.adm.shader_version = K.SHADER_PROFILE_V2
+    for uv in plane.data.uv_layers[1].data:
+        uv.uv = (0.375, 0.5)
+    color1.data.foreach_set("color", np.tile((0.25, 0.25, 0.25, 0.25), len(color1.data)).ravel())
+    set_param(mat, "uv_scale", (2.0, 1.0, 1.0, 1.0))
+    for i in range(4):
+        set_param(mat, f"layer{i}_metallic", 0.5)
+        set_param(mat, f"layer{i}_roughness", 0.8)
+    metal_map = image("layered_metal", lambda x, y: (0.1, 0.2 if x < RES // 2 else 0.8, 0.3, 1.0))
+    rough_map = image("layered_rough", lambda x, y: (0.1, 0.2, 0.25, 1.0))
+    set_param(mat, "layer0_metallic_texture", metal_map)
+    mat.adm.params["layer0_metallic_texture"].tex_coord = 1
+    mat.adm.params["layer0_metallic_channel"].texture_channel = "G"
+    set_param(mat, "layer2_roughness_texture", rough_map)
+    mat.adm.params["layer2_roughness_channel"].texture_channel = "B"
+    mat.adm.params["layer2_roughness_invert"].texture_invert = True
+    bsdf = preview_bsdf(mat, M)
+    metal = bake_socket(plane, mat, bsdf.inputs["Metallic"].links[0].from_socket)
+    rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
+    check(close(metal[8, 8, :1], (0.475,)) and close(rough[8, 8, :1], (0.75,)),
+          "LAYERED@2.0.0 blends textured factors with layer UV1, tiling and inversion")
 
     # 3. Terrain: one-hot and all-zero blend masks ------------------------------------------------
     mat = bpy.data.materials.new("terrain")
