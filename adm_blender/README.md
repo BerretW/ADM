@@ -306,33 +306,12 @@ synchronization of simplified LOD borders, and export manifests are not implemen
 
 ### World tiles from Apparatus World Tile
 
-Very large heightmaps (up to 16k × 16k) are tiled outside Blender by the
-[Apparatus World Tile](../appartus_world_tile/README.md) tool. It writes crack-free LOD tiles, one
-TERRAIN_4 blend mask per tile (R ground, G rock, B snow, A water) and a `manifest.json`.
-
-The tool can also texture the world itself and export finished ADM tiles (one `.adm` per tile,
-LODs, mask and TERRAIN_4 material included). Import them with **File → Import → ADM Model**
-(multi-select works): each tile lands at its world position with no extra steps. The import
-route below is for texturing inside Blender instead.
-
-**Import World Tiles** (ADM Tools → Create) reads the manifest. Each tile becomes an ADM Model
-Root at its world position. With **All as LOD Groups**, the tile's LODs go into an ADM LOD Group.
-LOD 1 starts at **First Switch Distance** (0 = tile size), and each further LOD doubles that
-distance. **Single LOD** and **Only a Region** limit large imports. **Triangle Limit** refuses
-imports that would add more triangles than the limit. UV0 (`UVMap`) spans each tile for layer
-textures, and UV1 (`UVMap_1`) carries the blend mask. Files referenced outside the manifest folder
-are refused, and a failed import leaves nothing behind.
-
-All tile materials are copies of one template material, **ADM World Terrain**. The template is
-created on the first import: `uv_scale` comes from **Texture Repeat**, and the layer colours and
-roughness come from the mask zones. To change the look of the whole world:
-
-1. Select **ADM World Terrain Swatch**, a small plane next to the tiles that is excluded from export.
-2. Edit its material: layer textures, colours, `uv_scale`.
-3. Run **Sync World Terrain Materials**.
-
-Syncing rebuilds every tile material from the template. Each tile keeps its own blend mask, name and
-`animationId`. Export tiles with **All Model Roots** or one at a time.
+Very large heightmaps (up to 16k × 16k) are tiled and textured outside Blender by the
+[Apparatus World Tile](../appartus_world_tile/README.md) tool. It exports finished ADM tiles: one
+`.adm` per tile with its LODs and `adm.terrain.four_layer@2.0.0` materials whose surfaces are
+blended per vertex by `COLOR_1`. Import them with **File → Import → ADM Model** (multi-select
+works): each tile lands at its world position with no extra steps. Textures and biomes are edited
+in the tool, which re-exports only changed tiles.
 
 ### Shader profile previews
 
@@ -497,7 +476,6 @@ blender -b --factory-startup --python tests/test_interactive_blender.py
 blender -b --factory-startup --python tests/test_skeleton_blender.py
 blender -b --factory-startup --python tests/test_material_slots.py
 blender -b --factory-startup --python tests/test_texture_formats.py
-blender -b --factory-startup --python tests/test_world_tiles.py
 ```
 
 From the workspace root: `python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_gputex` runs without Blender (`test_gputex` needs NumPy).

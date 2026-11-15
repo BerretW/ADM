@@ -1,4 +1,4 @@
-"""2D overview: hillshaded heightmap, tile grid, per-tile density and selection."""
+"""2D overview: hillshaded heightmap or biome maps, tile grid, per-tile density, selection and biome paint."""
 
 from __future__ import annotations
 
@@ -25,6 +25,9 @@ def _ramp(value: float) -> QColor:
 class MapView(QWidget):
     selectionChanged = Signal()
     tileActivated = Signal(int, int)  # ix, iy
+    # Paint mode: (col, row) sample positions along the stroke, erase flag; then the stroke end.
+    paintStroke = Signal(object, bool)
+    paintFinished = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,6 +47,11 @@ class MapView(QWidget):
         self._message = "Open a heightmap or a tile manifest"
         self._show_density = False
         self._marked: set[tuple[int, int]] = set()
+        self._paint_mode = False
+        self._brush = 32.0  # radius in source samples
+        self._stroke: tuple[float, float] | None = None
+        self._erase = False
+        self._hover: QPointF | None = None
 
     # ----------------------------------------------------------------- data
     def set_image(self, image: np.ndarray | None, cols: int, rows: int) -> None:
@@ -89,6 +97,17 @@ class MapView(QWidget):
         self._marked = set(tiles)
         self.update()
 
+    def set_paint_mode(self, enabled: bool) -> None:
+        self._paint_mode = enabled
+        self._stroke = None
+        self._drag_start = self._drag_now = None
+        self.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    def set_brush(self, radius_samples: float) -> None:
+        self._brush = max(0.5, float(radius_samples))
+        self.update()
+
     def grid_size(self) -> tuple[int, int]:
         return self._nx, self._ny
 
@@ -113,6 +132,14 @@ class MapView(QWidget):
         x1 = min(self._cols - 1, x0 + self._tile)
         y1 = min(self._rows - 1, y0 + self._tile)
         return QRectF(frame.left() + x0 * sx, frame.top() + y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
+
+    def _sample_at(self, pos: QPointF) -> tuple[float, float] | None:
+        frame = self._frame()
+        if frame.isEmpty():
+            return None
+        col = (pos.x() - frame.left()) / frame.width() * (self._cols - 1)
+        row = (pos.y() - frame.top()) / frame.height() * (self._rows - 1)
+        return col, row
 
     def _tile_at(self, pos: QPointF) -> tuple[int, int] | None:
         frame = self._frame()
@@ -172,6 +199,12 @@ class MapView(QWidget):
         painter.setPen(QColor(90, 98, 108))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(frame)
+        if self._paint_mode and self._hover is not None:
+            radius = self._brush * frame.width() / (self._cols - 1)
+            painter.setPen(QPen(QColor(255, 255, 255, 200), 1))
+            painter.drawEllipse(self._hover, radius, radius)
+            painter.setPen(QPen(QColor(0, 0, 0, 160), 1, Qt.PenStyle.DotLine))
+            painter.drawEllipse(self._hover, radius + 1, radius + 1)
 
     def _drag_rect(self, frame: QRectF) -> QRectF:
         a = self._tile_rect(frame, *self._drag_start)
@@ -179,13 +212,42 @@ class MapView(QWidget):
         return a.united(b)
 
     # --------------------------------------------------------------- mouse
+    def _paint_to(self, pos: QPointF) -> None:
+        sample = self._sample_at(pos)
+        if sample is None:
+            return
+        start = self._stroke or sample
+        dx, dy = sample[0] - start[0], sample[1] - start[1]
+        steps = max(1, int((dx * dx + dy * dy) ** 0.5 / max(0.5, self._brush * 0.35)))
+        points = [(start[0] + dx * k / steps, start[1] + dy * k / steps) for k in range(1 if self._stroke else 0,
+                                                                                         steps + 1)]
+        self._stroke = sample
+        if points:
+            self.paintStroke.emit(points, self._erase)
+
+    def leaveEvent(self, event):  # noqa: N802
+        self._hover = None
+        self.update()
+
     def mousePressEvent(self, event):  # noqa: N802
+        if self._paint_mode:
+            if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+                self._erase = event.button() == Qt.MouseButton.RightButton
+                self._stroke = None
+                self._paint_to(event.position())
+            return
         tile = self._tile_at(event.position())
         if event.button() == Qt.MouseButton.LeftButton and tile:
             self._drag_start = self._drag_now = tile
             self.update()
 
     def mouseMoveEvent(self, event):  # noqa: N802
+        if self._paint_mode:
+            self._hover = event.position()
+            if self._stroke is not None:
+                self._paint_to(event.position())
+            self.update()
+            return
         tile = self._tile_at(event.position())
         if self._drag_start and tile and tile != self._drag_now:
             self._drag_now = tile
@@ -199,6 +261,11 @@ class MapView(QWidget):
             QToolTip.hideText()
 
     def mouseReleaseEvent(self, event):  # noqa: N802
+        if self._paint_mode:
+            if self._stroke is not None:
+                self._stroke = None
+                self.paintFinished.emit()
+            return
         if event.button() != Qt.MouseButton.LeftButton or not self._drag_start:
             return
         (x0, y0), (x1, y1) = self._drag_start, self._drag_now
@@ -217,6 +284,8 @@ class MapView(QWidget):
         self.selectionChanged.emit()
 
     def mouseDoubleClickEvent(self, event):  # noqa: N802
+        if self._paint_mode:
+            return
         tile = self._tile_at(event.position())
         if tile:
             self.selection = {tile}

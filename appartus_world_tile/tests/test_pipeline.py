@@ -7,8 +7,10 @@ from collections import Counter
 import numpy as np
 
 from awt.heightmap import load_heightmap
+from awt.material import PAINT_AUTO, TerrainMaterial, default_biomes
 from awt.pipeline import BuildParams, build, load_manifest
-from awt.ply import read_ply
+from awt.ply import read_ply, weight_fields
+from awt.texturing import compile_rules, surface_weights
 
 
 def _terrain(rows, cols, seed=1):
@@ -123,46 +125,92 @@ class PipelineTest(unittest.TestCase):
         with open(os.path.join(manifest["_dir"], "manifest.json"), encoding="utf-8") as handle:
             self.assertEqual(len(json.load(handle)["lods"]), 1)
 
-    def test_masks_classify_zones_and_meet_seamlessly(self):
-        from PIL import Image
+    def _assert_watertight(self, points, faces, cols, rows):
+        edges = Counter()
+        for a, b, c in faces:
+            for u, v in ((a, b), (b, c), (c, a)):
+                edges[(min(u, v), max(u, v))] += 1
+        self.assertLessEqual(max(edges.values()), 2)
+        for (u, v), count in edges.items():
+            if count == 1:
+                (cu, ru), (cv, rv) = points[u], points[v]
+                self.assertTrue((cu == cv and cu in (0, cols - 1)) or (ru == rv and ru in (0, rows - 1)),
+                                f"crack at {points[u]}-{points[v]}")
 
-        from awt.masks import ZoneRules
-
-        # West: sea at 0 m, then a lowland, a 72 deg cliff and a high plateau from x = 80.
+    def test_vertex_weights_follow_biomes_and_meet_seamlessly(self):
+        # West: sea at -3 m, then a lowland at 10 m, a 72 deg cliff and a plateau at 100 m from x = 80.
         cols, rows = 97, 49
         x = np.arange(cols, dtype=np.float32)
-        profile = np.where(x < 20, 0.0, np.where(x < 50, 10.0, np.minimum(10 + (x - 50) * 3.0, 100.0)))
+        profile = np.where(x < 20, -3.0, np.where(x < 50, 10.0, np.minimum(10 + (x - 50) * 3.0, 100.0)))
         data = np.tile(profile, (rows, 1)).astype(np.float32)
-        rules = ZoneRules(water_level_m=1.0, shore_m=2.0, snow_start_m=80, snow_full_m=95,
-                          rock_start_deg=35, rock_full_deg=50)
-        manifest = self._build(data, tile_cells=32, max_errors_m=[0.1], zones=rules, mask_px=32)
-        self.assertEqual([layer["name"] for layer in manifest["mask_layers"]], ["ground", "rock", "snow", "water"])
+        material = TerrainMaterial(biomes=default_biomes(water_m=0.0, shore_m=2.0, snow_start_m=80.0,
+                                                         snow_full_m=95.0))
+        src = os.path.join(self.tmp.name, "src.npy")
+        np.save(src, data)
+        plain = BuildParams(input_path=src, out_dir=os.path.join(self.tmp.name, "plain"), tile_cells=32,
+                            max_errors_m=[0.1], texture_error=0.0)
+        build(plain, material)
+        params = BuildParams(input_path=src, out_dir=os.path.join(self.tmp.name, "out"), tile_cells=32,
+                             max_errors_m=[0.1], texture_error=0.1, texture_detail_m=1.0)
+        build(params, material)
+        manifest = load_manifest(params.out_dir)
+        names = manifest["texturing"]["surfaces"]
+        self.assertEqual(names, material.surface_names())
+        self.assertEqual(manifest["texturing"]["rules_digest"], material.rules_digest())
+        self.assertGreater(manifest["lods"][0]["triangles"], load_manifest(plain.out_dir)["lods"][0]["triangles"])
 
-        def mask(ix, iy):
-            tile = next(t for t in manifest["tiles"] if (t["ix"], t["iy"]) == (ix, iy))
-            with Image.open(os.path.join(manifest["_dir"], tile["mask"])) as image:
-                self.assertEqual(image.mode, "RGBA")
-                self.assertEqual(list(image.size), tile["mask_px"])
-                return np.asarray(image).astype(int)
+        points, faces = _world_mesh(manifest)
+        self._assert_watertight(points, faces, cols, rows)
 
-        west, middle, east = mask(0, 1), mask(1, 1), mask(2, 1)
-        self.assertTrue(np.array_equal(west[:, -1], middle[:, 0]))
-        self.assertTrue(np.array_equal(middle[:, -1], east[:, 0]))
-        self.assertTrue(np.array_equal(mask(1, 1)[-1], mask(1, 0)[0]))
-        for m in (west, middle, east):
-            self.assertTrue(np.all(np.abs(m.sum(axis=2) - 255) <= 2))
-        self.assertEqual(tuple(west[5, 2]), (0, 0, 0, 255))  # sea
-        self.assertEqual(tuple(middle[5, 4]), (255, 0, 0, 0))  # lowland at x = 36
-        self.assertGreater(middle[5, 26, 1], 250)  # cliff at x = 58
-        self.assertGreater(east[5, -1, 2], 250)  # plateau at x = 96
+        sp, (bx, by) = manifest["spacing_m"], manifest["bounds_m"][:2]
+        seen = {}
+        for tile in manifest["tiles"]:
+            verts, _ = read_ply(os.path.join(manifest["_dir"], tile["lods"][0]["file"]))
+            fields = weight_fields(verts)
+            self.assertEqual(len(fields), len(names))
+            weights = np.column_stack([verts[f] for f in fields]).astype(int)
+            self.assertTrue(np.all(weights.sum(axis=1) == 255))
+            ox, oy = tile["origin_m"][:2]
+            for vx, vy, w in zip(verts["x"], verts["y"], weights):
+                key = (int(round((vx + ox - bx) / sp)), rows - 1 - int(round((vy + oy - by) / sp)))
+                if key in seen:  # vertices on tile edges carry the same weights in both tiles
+                    self.assertTrue(np.array_equal(seen[key], w), f"seam at {key}")
+                seen[key] = w
 
-        tile = next(t for t in manifest["tiles"] if (t["ix"], t["iy"]) == (2, 1))
-        verts, _ = read_ply(os.path.join(manifest["_dir"], tile["lods"][0]["file"]))
-        rx, ry = tile["mask_px"]
-        north_west = verts[(verts["x"] == 0) & (verts["y"] == verts["y"].max())][0]
-        self.assertAlmostEqual(float(north_west["s1"]), 0.5 / rx, places=6)
-        self.assertAlmostEqual(float(north_west["t1"]), 1 - 0.5 / ry, places=6)
-        self.assertAlmostEqual(float(north_west["s"]), 0.0)
+        def dominant(c0, c1):
+            found = {names[int(np.argmax(w))] for (c, _r), w in seen.items() if c0 <= c <= c1}
+            self.assertTrue(found)
+            return found
+
+        self.assertLessEqual(dominant(0, 15), {"sand", "mud", "algae"})
+        self.assertEqual(dominant(25, 45), {"grass"})
+        self.assertEqual(dominant(56, 74), {"rock"})
+        self.assertEqual(dominant(90, 96), {"snow"})
+
+    def test_paint_places_biome_with_smooth_bridge(self):
+        size = 129
+        data = np.full((size, size), 10.0, np.float32)
+        material = TerrainMaterial()
+        material.paint_softness_m = 8.0
+        material.ensure_paint(size, size)
+        forest = [b.name for b in material.biomes].index("forest")
+        yy, xx = np.mgrid[0:size, 0:size]
+        material.paint[(xx - 64) ** 2 + (yy - 64) ** 2 <= 20 ** 2] = forest
+        rules = compile_rules(material, 1.0, size, size)
+        gx = np.arange(0.0, size - 1, 0.25)
+        weights = surface_weights(rules, data, 1.0, 0.0, 1.0, gx, np.full_like(gx, 64.0))
+        names = material.surface_names()
+        self.assertTrue(np.allclose(weights.sum(axis=1), 1.0, atol=1e-4))
+        self.assertEqual(names[int(np.argmax(weights[len(gx) // 2]))], "forest_floor")
+        self.assertEqual(names[int(np.argmax(weights[0]))], "grass")
+        self.assertLess(float(np.abs(np.diff(weights, axis=0)).max()), 0.04)  # no hard edge
+        grass = weights[: len(gx) // 2, names.index("grass")]
+        fading = (grass > 0.2) & (grass < 0.95)
+        self.assertTrue(np.all(np.diff(grass)[fading[1:]] < -1e-4))  # fades evenly, no terraces
+        with self.assertRaises(ValueError):
+            compile_rules(material, 1.0, size + 1, size)  # paint made for another heightmap
+        material.paint[:] = PAINT_AUTO
+        self.assertFalse(material.has_paint())
 
     def test_png16_heightmap_scales_to_height_range(self):
         from PIL import Image

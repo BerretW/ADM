@@ -12,12 +12,11 @@ from dataclasses import asdict, dataclass, field
 
 from . import __version__
 from .adm_export import ExportSettings
-from .masks import ZoneRules
 from .material import TerrainMaterial
 from .pipeline import BuildParams
 
 PROJECT_FORMAT = "apparatus-world-tile-project"
-PROJECT_VERSION = 1
+PROJECT_VERSION = 2
 PROJECT_EXTENSION = ".awtp"
 PROJECT_FILTER = "Apparatus World Tile project (*.awtp)"
 
@@ -45,7 +44,6 @@ class Project:
         params = asdict(self.params)
         params["input_path"] = _relative(self.params.input_path, base)
         params["out_dir"] = _relative(self.params.out_dir, base)
-        params["zones"] = self.params.zones.to_dict()
         if params["raw_size"] is not None:
             params["raw_size"] = list(params["raw_size"])
         export = asdict(self.export)
@@ -64,21 +62,23 @@ class Project:
     def from_dict(cls, data: dict, path: str = "") -> "Project":
         if data.get("format") != PROJECT_FORMAT:
             raise ValueError("Not an Apparatus World Tile project")
-        if int(data.get("format_version", 0)) > PROJECT_VERSION:
-            raise ValueError(f"Project version {data['format_version']} is newer than this tool")
+        version = int(data.get("format_version", 0))
+        if version > PROJECT_VERSION:
+            raise ValueError(f"Project version {version} is newer than this tool")
+        if version < PROJECT_VERSION:
+            raise ValueError(f"Project version {version} uses layer masks; create a new project")
         base = os.path.dirname(os.path.abspath(path)) if path else None
         raw = dict(data.get("build") or {})
         fields = BuildParams.__dataclass_fields__
         params = BuildParams(input_path="", out_dir="")
         for key, value in raw.items():
-            if key in fields and key not in ("zones", "input_path", "out_dir", "raw_size"):
+            if key in fields and key not in ("input_path", "out_dir", "raw_size"):
                 setattr(params, key, type(getattr(params, key))(value) if not isinstance(value, list) else
                         [float(v) for v in value])
         params.input_path = _absolute(raw.get("input_path"), base)
         params.out_dir = _absolute(raw.get("out_dir"), base)
         size = raw.get("raw_size")
         params.raw_size = (int(size[0]), int(size[1])) if isinstance(size, list) and len(size) == 2 else None
-        params.zones = ZoneRules.from_dict(raw.get("zones") or {})
         export = ExportSettings()
         for key, value in (data.get("export") or {}).items():
             if key in ExportSettings.__dataclass_fields__ and key != "out_dir":

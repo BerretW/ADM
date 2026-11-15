@@ -176,8 +176,13 @@ def _vertex(index, verts, nv, gx, gy, ox, oy, stride):
 
 
 @njit(cache=True, nogil=True)
-def extract_tile(h, scale, offset, w, hgt, t, ti, tj, nonleaf_levels, errors, max_error):
+def extract_tile(h, scale, offset, w, hgt, t, ti, tj, nonleaf_levels, errors, max_error,
+                 werrors, max_werror, min_leg2):
     """Triangulate one tile.
+
+    A triangle splits when its height error exceeds ``max_error`` or, for triangles whose legs
+    are at least ``sqrt(min_leg2)`` cells, when its texture error (``werrors``, 0..255) exceeds
+    ``max_werror``.  Pass ``min_leg2 = inf`` to ignore texture errors.
 
     Returns ``(verts, faces, measured)``: ``verts`` holds global grid ``(x, y)``
     pairs, ``faces`` local indices wound counter-clockwise in world space
@@ -215,12 +220,19 @@ def extract_tile(h, scale, offset, w, hgt, t, ti, tj, nonleaf_levels, errors, ma
         while probe > 3:
             probe >>= 1
             level += 1
-        if level < nonleaf_levels and errors[(ay + by) >> 1, (ax + bx) >> 1] > max_error:
-            # The split choice is stored above the existing path bits.
-            stack[sp] = tid + (1 << (level + 1))
-            stack[sp + 1] = tid + (1 << (level + 2))
-            sp += 2
-            continue
+        if level < nonleaf_levels:
+            mx = (ax + bx) >> 1
+            my = (ay + by) >> 1
+            split = errors[my, mx] > max_error
+            if not split:
+                leg2 = (cx - ax) * (cx - ax) + (cy - ay) * (cy - ay)
+                split = leg2 >= min_leg2 and werrors[my, mx] > max_werror
+            if split:
+                # The split choice is stored above the existing path bits.
+                stack[sp] = tid + (1 << (level + 1))
+                stack[sp + 1] = tid + (1 << (level + 2))
+                sp += 2
+                continue
         if _side(ax, ay, bx, by, cx, cy, last_x, last_y) != 0:
             continue
         ia, nv = _vertex(index, verts, nv, ax, ay, ox, oy, stride)

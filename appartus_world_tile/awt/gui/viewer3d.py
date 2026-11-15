@@ -9,11 +9,11 @@ from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton,
                                QVBoxLayout, QWidget)
 
-from ..masks import layer_colors
-from ..ply import read_ply
+from ..material import srgb_to_linear
+from ..ply import read_ply, weight_fields
 
 TRIANGLE_BUDGET = 8_000_000
-COLOR_MODES = ("Height", "Zones (masks)", "Tiles", "Material")
+COLOR_MODES = ("Height", "Surfaces (vertex layers)", "Tiles", "Material")
 MATERIAL_MODE = 3
 
 
@@ -34,11 +34,11 @@ def _tile_color(ix: int, iy: int) -> np.ndarray:
 
 def load_tiles(manifest: dict, tiles, lod: int) -> dict:
     """Merge the selected tiles of one LOD into world-space arrays."""
-    from PIL import Image
-
     wanted = set(tiles)
     root = manifest["_dir"]
-    colors = layer_colors()
+    texturing = manifest.get("texturing") or {}
+    colors = np.array([[srgb_to_linear(c) for c in rgb] for rgb in texturing.get("surface_colors", [])],
+                      np.float32).reshape(-1, 3)
     points, faces, normals, zones, tint = [], [], [], [], []
     base = 0
     for tile in manifest["tiles"]:
@@ -51,14 +51,12 @@ def load_tiles(manifest: dict, tiles, lod: int) -> dict:
         faces.append(tri.astype(np.int64) + base)
         base += len(verts)
         tint.append(np.broadcast_to(_tile_color(tile["ix"], tile["iy"]), (len(verts), 3)))
-        mask_file = tile.get("mask")
-        if mask_file and os.path.exists(os.path.join(root, mask_file)):
-            with Image.open(os.path.join(root, mask_file)) as image:
-                mask = np.asarray(image.convert("RGBA"), np.float32) / 255.0
-            ry, rx = mask.shape[:2]
-            col = np.clip((verts["s1"] * rx).astype(int), 0, rx - 1)
-            row = np.clip(((1.0 - verts["t1"]) * ry).astype(int), 0, ry - 1)
-            zones.append(np.clip(mask[row, col] @ colors * 255, 0, 255).astype(np.uint8))
+        names = weight_fields(verts)
+        if names and len(names) == len(colors):
+            weights = np.column_stack([verts[name] for name in names]).astype(np.float32) / 255.0
+            linear = np.clip(weights @ colors, 0.0, 1.0)
+            srgb = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * np.power(linear, 1 / 2.4) - 0.055)
+            zones.append((srgb * 255.0 + 0.5).astype(np.uint8))
         else:
             zones.append(np.full((len(verts), 3), 128, np.uint8))
     if not points:
@@ -125,8 +123,8 @@ class Viewer3D(QWidget):
         self.lod.setToolTip("Level of detail to display")
         self.color = QComboBox()
         self.color.addItems(COLOR_MODES)
-        self.color.setToolTip("Zones show the blend masks the way TERRAIN_4 will mix the layers; "
-                              "Material shows the layer textures blended by the masks")
+        self.color.setToolTip("Surfaces mixes the surface colours by the built vertex weights (COLOR_1); "
+                              "Material shows the surface textures blended the same way")
         self.exaggeration = QDoubleSpinBox()
         self.exaggeration.setRange(0.1, 20.0)
         self.exaggeration.setSingleStep(0.5)
@@ -309,7 +307,7 @@ class Viewer3D(QWidget):
             self._redraw()
             image = result[0]
             self.status.setText(f"Material preview {image.shape[1]:,} × {image.shape[0]:,} px "
-                                "(albedo and masks; lighting without normal maps)")
+                                "(albedo blended by vertex weights; lighting without normal maps)")
 
     def _rescale(self) -> None:
         if self._actor is not None:

@@ -11,7 +11,7 @@ from . import __version__
 
 def _build(args: argparse.Namespace) -> int:
     from .heightmap import load_heightmap
-    from .pipeline import BuildParams, build, estimate_memory, suggest_zones
+    from .pipeline import BuildParams, build, estimate_memory, fit_material
 
     hm = load_heightmap(args.input, tuple(args.raw_size) if args.raw_size else None)
     spacing = args.spacing
@@ -32,38 +32,44 @@ def _build(args: argparse.Namespace) -> int:
         origin=args.origin,
         threads=args.threads,
         raw_size=tuple(args.raw_size) if args.raw_size else None,
-        masks=not args.no_masks,
-        mask_px=args.mask_px,
+        texture_error=args.texture_error,
+        texture_detail_m=args.texture_detail,
     )
-    zones = suggest_zones(hm, params)
-    if args.water_level is not None:
-        zones.water_level_m = args.water_level
-    if args.shore is not None:
-        zones.shore_m = args.shore
-    zones.water = not args.no_water
-    if args.snow:
-        zones.snow_start_m, zones.snow_full_m = args.snow
-    zones.snow = not args.no_snow
-    if args.rock_slope:
-        zones.rock_start_deg, zones.rock_full_deg = args.rock_slope
-    params.zones = zones
     params.validate()
+    project = None
+    if args.project:
+        from .project import load_project
+
+        project = load_project(args.project)
+        material = project.material
+    else:
+        from .material import TerrainMaterial
+
+        material = TerrainMaterial()
+    if args.project is None or args.fit:
+        levels = fit_material(hm, params, material, water_m=args.water_level, shore_m=args.shore,
+                              snow_start_m=args.snow[0] if args.snow else None,
+                              snow_full_m=args.snow[1] if args.snow else None)
+        print(f"biome levels: water <= {levels['water_m']:g} m (+{levels['shore_m']:g} m shore), "
+              f"snow {levels['snow_start_m']:g}..{levels['snow_full_m']:g} m")
     memory = estimate_memory(hm.width, hm.height, tile_cells, hm.data.itemsize)
     print(f"{hm.width} x {hm.height} samples, {spacing:g} m/sample, tile {tile_cells} cells "
           f"({tile_cells * spacing:g} m), working memory about {memory / 2**30:.2f} GiB")
-    if params.masks:
-        print(f"zones: water <= {zones.water_level_m:g} m (+{zones.shore_m:g} m shore)"
-              f"{'' if zones.water else ' [off]'}, snow {zones.snow_start_m:g}..{zones.snow_full_m:g} m"
-              f"{'' if zones.snow else ' [off]'}, rock {zones.rock_start_deg:g}..{zones.rock_full_deg:g} deg")
 
-    manifest = build(params, _progress_printer(), heightmap=hm)
+    manifest = build(params, material, _progress_printer(), heightmap=hm)
     if args.save_project:
         from .project import Project
 
-        project = Project.new(args.input)
+        if project is None:
+            project = Project.new(args.input)
         project.params = params
+        project.material = material
         project.save(args.save_project)
         print(f"\nproject saved to {project.path}", end="")
+    unshared = manifest["texturing"].get("unshared_neighbours") or []
+    if unshared:
+        print("\nwarning: touching biomes without a shared surface (hard texture edge): "
+              + ", ".join("-".join(pair) for pair in unshared), end="")
     print()
     for lod in manifest["lods"]:
         print(f"LOD {lod['index']}: max error {lod['max_error_m']:g} m, measured {lod['measured_error_m']:.4f} m, "
@@ -99,7 +105,7 @@ def _export(args: argparse.Namespace) -> int:
         project.export.validate = False
     if args.build:
         print(f"building {project.params.input_path} -> {project.params.out_dir}")
-        build(project.params, _progress_printer())
+        build(project.params, project.material, _progress_printer())
         print()
     manifest = load_manifest(project.params.out_dir)
     mode = "all" if args.all else "selected" if args.tiles else "changed"
@@ -107,6 +113,10 @@ def _export(args: argparse.Namespace) -> int:
     print()
     print(f"{len(result['written'])} tiles written ({result['bytes'] / 2**20:,.1f} MiB), "
           f"{result['skipped']} unchanged or not selected, {result['seconds']:.1f} s -> {result['out_dir']}")
+    if result["conflicts"]:
+        print(f"note: {result['conflicts']:,} triangles needed more than four surfaces; the weakest were dropped")
+    for warning in result["warnings"]:
+        print(f"warning: {warning}")
     return 0
 
 
@@ -137,19 +147,20 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--origin", choices=("corner", "center"), default="corner")
     b.add_argument("--threads", type=int, default=0, help="worker threads (default all cores)")
     b.add_argument("--raw-size", type=int, nargs=2, metavar=("W", "H"), help="RAW width and height")
-    z = b.add_argument_group("layer masks (R ground, G rock, B snow, A water); thresholds default to the height distribution")
-    z.add_argument("--no-masks", action="store_true", help="do not write per-tile blend masks")
-    z.add_argument("--mask-px", type=int, default=0, help="mask pixels per full tile side (default = tile cells, max 2048)")
-    z.add_argument("--water-level", type=float, help="height in metres at and below which the surface is water")
-    z.add_argument("--shore", type=float, help="shore blend band above the water level, metres")
-    z.add_argument("--no-water", action="store_true", help="no water layer")
+    z = b.add_argument_group("texturing (biomes blend surfaces; COLOR_1 vertex weights)")
+    z.add_argument("--project", metavar="FILE", help="take surfaces, biomes and paint from an .awtp project")
+    z.add_argument("--fit", action="store_true", help="with --project: re-fit biome heights to this heightmap")
+    z.add_argument("--water-level", type=float, help="water surface height, metres (default from the heights)")
+    z.add_argument("--shore", type=float, help="shore band above the water level, metres")
     z.add_argument("--snow", type=float, nargs=2, metavar=("START", "FULL"), help="snow fade-in heights, metres")
-    z.add_argument("--no-snow", action="store_true", help="no snow layer")
-    z.add_argument("--rock-slope", type=float, nargs=2, metavar=("START", "FULL"), help="rock fade-in slope, degrees")
+    z.add_argument("--texture-error", type=float, default=0.15,
+                   help="split triangles where vertex weights miss the field by more than this (0..1, 0 = off)")
+    z.add_argument("--texture-detail", type=float, default=4.0, metavar="M",
+                   help="shortest triangle leg the texture split may create, metres (default 4)")
     b.add_argument("--save-project", metavar="FILE", help="also save these settings as an .awtp project")
     b.set_defaults(func=_build)
 
-    e = sub.add_parser("export", help="write ADM tiles with the project's TERRAIN_4 material")
+    e = sub.add_parser("export", help="write ADM tiles with the project's four_layer@2.0.0 materials")
     e.add_argument("project", help=".awtp project file")
     which = e.add_mutually_exclusive_group()
     which.add_argument("--all", action="store_true", help="export every tile (default: only changed tiles)")

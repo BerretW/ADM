@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 
-VERTEX_DTYPE = np.dtype(
-    [
-        ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
-        ("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4"),
-        ("s", "<f4"), ("t", "<f4"),  # UV0: 0..1 per full tile, for repeating layer textures
-        ("s1", "<f4"), ("t1", "<f4"),  # UV1: blend mask of this tile (half-texel inset)
-    ]
-)
+BASE_FIELDS = [
+    ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+    ("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4"),
+    ("s", "<f4"), ("t", "<f4"),  # UV0: 0..1 per full tile, for repeating surface textures
+]
 FACE_DTYPE = np.dtype([("n", "u1"), ("v", "<i4", (3,))])
 
 _TYPES = {
@@ -20,24 +17,40 @@ _TYPES = {
     "int": "<i4", "int32": "<i4", "uint": "<u4", "uint32": "<u4",
     "float": "<f4", "float32": "<f4", "double": "<f8", "float64": "<f8",
 }
+_NAMES = {"i1": "char", "u1": "uchar", "i2": "short", "u2": "ushort", "i4": "int", "u4": "uint",
+          "f4": "float", "f8": "double"}
+
+
+def vertex_dtype(weights: int) -> np.dtype:
+    """Base vertex fields plus ``w0..w{weights-1}`` surface weights (uchar, sum 255)."""
+    return np.dtype(BASE_FIELDS + [(f"w{i}", "u1") for i in range(weights)])
+
+
+def weight_fields(vertices: np.ndarray) -> list[str]:
+    names = vertices.dtype.names or ()
+    count = 0
+    while f"w{count}" in names:
+        count += 1
+    return [f"w{i}" for i in range(count)]
 
 
 def write_ply(path: str, vertices: np.ndarray, faces: np.ndarray, comment: str = "") -> None:
-    """``vertices`` is a VERTEX_DTYPE array, ``faces`` an (n, 3) int array."""
+    """``vertices`` is a structured array of little-endian scalars, ``faces`` an (n, 3) int array."""
     face_rows = np.empty(len(faces), FACE_DTYPE)
     face_rows["n"] = 3
     face_rows["v"] = faces
+    dtype = np.dtype([(name, vertices.dtype[name].newbyteorder("<")) for name in vertices.dtype.names])
     header = ["ply", "format binary_little_endian 1.0"]
     if comment:
         header.append(f"comment {comment}")
     header.append(f"element vertex {len(vertices)}")
-    header += [f"property float {name}" for name in VERTEX_DTYPE.names]
+    header += [f"property {_NAMES[dtype[name].str[1:]]} {name}" for name in dtype.names]
     header.append(f"element face {len(faces)}")
     header.append("property list uchar int vertex_indices")
     header.append("end_header")
     with open(path, "wb") as handle:
         handle.write(("\n".join(header) + "\n").encode("ascii"))
-        handle.write(np.ascontiguousarray(vertices, VERTEX_DTYPE).tobytes())
+        handle.write(np.ascontiguousarray(vertices.astype(dtype, copy=False)).tobytes())
         handle.write(face_rows.tobytes())
 
 

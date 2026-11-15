@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import math
 import os
 import time
 
@@ -13,19 +15,21 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
                                QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
                                QVBoxLayout, QWidget)
 
+from .. import texturing
 from ..adm_export import Cancelled as ExportCancelled
-from ..adm_export import ExportSettings, changed_tiles, export_tiles
+from ..adm_export import ExportSettings, changed_tiles, export_tiles, rules_outdated
 from ..heightmap import Heightmap, load_heightmap, preview
-from ..masks import LAYERS, ZoneRules, zones_preview
-from ..pipeline import (BuildParams, Cancelled, build, estimate_memory, height_transform, hillshade,
-                        load_manifest, suggest_zones, tile_grid)
+from ..material import PAINT_AUTO, Band, TerrainMaterial
+from ..pipeline import (BuildParams, Cancelled, build, estimate_memory, fit_material, height_transform, hillshade,
+                        load_manifest, tile_grid)
 from ..project import PROJECT_EXTENSION, PROJECT_FILTER, Project, load_project
 from .map_view import MapView
-from .material_panel import MaterialPanel
-from .viewer3d import TRIANGLE_BUDGET, Viewer3D, triangle_count
+from .material_panel import MaterialPanel, swatch
+from .viewer3d import MATERIAL_MODE, TRIANGLE_BUDGET, Viewer3D, triangle_count
 
 HEIGHTMAP_FILTER = "Heightmaps (*.png *.tif *.tiff *.r16 *.raw *.npy *.pgm);;All files (*)"
-MAP_MODES = ("Relief", "Zones", "Mesh density")
+MAP_MODES = ("Relief", "Biomes", "Surfaces", "Mesh density")
+BIOMES_MODE, SURFACES_MODE, DENSITY_MODE = 1, 2, 3
 APP_NAME = "Apparatus World Tile"
 
 
@@ -93,15 +97,28 @@ def _spin(lo, hi, value, step=1.0, decimals=2, suffix=""):
     return box
 
 
+def _band_factor(band: Band, value: float) -> float:
+    def ramp(edge, rising):
+        if band.fade <= 0:
+            return 1.0 if (value >= edge) == rising else 0.0
+        t = min(1.0, max(0.0, (value - edge) / band.fade + 0.5))
+        t = t * t * (3 - 2 * t)
+        return t if rising else 1.0 - t
+
+    low = ramp(band.min, True) if band.min is not None else 1.0
+    high = ramp(band.max, False) if band.max is not None else 1.0
+    return low * high
+
+
 class HeightHistogram(QWidget):
-    """Height distribution with the water and snow thresholds."""
+    """Height distribution coloured by the biome that wins on flat ground, with the biome height limits."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(70)
         self._counts = None
         self._range = (0.0, 1.0)
-        self._rules = ZoneRules()
+        self._material = TerrainMaterial()
 
     def set_heights(self, heights_m: np.ndarray | None) -> None:
         if heights_m is None or heights_m.size == 0:
@@ -114,9 +131,22 @@ class HeightHistogram(QWidget):
             self._range = (lo, hi)
         self.update()
 
-    def set_rules(self, rules: ZoneRules) -> None:
-        self._rules = rules
+    def set_material(self, material: TerrainMaterial) -> None:
+        self._material = material
         self.update()
+
+    def _flat_biome(self, height: float):
+        """Biome with the largest share at ``height`` on flat ground (automatic rules only)."""
+        biomes = self._material.biomes
+        remaining = 1.0
+        best, best_share = biomes[0], 0.0
+        for biome in reversed(biomes[1:]):
+            share = remaining * (_band_factor(biome.height, height) * _band_factor(biome.slope, 0.0)
+                                 if biome.auto else 0.0)
+            if share > best_share:
+                best, best_share = biome, share
+            remaining -= share
+        return best if best_share >= remaining else biomes[0]
 
     def paintEvent(self, event):  # noqa: N802
         painter = QPainter(self)
@@ -129,16 +159,9 @@ class HeightHistogram(QWidget):
         w, h = self.width(), self.height() - 2
         peak = float(self._counts.max()) or 1.0
         n = len(self._counts)
-        rules = self._rules
-        colors = {layer["name"]: QColor(*layer["color"]) for layer in LAYERS}
         for i, value in enumerate(self._counts):
             height = lo + (i + 0.5) / n * (hi - lo)
-            if rules.water and height <= rules.water_level_m + rules.shore_m * 0.5:
-                color = colors["water"]
-            elif rules.snow and height >= (rules.snow_start_m + rules.snow_full_m) / 2:
-                color = colors["snow"]
-            else:
-                color = colors["ground"]
+            color = QColor(*self._flat_biome(height).color)
             x0 = int(i * w / n)
             x1 = int((i + 1) * w / n)
             bar = int(value / peak * h)
@@ -150,12 +173,11 @@ class HeightHistogram(QWidget):
                 painter.setPen(QPen(color, 1, style))
                 painter.drawLine(int(x), 0, int(x), h)
 
-        if rules.water:
-            mark(rules.water_level_m, QColor(110, 180, 255))
-            mark(rules.water_level_m + rules.shore_m, QColor(110, 180, 255), Qt.PenStyle.DashLine)
-        if rules.snow:
-            mark(rules.snow_start_m, QColor(255, 255, 255), Qt.PenStyle.DashLine)
-            mark(rules.snow_full_m, QColor(255, 255, 255))
+        for biome in self._material.biomes[1:]:
+            if biome.auto:
+                for edge in (biome.height.min, biome.height.max):
+                    if edge is not None:
+                        mark(edge, QColor(*biome.color).lighter(130), Qt.PenStyle.DashLine)
         painter.setPen(QColor(150, 158, 168))
         painter.drawText(4, 12, f"{lo:.0f} m")
         text = f"{hi:.0f} m"
@@ -171,7 +193,8 @@ class MainWindow(QMainWindow):
         self.manifest: dict | None = None
         self._preview: np.ndarray | None = None  # strided heightmap samples
         self._relief: np.ndarray | None = None
-        self._zones_image: np.ndarray | None = None
+        self._field: texturing.FieldPreview | None = None
+        self._field_error = ""
         self._worker: Worker | None = None
         self._build_started = 0.0
         self._source_path = ""
@@ -187,16 +210,16 @@ class MainWindow(QMainWindow):
 
         self._make_widgets()
         self._make_menu()
-        self._zones_timer = QTimer(self, singleShot=True, interval=200)
-        self._zones_timer.timeout.connect(self._refresh_zones)
+        self._field_timer = QTimer(self, singleShot=True, interval=150)
+        self._field_timer.timeout.connect(self._refresh_field)
         self._check_timer = QTimer(self, singleShot=True, interval=400)
         self._check_timer.timeout.connect(self._check_changes)
         self._material_timer = QTimer(self, singleShot=True, interval=300)
-        self._material_timer.timeout.connect(lambda: self.viewer.set_material(self.material_panel.material()))
+        self._material_timer.timeout.connect(lambda: self.viewer.set_material(self._material()))
         self._connect()
         self._update_tile_info()
         self._set_busy(False)
-        self.viewer.set_material(self.material_panel.material())
+        self._material_changed()
         self._update_title()
 
     # ---------------------------------------------------------------- UI
@@ -238,30 +261,22 @@ class MainWindow(QMainWindow):
         self.tile_info.setWordWrap(True)
         self.tile_info.setStyleSheet("color: #9aa3ad")
 
-        # Masks and zones
-        self.masks = QCheckBox("Write TERRAIN_4 blend mask per tile")
-        self.masks.setChecked(True)
-        self.mask_px = QSpinBox()
-        self.mask_px.setRange(0, 8192)
-        self.mask_px.setSpecialValueText("Same as tile cells")
-        self.mask_px.setSuffix(" px")
-        self.water = QCheckBox("Water (A)")
-        self.water.setChecked(True)
-        self.water_level = _spin(-20000, 20000, 0.0, 1, 2, " m")
-        self.shore = _spin(0, 5000, 2.0, 0.5, 2, " m")
-        self.snow = QCheckBox("Snow (B)")
-        self.snow.setChecked(True)
-        self.snow_start = _spin(-20000, 20000, 400.0, 10, 1, " m")
-        self.snow_full = _spin(-20000, 20000, 450.0, 10, 1, " m")
-        self.snow_slope = _spin(0, 90, 55.0, 1, 1, "°")
-        self.rock_start = _spin(0, 90, 30.0, 1, 1, "°")
-        self.rock_full = _spin(0, 90, 45.0, 1, 1, "°")
-        self.auto_zones = QPushButton("Suggest from heights")
+        # Texturing
         self.histogram = HeightHistogram()
+        self.texture_error = _spin(0.0, 1.0, 0.15, 0.05, 2)
+        self.texture_error.setSpecialValueText("Off")
+        self.texture_error.setToolTip("Split triangles where the interpolated surface weights miss the biome "
+                                      "field by more than this share (0..1). Off keeps the height-only mesh.")
+        self.texture_detail = _spin(0.01, 10000, 4.0, 0.5, 2, " m")
+        self.texture_detail.setToolTip("Shortest triangle leg the texture split may create")
+        self.rebuild_note = QLabel()
+        self.rebuild_note.setWordWrap(True)
+        self.rebuild_note.setStyleSheet("color: #e0b86a")
+        self.rebuild_note.hide()
 
         # Output
         self.out_dir = QLineEdit()
-        self.out_dir.setPlaceholderText("Folder for built tiles (PLY meshes, masks, manifest)")
+        self.out_dir.setPlaceholderText("Folder for built tiles (PLY meshes with vertex weights, manifest)")
         self.browse_out = QPushButton("…")
         self.browse_out.setFixedWidth(32)
         self.threads = QSpinBox()
@@ -291,9 +306,9 @@ class MainWindow(QMainWindow):
         self.lod_distance = _spin(0, 1_000_000, 0.0, 10, 1, " m")
         self.lod_distance.setSpecialValueText("Tile size")
         self.lod_distance.setToolTip("Camera distance where LOD 1 takes over; every further LOD doubles it")
-        self.embed = QCheckBox("Embed layer textures in every tile")
-        self.embed.setToolTip("Off: layer textures are written once into textures/ next to the tiles "
-                              "(ADM_external_images_v1). Blend masks are always embedded.")
+        self.embed = QCheckBox("Embed surface textures in every tile")
+        self.embed.setToolTip("Off: surface textures are written once into textures/ next to the tiles "
+                              "(ADM_external_images_v1).")
         self.validate = QCheckBox("Validate every file")
         self.validate.setChecked(True)
         self.export_state = QLabel("Build or open tiles first")
@@ -333,33 +348,18 @@ class MainWindow(QMainWindow):
         form.addRow("", self.tile_info)
         column.addWidget(group)
 
-        group = QGroupBox("Material zones")
+        group = QGroupBox("Texturing")
         form = QFormLayout(group)
-        form.addRow(self.masks)
-        form.addRow("Mask size", self.mask_px)
         form.addRow(self.histogram)
-        row = QHBoxLayout()
-        row.addWidget(self.water_level)
-        row.addWidget(QLabel("shore"))
-        row.addWidget(self.shore)
-        form.addRow(self.water, row)
-        row = QHBoxLayout()
-        row.addWidget(self.snow_start)
-        row.addWidget(QLabel("to"))
-        row.addWidget(self.snow_full)
-        form.addRow(self.snow, row)
-        form.addRow("Snow up to slope", self.snow_slope)
-        row = QHBoxLayout()
-        row.addWidget(self.rock_start)
-        row.addWidget(QLabel("to"))
-        row.addWidget(self.rock_full)
-        form.addRow("Rock (G) slope", row)
-        form.addRow("", self.auto_zones)
-        legend = QLabel("Mask channels: <b style='color:#7fa654'>R ground</b>, "
-                        "<b style='color:#a69c92'>G rock</b>, <b style='color:#eef1f6'>B snow</b>, "
-                        "<b style='color:#5b9bd5'>A water</b> = TERRAIN_4 layers 0–3")
+        form.addRow("Texture error", self.texture_error)
+        form.addRow("Texture detail", self.texture_detail)
+        legend = QLabel("Biomes and surfaces are set on the Material tab and painted on the map. The build "
+                        "stores per-vertex surface weights (COLOR_1) and adds triangles where the blend "
+                        "needs them.")
         legend.setWordWrap(True)
+        legend.setStyleSheet("color: #9aa3ad")
         form.addRow(legend)
+        form.addRow(self.rebuild_note)
         column.addWidget(group)
 
         group = QGroupBox("Build")
@@ -384,9 +384,10 @@ class MainWindow(QMainWindow):
         form.addRow("LOD 1 from", self.lod_distance)
         form.addRow(self.embed)
         form.addRow(self.validate)
-        note = QLabel("Each tile becomes <tile>.adm with its LODs and blend mask, placed at its world "
-                      "position. world.json remembers what was exported, so Export changed writes only "
-                      "tiles whose terrain, mask, material or settings differ.")
+        note = QLabel("Each tile becomes <tile>.adm with its LODs, placed at its world position. Triangles "
+                      "are grouped into four_layer@2.0.0 materials of up to four surfaces, blended by "
+                      "COLOR_1. world.json remembers what was exported, so Export changed writes only "
+                      "tiles whose terrain, weights, material or settings differ.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #9aa3ad")
         form.addRow(note)
@@ -426,6 +427,14 @@ class MainWindow(QMainWindow):
         self.show_3d = QPushButton("Show selection in 3D")
         self.map_hint = QLabel("Click or drag to select tiles, Shift adds, double-click opens one tile in 3D")
         self.map_hint.setStyleSheet("color: #9aa3ad")
+        self.paint = QPushButton("Paint biomes")
+        self.paint.setCheckable(True)
+        self.paint.setToolTip("Left drag paints the chosen biome, right drag returns to the automatic rules")
+        self.paint_biome = QComboBox()
+        self.paint_biome.setToolTip("Biome to paint")
+        self.brush = _spin(0.1, 100000, 50.0, 5, 1, " m")
+        self.brush.setToolTip("Brush radius")
+        self.clear_paint = QPushButton("Clear paint")
         map_tab = QWidget()
         layout = QVBoxLayout(map_tab)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -435,6 +444,12 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.map_mode)
         bar.addWidget(self.select_all)
         bar.addWidget(self.show_3d)
+        bar.addSpacing(16)
+        bar.addWidget(self.paint)
+        bar.addWidget(self.paint_biome)
+        bar.addWidget(QLabel("radius"))
+        bar.addWidget(self.brush)
+        bar.addWidget(self.clear_paint)
         bar.addStretch(1)
         layout.addLayout(bar)
         layout.addWidget(self.map, 1)
@@ -482,13 +497,6 @@ class MainWindow(QMainWindow):
         self.remap.toggled.connect(self._scale_changed)
         self.tile_cells.currentIndexChanged.connect(self._update_tile_info)
         self.lods.textChanged.connect(self._update_tile_info)
-        self.mask_px.valueChanged.connect(self._update_tile_info)
-        for widget in (self.water_level, self.shore, self.snow_start, self.snow_full, self.snow_slope,
-                       self.rock_start, self.rock_full):
-            widget.valueChanged.connect(self._zones_changed)
-        for widget in (self.water, self.snow, self.masks):
-            widget.toggled.connect(self._zones_changed)
-        self.auto_zones.clicked.connect(self._suggest_zones)
         self.build_button.clicked.connect(self._start_build)
         self.cancel_button.clicked.connect(self._cancel)
         self.map_mode.currentIndexChanged.connect(self._update_map_image)
@@ -496,22 +504,29 @@ class MainWindow(QMainWindow):
         self.show_3d.clicked.connect(self._show_selection)
         self.map.tileActivated.connect(lambda ix, iy: self._show_tiles({(ix, iy)}, 0))
         self.map.selectionChanged.connect(self._selection_changed)
+        self.paint.toggled.connect(self._paint_toggled)
+        self.brush.valueChanged.connect(self._update_brush)
+        self.spacing.valueChanged.connect(self._update_brush)
+        self.clear_paint.clicked.connect(self._clear_paint)
+        self.map.paintStroke.connect(self._paint_stroke)
+        self.map.paintFinished.connect(self._paint_finished)
+        self.material_panel.fit_requested.connect(self._fit_material)
+        self.material_panel.terrain_preview_requested.connect(self._show_material_on_terrain)
 
         self.browse_export.clicked.connect(self._choose_export)
         self.export_changed.clicked.connect(lambda: self._start_export("changed"))
         self.export_selected.clicked.connect(lambda: self._start_export("selected"))
         self.export_all.clicked.connect(lambda: self._start_export("all"))
-        self.material_panel.changed.connect(self._material_timer.start)
+        self.material_panel.changed.connect(self._material_changed)
         for signal in (self.material_panel.changed, self.export_dir.textChanged, self.lod_distance.valueChanged,
                        self.embed.toggled):
             signal.connect(self._schedule_check)
 
         # Anything stored in the project marks it modified; the tile selection does not.
-        for box in (self.spacing, self.height_min, self.height_max, self.mask_px, self.threads, self.water_level,
-                    self.shore, self.snow_start, self.snow_full, self.snow_slope, self.rock_start, self.rock_full,
-                    self.lod_distance):
+        for box in (self.spacing, self.height_min, self.height_max, self.threads, self.texture_error,
+                    self.texture_detail, self.lod_distance):
             box.valueChanged.connect(self._mark_dirty)
-        for box in (self.remap, self.masks, self.water, self.snow, self.embed, self.validate):
+        for box in (self.remap, self.embed, self.validate):
             box.toggled.connect(self._mark_dirty)
         for edit in (self.lods, self.out_dir, self.export_dir):
             edit.textChanged.connect(self._mark_dirty)
@@ -536,42 +551,18 @@ class MainWindow(QMainWindow):
             max_errors_m=errors,
             origin=self.origin.currentData(),
             threads=self.threads.value(),
-            masks=self.masks.isChecked(),
-            mask_px=self.mask_px.value(),
-            zones=self._rules(),
             raw_size=self._raw_size,
+            texture_error=self.texture_error.value(),
+            texture_detail_m=self.texture_detail.value(),
         )
+
+    def _material(self) -> TerrainMaterial:
+        return self.material_panel.material()
 
     def _export_settings(self) -> ExportSettings:
         return ExportSettings(out_dir=self.export_dir.text().strip(), lod_distance_m=self.lod_distance.value(),
                               embed_textures=self.embed.isChecked(), validate=self.validate.isChecked(),
                               threads=self.threads.value())
-
-    def _rules(self) -> ZoneRules:
-        return ZoneRules(
-            water=self.water.isChecked(), water_level_m=self.water_level.value(), shore_m=self.shore.value(),
-            snow=self.snow.isChecked(), snow_start_m=self.snow_start.value(),
-            snow_full_m=self.snow_full.value(), rock_start_deg=self.rock_start.value(),
-            rock_full_deg=self.rock_full.value(), snow_max_slope_deg=self.snow_slope.value(),
-        )
-
-    def _set_rules(self, rules: ZoneRules) -> None:
-        widgets = (self.water, self.water_level, self.shore, self.snow, self.snow_start, self.snow_full,
-                   self.rock_start, self.rock_full, self.snow_slope)
-        for widget in widgets:
-            widget.blockSignals(True)
-        self.water.setChecked(rules.water)
-        self.water_level.setValue(rules.water_level_m)
-        self.shore.setValue(rules.shore_m)
-        self.snow.setChecked(rules.snow)
-        self.snow_start.setValue(rules.snow_start_m)
-        self.snow_full.setValue(rules.snow_full_m)
-        self.rock_start.setValue(rules.rock_start_deg)
-        self.rock_full.setValue(rules.rock_full_deg)
-        self.snow_slope.setValue(rules.snow_max_slope_deg)
-        for widget in widgets:
-            widget.blockSignals(False)
-        self._zones_changed()
 
     def _transform(self) -> tuple[float, float]:
         return height_transform(self.hm, self._params_safe())
@@ -584,9 +575,12 @@ class MainWindow(QMainWindow):
         return 0, 0
 
     def _set_busy(self, busy: bool) -> None:
-        for widget in (self.browse_source, self.open_manifest, self.auto_zones, self.heightmap_action,
-                       self.tiles_action):
+        for widget in (self.browse_source, self.open_manifest, self.heightmap_action, self.tiles_action,
+                       self.material_panel.fit):
             widget.setEnabled(not busy)
+        self.paint.setEnabled(not busy and self.hm is not None)
+        if busy and self.paint.isChecked():
+            self.paint.setChecked(False)
         self.build_button.setEnabled(not busy and self.hm is not None)
         self.cancel_button.setEnabled(busy)
         self._update_export_buttons()
@@ -696,9 +690,10 @@ class MainWindow(QMainWindow):
             base = os.path.splitext(self.hm.path)[0]
             self.out_dir.setText(base + "_tiles")
             self.export_dir.setText(base + "_adm")
+            self._material().paint = None  # paint belongs to the previous heightmap
         self._scale_changed()
         if callback is None:
-            self._suggest_zones()
+            self._fit_material()
         self.map.selection = set()
         self._selection_changed()
         self._check_changes()
@@ -717,7 +712,7 @@ class MainWindow(QMainWindow):
         self._source_path = manifest["source"]["path"]
         self.source.setText(manifest["source"]["path"])
         self.source_info.setText(f"Tiles from {manifest['_dir']} (heightmap not loaded, "
-                                 "open it to change zones or rebuild)")
+                                 "open it to paint biomes or rebuild)")
         params = manifest.get("params", {})
         for box, key in ((self.spacing, "spacing_m"), (self.height_min, "height_min_m"),
                          (self.height_max, "height_max_m")):
@@ -732,7 +727,6 @@ class MainWindow(QMainWindow):
         self.out_dir.setText(manifest["_dir"])
         if not self.export_dir.text().strip():
             self.export_dir.setText(os.path.normpath(manifest["_dir"]).rstrip("\\/") + "_adm")
-        self._set_rules(ZoneRules.from_dict(manifest.get("zones", {})))
         self._set_manifest(manifest)
         self._set_busy(False)
         self._mark_dirty()
@@ -749,9 +743,10 @@ class MainWindow(QMainWindow):
             step = max(1, int(np.ceil(max(self.hm.data.shape) / 1024)))
             self._relief = hillshade(self._preview, sp * step, scale)
             self.histogram.set_heights(self._preview * scale + offset)
-            self._zones_image = None
+            self._field = None
             self._update_map_image()
         self._update_tile_info()
+        self._update_brush()
 
     def _update_tile_info(self) -> None:
         width, height = self._source_shape()
@@ -767,56 +762,164 @@ class MainWindow(QMainWindow):
         if self.hm is not None:
             memory = estimate_memory(width, height, cells, self.hm.data.itemsize)
             text += f", about {memory / 2**30:.2f} GiB working memory"
-        if self.masks.isChecked():
-            px = self.mask_px.value() or max(16, min(2048, cells))
-            text += f"\nMask {px} px per tile = {cells * sp / px:.2f} m per mask pixel"
         self.tile_info.setText(text)
         if self.manifest is not None and self.manifest["tile_cells"] != cells:
             self.map.set_stats({}, {})
-
-    def _zones_changed(self) -> None:
-        rules = self._rules()
-        self.histogram.set_rules(rules)
-        self._zones_image = None
-        if self.map_mode.currentIndex() == 1:
-            self._zones_timer.start()
-        self._update_tile_info()
-
-    def _suggest_zones(self) -> None:
-        if self.hm is None:
-            return
-        self._set_rules(suggest_zones(self.hm, self._params_safe()))
 
     def _params_safe(self) -> BuildParams:
         return BuildParams(input_path="", out_dir="", height_min_m=self.height_min.value(),
                            height_max_m=self.height_max.value(), remap_float=self.remap.isChecked())
 
-    def _refresh_zones(self) -> None:
-        self._zones_image = None
+    # ---------------------------------------------------------- texturing
+    def _material_changed(self) -> None:
+        """Any edit of surfaces, biomes, blending or paint."""
+        material = self._material()
+        self.histogram.set_material(material)
+        self._material_timer.start()
+        current = self.paint_biome.currentIndex()
+        self.paint_biome.blockSignals(True)
+        self.paint_biome.clear()
+        for biome in material.biomes:
+            self.paint_biome.addItem(swatch(biome.color), biome.name)
+        self.paint_biome.setCurrentIndex(max(0, min(current, self.paint_biome.count() - 1)))
+        self.paint_biome.blockSignals(False)
+        try:
+            material.validate_rules()
+            problems = [f"{a} and {b} share no surface" for a, b in texturing.unshared_pairs(material)]
+            warnings = [f"Not touching yet, but would give a hard edge: {', '.join(problems)}."] if problems else []
+        except ValueError as exc:
+            warnings = [str(exc)]
+        self._rule_warnings = warnings
+        self._update_rebuild_note()
+        self._field = None
+        if self.map_mode.currentIndex() in (BIOMES_MODE, SURFACES_MODE):
+            self._field_timer.start()
+        else:
+            self._show_material_warnings()
+
+    def _show_material_warnings(self) -> None:
+        lines = list(getattr(self, "_rule_warnings", []))
+        if self._field is not None and self._field.problems:
+            lines = [l for l in lines if not l.startswith("Not touching")]
+            lines.insert(0, "Hard texture edge where these biomes meet (no shared surface): "
+                         + ", ".join(f"{a} / {b}" for a, b in self._field.problems))
+        if self._field_error:
+            lines.insert(0, self._field_error)
+        self.material_panel.set_warnings(lines)
+
+    def _update_rebuild_note(self) -> None:
+        if self.manifest is not None and rules_outdated(self.manifest, self._material()):
+            self.rebuild_note.setText("Biomes, paint or the surface list changed since these tiles were built. "
+                                      "Rebuild to update the vertex layers before exporting.")
+            self.rebuild_note.show()
+        else:
+            self.rebuild_note.hide()
+
+    def _fit_material(self) -> None:
+        if self.hm is None:
+            QMessageBox.information(self, APP_NAME, "Open the heightmap first.")
+            return
+        fit_material(self.hm, self._params_safe(), self._material())
+        self.material_panel.refresh()
+        self._material_changed()
+        self._schedule_check()
+        self._mark_dirty()
+
+    def _show_material_on_terrain(self) -> None:
+        self.viewer.color.setCurrentIndex(MATERIAL_MODE)
+        self.tabs.setCurrentWidget(self.viewer)
+
+    def _refresh_field(self) -> None:
+        self._field = None
         self._update_map_image()
+
+    def _field_preview(self) -> texturing.FieldPreview | None:
+        if self._field is not None or self.hm is None:
+            return self._field
+        scale, offset = self._transform()
+        try:
+            self._field = texturing.preview(self._material(), self.hm.data, scale, offset, self.spacing.value(),
+                                            shade=self._relief)
+            self._field_error = ""
+        except ValueError as exc:
+            self._field_error = f"Preview: {exc}"
+        self._show_material_warnings()
+        return self._field
+
+    def _update_brush(self) -> None:
+        self.map.set_brush(self.brush.value() / max(self.spacing.value(), 1e-9))
+
+    def _paint_toggled(self, on: bool) -> None:
+        if on:
+            if self.hm is None:
+                self.paint.setChecked(False)
+                return
+            material = self._material()
+            old = material.paint
+            if material.ensure_paint(self.hm.width, self.hm.height) and old is not None and np.any(old != PAINT_AUTO):
+                QMessageBox.information(self, APP_NAME, "The stored paint was made for a heightmap of another "
+                                                        "size and was cleared.")
+            if self.map_mode.currentIndex() != BIOMES_MODE:
+                self.map_mode.setCurrentIndex(BIOMES_MODE)
+            self.map_hint.setText("Left drag paints the biome, right drag returns to automatic. "
+                                  "Turn Paint off to select tiles again.")
+        else:
+            self.map_hint.setText("Click or drag to select tiles, Shift adds, double-click opens one tile in 3D")
+        self.map.set_paint_mode(on)
+
+    def _paint_stroke(self, points, erase: bool) -> None:
+        material = self._material()
+        if material.paint is None:
+            return
+        value = PAINT_AUTO if erase else self.paint_biome.currentIndex()
+        if value < 0:
+            return
+        cell = material.paint_cell
+        rows, cols = material.paint.shape
+        radius = self.map._brush / cell
+        r = int(math.ceil(radius))
+        for col, row in points:
+            cx, cy = col / cell, row / cell
+            x0, x1 = max(0, int(cx) - r), min(cols, int(cx) + r + 2)
+            y0, y1 = max(0, int(cy) - r), min(rows, int(cy) + r + 2)
+            if x0 >= x1 or y0 >= y1:
+                continue
+            yy, xx = np.mgrid[y0:y1, x0:x1]
+            disk = (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
+            material.paint[y0:y1, x0:x1][disk] = value
+        self._field = None
+        self._field_timer.start()
+
+    def _paint_finished(self) -> None:
+        self._material_changed()
+        self._schedule_check()
+        self._mark_dirty()
+
+    def _clear_paint(self) -> None:
+        material = self._material()
+        if not material.has_paint():
+            return
+        if QMessageBox.question(self, APP_NAME, "Remove all painted biomes?") != QMessageBox.StandardButton.Yes:
+            return
+        material.paint[:] = PAINT_AUTO
+        self._paint_finished()
 
     def _update_map_image(self) -> None:
         width, height = self._source_shape()
         mode = self.map_mode.currentIndex()
         image = None
-        if mode == 1:
-            image = self._zones()
+        if mode in (BIOMES_MODE, SURFACES_MODE):
+            field = self._field_preview()
+            if field is not None:
+                image = field.biomes if mode == BIOMES_MODE else field.surfaces
+            elif self.manifest is not None:
+                image = self._read_rgb(self.manifest.get("biomes_preview" if mode == BIOMES_MODE
+                                                         else "surfaces_preview"))
         if image is None:
             image = self._relief
-        self.map.set_density_visible(mode == 2)
+        self.map.set_density_visible(mode == DENSITY_MODE)
         self.map.set_image(image, width, height)
         self.map.set_grid(self.tile_cells.currentData())
-
-    def _zones(self) -> np.ndarray | None:
-        if self._zones_image is not None:
-            return self._zones_image
-        if self.hm is not None:
-            scale, offset = self._transform()
-            self._zones_image = zones_preview(self.hm.data, scale, offset, self.spacing.value(), self._rules(),
-                                              shade=self._relief)
-        elif self.manifest is not None:
-            self._zones_image = self._read_rgb(self.manifest.get("zones_preview"))
-        return self._zones_image
 
     def _read_rgb(self, name: str | None, mode: str = "RGB") -> np.ndarray | None:
         if not name or self.manifest is None:
@@ -846,7 +949,13 @@ class MainWindow(QMainWindow):
         self._build_started = time.perf_counter()
         self.report.clear()
         self._build_out = params.out_dir
-        self._run(lambda progress, cancelled: build(params, progress, cancelled, heightmap=hm),
+        material = copy.deepcopy(self._material())
+        try:
+            material.validate()
+        except ValueError as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        self._run(lambda progress, cancelled: build(params, material, progress, cancelled, heightmap=hm),
                   self._build_done, "Building…")
 
     def _build_done(self, _manifest: dict) -> None:
@@ -858,8 +967,14 @@ class MainWindow(QMainWindow):
         for lod in manifest["lods"]:
             lines.append(f"LOD {lod['index']}: ≤ {lod['max_error_m']:g} m (measured "
                          f"{lod['measured_error_m']:.3f} m), {lod['triangles']:,} triangles")
-        if manifest.get("mask_layers"):
-            lines.append("Masks: masks/<tile>_mask.png, RGBA = ground, rock, snow, water")
+        tex = manifest.get("texturing", {})
+        if tex:
+            lines.append(f"Vertex layers: {len(tex.get('surfaces', []))} surfaces from "
+                         f"{len(tex.get('biomes', []))} biomes")
+            pairs = tex.get("unshared_neighbours") or []
+            if pairs:
+                lines.append("Hard texture edges (biomes without a shared surface): "
+                             + ", ".join(f"{a} / {b}" for a, b in pairs))
         lines.append(f"Output: {manifest['_dir']}")
         self.report.setPlainText("\n".join(lines))
 
@@ -867,9 +982,10 @@ class MainWindow(QMainWindow):
         self.manifest = manifest
         if self.hm is None:
             self._relief = self._read_rgb(manifest.get("preview"), "L")
-            self._zones_image = None
+            self._field = None
             self._scale_changed()
         self.viewer.set_manifest(manifest)
+        self._update_rebuild_note()
         lod = 0
         peak = max((t["lods"][lod]["triangles"] for t in manifest["tiles"]), default=1) or 1
         density, info = {}, {}
@@ -944,7 +1060,7 @@ class MainWindow(QMainWindow):
             return
         self._check_generation += 1
         self.export_state.setText("Checking which tiles changed…")
-        self._checker = _ChangeCheck(self._check_generation, self.manifest, self.material_panel.material(),
+        self._checker = _ChangeCheck(self._check_generation, self.manifest, copy.deepcopy(self._material()),
                                      settings, self)
         self._checker.checked.connect(self._on_checked)
         self._checker.finished.connect(self._checker_finished)
@@ -979,7 +1095,7 @@ class MainWindow(QMainWindow):
         if self.manifest is None or self._is_busy():
             return
         settings = self._export_settings()
-        material = self.material_panel.material()
+        material = copy.deepcopy(self._material())
         try:
             settings.validate_values()
             material.validate()
@@ -997,10 +1113,16 @@ class MainWindow(QMainWindow):
         written = len(result["written"])
         self.progress.setValue(1000)
         self.status.setText(f"Exported {written:,} tiles")
-        self.report.setPlainText(f"Wrote {written:,} tiles ({result['bytes'] / 2**20:,.1f} MiB) in "
-                                 f"{result['seconds']:.1f} s, {result['skipped']:,} up to date\n"
-                                 f"Folder: {result['out_dir']}\n"
-                                 "Import in Blender: File > Import > ADM Model, one .adm per tile.")
+        lines = [f"Wrote {written:,} tiles ({result['bytes'] / 2**20:,.1f} MiB) in "
+                 f"{result['seconds']:.1f} s, {result['skipped']:,} up to date",
+                 f"Up to {result.get('max_primitives', 1)} materials per tile LOD (four surfaces each)"]
+        if result.get("conflicts"):
+            lines.append(f"{result['conflicts']:,} triangles touched more than four surfaces; the weakest "
+                         "were dropped. Lower Texture detail or simplify the biomes if this shows.")
+        lines += list(result.get("warnings", []))
+        lines += [f"Folder: {result['out_dir']}",
+                  "Import in Blender: File > Import > ADM Model, one .adm per tile."]
+        self.report.setPlainText("\n".join(lines))
         self._check_changes()
 
     # ----------------------------------------------------------- project
@@ -1026,7 +1148,7 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Discard
 
     def _collect_project(self) -> Project:
-        return Project(params=self._params(), material=self.material_panel.material(),
+        return Project(params=self._params(), material=self._material(),
                        export=self._export_settings(),
                        selection=sorted(_tile_key_id(key) for key in self.map.selection),
                        path=self.project_path)
@@ -1087,7 +1209,7 @@ class MainWindow(QMainWindow):
         self._loading = True
         self.hm = None
         self.manifest = None
-        self._preview = self._relief = self._zones_image = None
+        self._preview = self._relief = self._field = None
         self._changed_ids = None
         self.viewer.set_manifest(None)
         self.map.set_stats({}, {})
@@ -1142,12 +1264,12 @@ class MainWindow(QMainWindow):
             index = self.tile_cells.count() - 1
         self.tile_cells.setCurrentIndex(index)
         self.lods.setText(", ".join(f"{e:g}" for e in params.max_errors_m))
-        self.masks.setChecked(params.masks)
-        self.mask_px.setValue(params.mask_px)
-        self._set_rules(params.zones)
+        self.texture_error.setValue(params.texture_error)
+        self.texture_detail.setValue(params.texture_detail_m)
         self.out_dir.setText(params.out_dir)
         self.threads.setValue(params.threads)
         self.material_panel.set_material(project.material)
+        self._material_changed()
         self.export_dir.setText(export.out_dir)
         self.lod_distance.setValue(export.lod_distance_m)
         self.embed.setChecked(export.embed_textures)
