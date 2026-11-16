@@ -387,7 +387,16 @@ class AnimExporter:
             arm_rot = None
             if arm is not None:
                 for b in arm.data.bones:
-                    rl = b.parent.matrix_local.inverted_safe() @ b.matrix_local if b.parent else b.matrix_local.copy()
+                    try:
+                        correction = cv.bone_frame_correction(b)
+                        if b.parent:
+                            parent_correction = cv.bone_frame_correction(b.parent)
+                            bone_local = b.parent.matrix_local.inverted_safe() @ b.matrix_local
+                            rl = parent_correction.inverted_safe() @ bone_local @ correction
+                        else:
+                            rl = b.matrix_local @ correction
+                    except ValueError as exc:
+                        raise ExportError(str(exc)) from exc
                     rest[b.name] = cv.mat_to_adm(rl)
                 arm_rot = (find_model_root_inv(arm) @ arm.matrix_world).to_3x3()
             samples = {b.name: {"t": [], "r": [], "s": []} for b in bones}
@@ -400,15 +409,35 @@ class AnimExporter:
                 scene.frame_set(fi, subframe=float(f - fi))
                 for b in bones:
                     pb = arm.pose.bones[b.name]
-                    local = pb.parent.matrix.inverted_safe() @ pb.matrix if pb.parent else pb.matrix.copy()
+                    try:
+                        correction = cv.bone_frame_correction(b)
+                        joint_pose = pb.matrix @ correction
+                        if pb.parent:
+                            parent_correction = cv.bone_frame_correction(b.parent)
+                            parent_joint_pose = pb.parent.matrix @ parent_correction
+                            local = parent_joint_pose.inverted_safe() @ joint_pose
+                        else:
+                            local = joint_pose
+                    except ValueError as exc:
+                        raise ExportError(str(exc)) from exc
                     t, r, s = cv.mat_to_adm(local).decompose()
                     sm = samples[b.name]
                     if binding == "SEMANTIC" and role_of[b.name] == "hips":
-                        off = cv.C3 @ (arm_rot @ (pb.matrix.to_translation() - b.matrix_local.to_translation()))
+                        rest_joint = b.matrix_local @ correction
+                        off = cv.C3 @ (arm_rot @ (joint_pose.to_translation() - rest_joint.to_translation()))
                         sm["t"].append((off.x, off.y, off.z))
                     else:
                         sm["t"].append(tuple(t))
-                    sm["r"].append(r)
+                    if binding == "SEMANTIC":
+                        rest_joint = b.matrix_local @ correction
+                        model_rotation = arm_rot.to_quaternion()
+                        pose_rotation = model_rotation @ joint_pose.to_quaternion()
+                        rest_rotation = model_rotation @ rest_joint.to_quaternion()
+                        delta = pose_rotation @ rest_rotation.inverted()
+                        delta.normalize()
+                        sm["r"].append(_adm_q(cv.quat_to_adm(delta)))
+                    else:
+                        sm["r"].append(r)
                     sm["s"].append(tuple(s))
                 for role, obj in animated_components.items():
                     location, rotation, scale = obj.matrix_basis.decompose()
@@ -441,11 +470,8 @@ class AnimExporter:
             if binding == "SEMANTIC":
                 role = role_of[b.name]
                 target = {"kind": "bone", "role": role}
-                corr = Quaternion((1, 0, 0, 0))
-                if b.adm.use_reference_correction:
-                    corr = _adm_q(cv.quat_to_adm(Quaternion(b.adm.reference_correction)))
-                rot = [corr.inverted() @ rr.inverted() @ q @ corr for q in sm["r"]]
-                self._channel(out, target, "rotation", times, _quat_track(rot), "bone", rest=np.array([0, 0, 0, 1.0]))
+                self._channel(out, target, "rotation", times, _quat_track(sm["r"]), "bone",
+                              rest=np.array([0, 0, 0, 1.0]))
                 if role == "hips":
                     keep = clip.root_motion == "EXTRACT"
                     self._channel(out, dict(target), "translation", times, np.array(sm["t"]), "bone",

@@ -94,7 +94,9 @@ def normalized_correction(arm, bone):
             local = model_matrix(obj)
         elif obj.parent_type == "BONE" and obj.parent.type == "ARMATURE" \
                 and obj.parent_bone in obj.parent.data.bones:
-            parent_world = obj.parent.matrix_world @ obj.parent.data.bones[obj.parent_bone].matrix_local
+            parent_bone = obj.parent.data.bones[obj.parent_bone]
+            parent_world = (obj.parent.matrix_world @ parent_bone.matrix_local
+                            @ cv.bone_frame_correction(parent_bone))
             local = parent_world.inverted_safe() @ obj.matrix_world
         else:
             local = obj.parent.matrix_world.inverted_safe() @ obj.matrix_world
@@ -107,8 +109,13 @@ def normalized_correction(arm, bone):
         chain.append(current)
         current = current.parent
     for current in reversed(chain):
-        local = (current.parent.matrix_local.inverted_safe() @ current.matrix_local
-                 if current.parent else current.matrix_local.copy())
+        correction = cv.bone_frame_correction(current)
+        if current.parent:
+            parent_correction = cv.bone_frame_correction(current.parent)
+            bone_local = current.parent.matrix_local.inverted_safe() @ current.matrix_local
+            local = parent_correction.inverted_safe() @ bone_local @ correction
+        else:
+            local = current.matrix_local @ correction
         fields = cv.node_transform_fields(local, force_trs=True)
         q = q @ cv.quat_from_adm(fields.get("rotation", (0.0, 0.0, 0.0, 1.0)))
     q.normalize()

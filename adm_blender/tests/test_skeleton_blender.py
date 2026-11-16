@@ -166,9 +166,29 @@ def bone_weights(obj):
     return out
 
 
+def evaluated_world_vertices(obj):
+    evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = evaluated.to_mesh()
+    try:
+        return [evaluated.matrix_world @ vertex.co for vertex in mesh.vertices]
+    finally:
+        evaluated.to_mesh_clear()
+
+
+def corrected_world_delta(arm, bone_name):
+    from adm_blender.blender import convert as cv
+
+    bone = arm.data.bones[bone_name]
+    correction = cv.bone_frame_correction(bone)
+    rest = arm.matrix_world @ bone.matrix_local @ correction
+    pose = arm.matrix_world @ arm.pose.bones[bone_name].matrix @ correction
+    return pose.to_quaternion() @ rest.to_quaternion().inverted()
+
+
 # --------------------------------------------------------------------------------------------------
 def main(tmp):
     adm_blender.register()
+    from adm_blender.blender import convert as cv
     from adm_blender.blender import rig as R
     from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
     from adm_blender.blender.export_anim import AnimExporter
@@ -400,6 +420,15 @@ def main(tmp):
     authored_socket = socks["back.backpack"]
     authored_socket.matrix_world = Matrix.Translation(Vector((0.04, 0.03, -0.02))) @ authored_socket.matrix_world
     bpy.context.view_layer.update()
+    bpy.ops.mesh.primitive_cube_add(size=0.06)
+    rigid_segment = bpy.context.object
+    rigid_segment.name = "LeftHandRigidSegment"
+    rigid_segment.parent = armA
+    rigid_segment.parent_type = "BONE"
+    rigid_segment.parent_bone = "LeftHand"
+    rigid_segment.matrix_parent_inverse = Matrix.Identity(4)
+    rigid_segment.matrix_world = Matrix.Translation(armA.matrix_world @ armA.pose.bones["LeftHand"].head)
+    bpy.context.view_layer.update()
 
     # ------------------------------------------------------------------ export -> import
     print("== skeleton export")
@@ -531,7 +560,8 @@ def main(tmp):
     ad = armA.animation_data_create()
     ad.action = act
     keyed = {"LeftUpperArm": Euler((0.3, 0.5, -0.7)), "LeftLowerArm": Euler((0.0, 0.0, 1.1)),
-             "Spine": Euler((0.2, 0.1, 0.0)), "Head": Euler((0.0, 0.4, 0.2))}
+             "LeftLowerLeg": Euler((0.15, 0.0, 0.45)), "Spine": Euler((0.2, 0.1, 0.0)),
+             "Head": Euler((0.0, 0.4, 0.2))}
     for name in keyed:
         armA.pose.bones[name].rotation_mode = "QUATERNION"
     for f, s in ((1, 0.0), (11, 1.0), (21, 0.25)):
@@ -551,7 +581,8 @@ def main(tmp):
     check(rep is not None and rep.ok, "semantic library valid")
     ch = {(c["target"]["kind"], c["target"].get("role") or c["target"].get("name"))
           for c in rep.doc["clips"][0]["channels"]}
-    check({("bone", "leftUpperArm"), ("bone", "leftLowerArm"), ("bone", "spine"), ("bone", "head"),
+    check({("bone", "leftUpperArm"), ("bone", "leftLowerArm"), ("bone", "leftLowerLeg"),
+           ("bone", "spine"), ("bone", "head"),
            ("morph", "jawOpen")} <= ch, f"combined bone + ARKit channels {sorted(ch)}")
     check(rep.doc["library"]["targetProfile"] == "humanoid.vrm1", "library declares humanoid.vrm1")
     check(rep.doc["clips"][0]["title"] == "Swing" and rep.doc["clips"][0]["description"] ==
@@ -566,7 +597,10 @@ def main(tmp):
         bpy.context.view_layer.update()
         sample[f] = ({n: world_delta(armA, n) for n in keyed},
                      armA.matrix_world @ armA.pose.bones["LeftHand"].head,
-                     key.key_blocks["jawOpen"].value)
+                     key.key_blocks["jawOpen"].value, evaluated_world_vertices(bodyA),
+                     rigid_segment.matrix_world.copy(),
+                     {b.name: armA.matrix_world @ armA.pose.bones[b.name].matrix
+                      for b in armA.data.bones})
 
     lvl, reasons, _w = check_library_compat(bpy.context, armB, rep.doc)
     check(lvl == SK.SEMANTIC, f"compat level {lvl} {reasons}")
@@ -580,7 +614,7 @@ def main(tmp):
           "clip metadata preserved")
     rootA_inv = rootA.matrix_world.inverted()
     rootB_inv = rootB.matrix_world.inverted()
-    for f, (deltas, handA, jaw) in sample.items():
+    for f, (deltas, handA, jaw, _vertices, _rigid, _poses) in sample.items():
         sc.frame_set(f)
         bpy.context.view_layer.update()
         worst = max(ang_deg(world_delta(armB, "b_" + n), deltas[n]) for n in keyed)
@@ -653,14 +687,25 @@ def main(tmp):
     bpy.ops.wm.read_homefile(use_empty=True)
     ensure_role_names()
     root2 = ModelImporter(bpy.context, path, ImportOptions()).run()
+    sc = bpy.context.scene
     arm2 = next(o for o in bpy.data.objects if o.type == "ARMATURE")
     body2 = next(o for o in bpy.data.objects if o.type == "MESH" and o.vertex_groups)
+    rigid2 = bpy.data.objects.get("LeftHandRigidSegment")
     check(arm2.data.adm.profile_id == "humanoid.vrm1", "profile id imported")
     check({b.name: b.adm.role for b in arm2.data.bones if b.adm.role} == rolesA, "roles imported")
     rel = root2.matrix_world @ rootA_w.inverted()
-    dm = max(max(abs(a - b) for ra, rb_ in zip(rel @ origin[n], arm2.matrix_world @ arm2.data.bones[n].matrix_local)
-                 for a, b in zip(ra, rb_)) for n in rolesA)
-    check(dm < POS_TOL, f"bind matrices preserved ({dm:.2e})")
+    dm = max(max(abs(a - b) for ra, rb_ in zip(
+        rel @ origin[n], arm2.matrix_world @ arm2.data.bones[n].matrix_local
+        @ cv.bone_frame_correction(arm2.data.bones[n])) for a, b in zip(ra, rb_)) for n in rolesA)
+    check(dm < POS_TOL, f"ADM joint frames preserved independently of visible bone axes ({dm:.2e})")
+    check(any((arm2.data.bones[n].matrix_local.to_3x3().col[1].normalized()
+               - (arm2.data.bones[n].matrix_local.to_3x3()
+                  @ cv.bone_frame_correction(arm2.data.bones[n]).to_3x3()).col[1].normalized()).length > 1e-3
+              for n in rolesA), "visual bone axes are decoupled from ADM joint frames")
+    check(rigid2 is not None and not rigid2.vertex_groups
+          and not any(m.type == "ARMATURE" for m in rigid2.modifiers)
+          and rigid2.parent_type == "BONE",
+          "rigid segment keeps its bone attachment without invented skin weights")
     dc_ = max(ang_deg(Quaternion(corr0[n]), Quaternion(tuple(arm2.data.bones[n].adm.reference_correction)))
               for n in corr0)
     check(dc_ < 1e-3, f"reference corrections preserved ({dc_:.2e} deg)")
@@ -705,6 +750,75 @@ def main(tmp):
     check(set(joints0) == set(j1) and dev < POS_TOL, f"inverse bind matrices round-trip ({dev:.2e})")
     check({n2[i]: r for r, i in p2["roles"].items()} == rolesA and p2["referencePose"] == "T",
           "profile round-trip")
+    rigid_node = next(n for n in rep2.doc["nodes"] if n.get("name") == "LeftHandRigidSegment")
+    check("skin" not in rigid_node, "rigid segment remains unskinned after round-trip")
+
+    semantic_doc = validate_file(lib_path).doc
+    lvl, reasons, _ = check_library_compat(bpy.context, arm2, semantic_doc)
+    check(lvl == SK.SEMANTIC, f"corrected-frame semantic compatibility: {lvl} {reasons}")
+    imp2, _ = import_library(bpy.context, lib_path, AnimImportOptions(armature=arm2))
+    check(not imp2.warnings, f"corrected-frame animation import clean {imp2.warnings}")
+    for f, (deltas, _handA, _jaw, verticesA, rigidA, posesA) in sample.items():
+        sc.frame_set(f)
+        bpy.context.view_layer.update()
+        worst = max(ang_deg(corrected_world_delta(arm2, n), q) for n, q in deltas.items())
+        check(worst < ANG_TOL_DEG, f"frame {f}: corrected ADM joint rotations match ({worst:.4f} deg)")
+        pose_error = max(max(abs(a - b) for rowa, rowb in zip(rel @ posesA[n],
+                          arm2.matrix_world @ arm2.pose.bones[n].matrix
+                          @ cv.bone_frame_correction(arm2.data.bones[n]))
+                             for a, b in zip(rowa, rowb)) for n in posesA)
+        check(pose_error < POS_TOL, f"frame {f}: ADM joint world matrices match ({pose_error:.2e})")
+        vertices2 = evaluated_world_vertices(body2)
+        verticesA = sorted(verticesA, key=lambda p: tuple(round(v, 6) for v in p))
+        vertices2 = sorted(vertices2, key=lambda p: tuple(round(v, 6) for v in p))
+        vertex_error = max((rel @ a - b).length for a, b in zip(verticesA, vertices2))
+        check(vertex_error < 2e-3, f"frame {f}: skinned vertex positions match ({vertex_error:.2e} m)")
+        rigid_error = max(abs(a - b) for rowa, rowb in zip(rel @ rigidA, rigid2.matrix_world)
+                          for a, b in zip(rowa, rowb))
+        check(rigid_error < POS_TOL, f"frame {f}: rigid bone-linked segment follows ADM joint motion ({rigid_error:.2e})")
+
+    exact_lib = sc.adm_anim.libraries.add()
+    exact_lib.lib_id, exact_lib.title, exact_lib.description = "human@test@exact", "Exact", "Exact joint animation"
+    exact_lib.armature, exact_lib.binding = arm2, "EXACT"
+    exact_clip = exact_lib.clips.add()
+    exact_clip.clip_id, exact_clip.title, exact_clip.description = "joints", "Joints", "Elbow and knee"
+    exact_action = bpy.data.actions.new("ExactJointAnimation")
+    exact_clip.action = exact_action
+    exact_clip.use_action_range = True
+    arm2.animation_data_create().action = exact_action
+    for name in ("LeftLowerArm", "LeftLowerLeg"):
+        pb = arm2.pose.bones[name]
+        pb.rotation_mode = "QUATERNION"
+        for frame, angle in ((1, 0.0), (11, 0.7)):
+            sc.frame_set(frame)
+            pb.rotation_quaternion = Euler((angle, angle * 0.2, -angle * 0.15)).to_quaternion()
+            pb.keyframe_insert("rotation_quaternion")
+    exact_samples = {}
+    for frame in (1, 6, 11):
+        sc.frame_set(frame)
+        bpy.context.view_layer.update()
+        exact_samples[frame] = {
+            b.name: arm2.matrix_world @ arm2.pose.bones[b.name].matrix
+            @ cv.bone_frame_correction(arm2.data.bones[b.name])
+            for b in arm2.data.bones
+        }
+    exact_data, exact_report = AnimExporter(bpy.context, exact_lib).export()
+    check(exact_report is not None and exact_report.ok, "EXACT animation export with corrected bone frames")
+    exact_path = os.path.join(tmp, "exact_joint_animation.adm_anim")
+    with open(exact_path, "wb") as fh:
+        fh.write(exact_data)
+    root3 = ModelImporter(bpy.context, path, ImportOptions()).run()
+    arm3 = next(o for o in root3.children_recursive if o.type == "ARMATURE")
+    exact_import, _ = import_library(bpy.context, exact_path, AnimImportOptions(armature=arm3))
+    check(not exact_import.warnings, f"EXACT animation import clean {exact_import.warnings}")
+    for frame, expected in exact_samples.items():
+        sc.frame_set(frame)
+        bpy.context.view_layer.update()
+        pose_error = max(max(abs(a - b) for rowa, rowb in zip(
+            expected[name], arm3.matrix_world @ arm3.pose.bones[name].matrix
+            @ cv.bone_frame_correction(arm3.data.bones[name]))
+                              for a, b in zip(rowa, rowb)) for name in expected)
+        check(pose_error < POS_TOL, f"EXACT frame {frame}: corrected joint matrices match ({pose_error:.2e})")
 
     adm_blender.unregister()
 

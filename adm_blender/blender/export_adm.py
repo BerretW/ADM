@@ -25,7 +25,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.0 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.1 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -239,7 +239,11 @@ class ModelExporter:
         order = []
 
         def rec(bone, pidx, pworld, pmat):
-            local = pmat.inverted_safe() @ bone.matrix_local if pmat is not None else bone.matrix_local.copy()
+            try:
+                joint_frame = bone.matrix_local @ cv.bone_frame_correction(bone)
+            except ValueError as exc:
+                raise ExportError(str(exc)) from exc
+            local = pmat.inverted_safe() @ joint_frame if pmat is not None else joint_frame.copy()
             world = pworld @ local
             i = self._new(bone.name, local, world, pidx, "BONE", arm=arm, bone=bone)
             self.bone_node[(arm.name, bone.name)] = i
@@ -247,7 +251,7 @@ class ModelExporter:
             for c in bone_kids.get(bone.name, []):
                 self._visit_object(c, i, world)
             for ch in sorted(bone.children, key=lambda b: b.name):
-                rec(ch, i, world, bone.matrix_local)
+                rec(ch, i, world, joint_frame)
 
         for b in sorted((b for b in arm.data.bones if b.parent is None), key=lambda b: b.name):
             rec(b, arm_idx, arm_world, None)

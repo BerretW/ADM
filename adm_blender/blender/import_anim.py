@@ -341,10 +341,23 @@ class AnimImporter:
                     self.bones[r] = b
         else:
             self.bones = {b.name: b for b in arm.data.bones}
+        self.joint_frame_correction = {}
+        self.rest_scale = {}
         for b in arm.data.bones:
-            rl = b.parent.matrix_local.inverted_safe() @ b.matrix_local if b.parent else b.matrix_local.copy()
+            try:
+                correction = cv.bone_frame_correction(b)
+                self.joint_frame_correction[b.name] = correction
+                if b.parent:
+                    parent_correction = cv.bone_frame_correction(b.parent)
+                    bone_local = b.parent.matrix_local.inverted_safe() @ b.matrix_local
+                    rl = parent_correction.inverted_safe() @ bone_local @ correction
+                else:
+                    rl = b.matrix_local @ correction
+            except ValueError as exc:
+                raise ImportError_(str(exc)) from exc
             t, r, s = rl.decompose()
             self.rest_rot[b.name] = (t, r)
+            self.rest_scale[b.name] = s
         # morph targets: plain shape-key names + ARKit face channels bound on the model root
         for o in morph_meshes(arm):
             key = o.data.shape_keys
@@ -460,6 +473,66 @@ class AnimImporter:
                 _fill(fc, frames, vals, None if tin is None else tin[:, c], None if tout is None else tout[:, c],
                       interp, fps)
 
+        semantic_rotation_data = {}
+        if self.binding == "SEMANTIC":
+            tracks = {}
+            for channel in clip["channels"]:
+                target = channel["target"]
+                if target["kind"] != "bone" or channel["path"] != "rotation":
+                    continue
+                bone = self.bones.get(target["role"])
+                if bone is not None:
+                    tracks[bone.name] = self._sampler(clip, channel["sampler"])
+            if tracks:
+                key_times = np.unique(np.concatenate([track[0] for track in tracks.values()]))
+                frame_count = int(np.ceil((key_times[-1] - key_times[0]) * fps))
+                frame_times = key_times[0] + np.arange(frame_count + 1, dtype=np.float64) / fps
+                frame_times = frame_times[frame_times <= key_times[-1] + 1e-8]
+                sample_times = np.unique(np.concatenate((key_times, frame_times)))
+                rest_local = {b.name: self.rest_rot[b.name][1] for b in arm.data.bones}
+                rest_global = {}
+
+                def get_rest_global(bone):
+                    if bone.name not in rest_global:
+                        local = rest_local[bone.name]
+                        rest_global[bone.name] = (get_rest_global(bone.parent) @ local
+                                                  if bone.parent else local.copy())
+                    return rest_global[bone.name]
+
+                for bone in arm.data.bones:
+                    get_rest_global(bone)
+                generated = {name: [] for name in tracks}
+                for time in sample_times:
+                    pose_global = {}
+
+                    def get_pose_global(bone):
+                        if bone.name not in pose_global:
+                            parent_pose = get_pose_global(bone.parent) if bone.parent else None
+                            if bone.name in tracks:
+                                delta = _sample_quat_track(tracks[bone.name], float(time))
+                                pose_global[bone.name] = delta @ rest_global[bone.name]
+                            else:
+                                pose_global[bone.name] = (parent_pose @ rest_local[bone.name]
+                                                          if parent_pose else rest_local[bone.name].copy())
+                        return pose_global[bone.name]
+
+                    for bone in arm.data.bones:
+                        get_pose_global(bone)
+                    for name in tracks:
+                        bone = arm.data.bones[name]
+                        parent_pose = pose_global[bone.parent.name] if bone.parent else None
+                        local_pose = (parent_pose.inverted() @ pose_global[name]
+                                      if parent_pose else pose_global[name])
+                        local_delta = rest_local[name].inverted() @ local_pose
+                        frame = self.joint_frame_correction[name].to_quaternion()
+                        basis_delta = frame @ local_delta @ frame.inverted()
+                        basis_delta.normalize()
+                        generated[name].append(tuple(basis_delta))
+                semantic_rotation_data = {
+                    name: (sample_times, _sign_continuity(np.asarray(values, dtype=np.float64)))
+                    for name, values in generated.items()
+                }
+
         missing = []
         for ch in clip["channels"]:
             tgt, path = ch["target"], ch["path"]
@@ -475,21 +548,31 @@ class AnimImporter:
                 pb_path = f'pose.bones["{bpy.utils.escape_identifier(bone.name)}"]'
                 rt, rq = self.rest_rot[bone.name]
                 rinv = rq.inverted()
+                correction = self.joint_frame_correction[bone.name]
                 if path == "rotation":
                     if self.binding == "SEMANTIC":
-                        corr = Quaternion(bone.adm.reference_correction) if bone.adm.use_reference_correction \
-                            else Quaternion()
-                        M = _qmat_left(corr) @ _qmat_right(corr.inverted()) @ _adm_quat_map()
+                        rotation_times, vv = semantic_rotation_data[bone.name]
+                        pb = arm.pose.bones[bone.name]
+                        pb.rotation_mode = "QUATERNION"
+                        write(arm_cb(), pb_path + ".rotation_quaternion", 4, bone.name, rotation_times, vv,
+                              None, None, "LINEAR")
                     else:
-                        M = _qmat_left(rinv) @ _adm_quat_map()
-                    conv = lambda a: None if a is None else a @ M.T  # noqa: E731
-                    vv = conv(v)
-                    if interp != "CUBICSPLINE":
-                        vv = _sign_continuity(vv)
-                    pb = arm.pose.bones[bone.name]
-                    pb.rotation_mode = "QUATERNION"
-                    write(arm_cb(), pb_path + ".rotation_quaternion", 4, bone.name, t, vv, conv(tin), conv(tout),
-                          interp)
+                        correction_rotation = correction.to_quaternion()
+                        gram = correction.to_3x3().transposed() @ correction.to_3x3()
+                        if max(abs(gram[r][c] - (gram[0][0] if r == c else 0.0))
+                               for r in range(3) for c in range(3)) > 1e-5:
+                            raise ImportError_(f"bone '{bone.name}': animated rotation cannot be represented "
+                                               "without shear after the ADM joint-frame correction")
+                        M = (_qmat_left(correction_rotation) @ _qmat_left(rinv)
+                             @ _qmat_right(correction_rotation.inverted()) @ _adm_quat_map())
+                        conv = lambda a: None if a is None else a @ M.T  # noqa: E731
+                        vv = conv(v)
+                        if interp != "CUBICSPLINE":
+                            vv = _sign_continuity(vv)
+                        pb = arm.pose.bones[bone.name]
+                        pb.rotation_mode = "QUATERNION"
+                        write(arm_cb(), pb_path + ".rotation_quaternion", 4, bone.name, t, vv,
+                              conv(tin), conv(tout), interp)
                 elif path == "translation":
                     if self.binding == "SEMANTIC":
                         root = find_model_root(arm)
@@ -499,15 +582,41 @@ class AnimImporter:
                                      @ cv.C3_INV) * self.motion_scale
                         offset = None
                     else:
-                        R = np.array(rinv.to_matrix()) @ np.array(cv.C3_INV)
-                        offset = -np.array(rinv.to_matrix() @ rt)
+                        inv_scale = Matrix.Diagonal(Vector((1.0 / self.rest_scale[bone.name][0],
+                                                           1.0 / self.rest_scale[bone.name][1],
+                                                           1.0 / self.rest_scale[bone.name][2])))
+                        R = (np.array(correction.to_3x3()) @ np.array(inv_scale)
+                             @ np.array(rinv.to_matrix()) @ np.array(cv.C3_INV))
+                        offset = -np.array(correction.to_3x3() @ inv_scale @ rinv.to_matrix() @ rt)
                     conv = lambda a: None if a is None else a @ R.T  # noqa: E731
                     write(arm_cb(), pb_path + ".location", 3, bone.name, t, conv(v), conv(tin), conv(tout), interp,
                           offset)
                 else:
                     P = np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]], dtype=np.float64)
-                    conv = lambda a: None if a is None else a @ P.T  # noqa: E731
-                    write(arm_cb(), pb_path + ".scale", 3, bone.name, t, conv(v), conv(tin), conv(tout), interp)
+                    D = np.array(correction.to_3x3(), dtype=np.float64)
+                    D_inv = np.linalg.inv(D)
+                    rest_scale = np.array(self.rest_scale[bone.name], dtype=np.float64)
+
+                    def conv(a):
+                        if a is None:
+                            return None
+                        mapped = a @ P.T / rest_scale
+                        diagonal = np.empty_like(mapped)
+                        max_off_diagonal = 0.0
+                        for sample_index, scale_delta in enumerate(mapped):
+                            transformed = D @ np.diag(scale_delta) @ D_inv
+                            max_off_diagonal = max(max_off_diagonal,
+                                                   float(np.max(np.abs(transformed - np.diag(np.diag(transformed))))))
+                            diagonal[sample_index] = np.diag(transformed)
+                        if max_off_diagonal > 1e-5:
+                            raise ImportError_(f"bone '{bone.name}': animated scale cannot be represented "
+                                               "without shear after the ADM joint-frame correction")
+                        return diagonal
+
+                    vv = conv(v)
+                    if vv is None:
+                        raise ImportError_(f"bone '{bone.name}': scale sampler has no values")
+                    write(arm_cb(), pb_path + ".scale", 3, bone.name, t, vv, conv(tin), conv(tout), interp)
             elif kind == "morph":
                 targets = self.morph_keys.get(tgt["name"])
                 if not targets:
@@ -587,6 +696,33 @@ def _sign_continuity(q):
     for i in range(1, len(q)):
         if np.dot(q[i - 1], q[i]) < 0:
             q[i] = -q[i]
+    return q
+
+
+def _sample_quat_track(track, time):
+    times, values, tangents_in, tangents_out, interpolation = track
+    if time <= times[0]:
+        value = values[0]
+    elif time >= times[-1]:
+        value = values[-1]
+    else:
+        i = int(np.searchsorted(times, time, side="right") - 1)
+        span = times[i + 1] - times[i]
+        u = (time - times[i]) / span
+        if interpolation == "STEP":
+            value = values[i]
+        elif interpolation == "CUBICSPLINE":
+            u2, u3 = u * u, u * u * u
+            value = ((2 * u3 - 3 * u2 + 1) * values[i]
+                     + (u3 - 2 * u2 + u) * span * tangents_out[i]
+                     + (-2 * u3 + 3 * u2) * values[i + 1]
+                     + (u3 - u2) * span * tangents_in[i + 1])
+        else:
+            qa, qb = _q_bl(values[i]), _q_bl(values[i + 1])
+            return qa.slerp(qb, float(u))
+    q = _q_bl(value)
+    if q.magnitude > 1e-12:
+        q.normalize()
     return q
 
 

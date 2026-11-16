@@ -238,6 +238,10 @@ class ModelImporter:
 
     def plan_armatures(self):
         skins = self.doc.get("skins", [])
+        self.roles_by_node = {}
+        for profile in self.doc.get("skeletonProfiles", []):
+            for role, node_index in profile.get("roles", {}).items():
+                self.roles_by_node[node_index] = role
         joints = set(j for s in skins for j in s["joints"])
         bones = set(joints)
         for j in joints:
@@ -567,10 +571,10 @@ class ModelImporter:
         scale_warn = []
         for i in g["members"]:
             m = arm_inv @ self.world[i]
-            loc, rot, sca = m.decompose()
+            _loc, _rot, sca = m.decompose()
             if abs(sca.x - 1) > 1e-4 or abs(sca.y - 1) > 1e-4 or abs(sca.z - 1) > 1e-4:
                 scale_warn.append(self.nodes[i].get("name", str(i)))
-            mats[i] = Matrix.LocRotScale(loc, rot, None)
+            mats[i] = m
             bname = _safe(self.nodes[i].get("name"), f"joint_{i}")
             base, k = bname, 1
             while bname in used:
@@ -578,48 +582,79 @@ class ModelImporter:
                 k += 1
             used.add(bname)
             eb = arm.edit_bones.new(bname)
-            eb.head = (0.0, 0.0, 0.0)
-            eb.tail = (0.0, 1.0, 0.0)
+            head = mats[i].to_translation()
+            child = self._bone_child(i, mats)
+            if child is not None:
+                tail = mats[child].to_translation()
+            else:
+                role = self.roles_by_node.get(i, "")
+                parent = self.parent[i]
+                incoming = head - mats[parent].to_translation() if parent in mats else Vector()
+                if role == "head":
+                    direction = Vector((0.0, 0.0, 1.0))
+                elif role in {"leftFoot", "rightFoot"}:
+                    direction = Vector((0.0, 1.0, 0.0))
+                elif incoming.length > 1e-6:
+                    direction = incoming.normalized()
+                else:
+                    direction = Vector((0.0, 0.0, 1.0))
+                tail = head + direction * max(incoming.length * 0.5, 0.02)
+            if (tail - head).length < 1e-6:
+                tail = head + Vector((0.0, 0.0, 0.02))
+            eb.head = head
+            eb.tail = tail
+            eb.use_connect = False
+            axis = (tail - head).normalized()
+            for reference in (Vector((0.0, 0.0, 1.0)), Vector((1.0, 0.0, 0.0)),
+                              Vector((0.0, 1.0, 0.0))):
+                roll_axis = reference - axis * reference.dot(axis)
+                if roll_axis.length > 1e-5:
+                    eb.align_roll(roll_axis.normalized())
+                    break
             ebs[i] = eb
         for i in g["members"]:
             eb = ebs[i]
-            eb.length = self._bone_length(i, mats)
-            eb.matrix = mats[i]
             par = self.parent[i]
             if par in ebs:
                 eb.parent = ebs[par]
+                eb.use_connect = False
         names = {i: ebs[i].name for i in g["members"]}
         bpy.ops.object.mode_set(mode="OBJECT")
         view_layer.objects.active = prev_active
         for i, bname in names.items():
             self.bone_of[i] = (obj, bname)
+            bone = arm.bones[bname]
+            correction = bone.matrix_local.inverted_safe() @ mats[i]
+            cv.set_bone_frame_correction(bone, correction)
         if scale_warn:
-            self.warn(f"armature '{name}': rest scale on joints ignored ({', '.join(scale_warn[:5])}...)")
+            self.warn(f"armature '{name}': joint scale is retained in ADM frame corrections; "
+                      f"Blender bone display is rigid ({', '.join(scale_warn[:5])}...)")
         g["object"] = obj
         return obj
 
-    def _bone_length(self, i, mats):
+    def _bone_child(self, i, mats):
         head = mats[i].to_translation()
-        yaxis = mats[i].to_3x3().col[1].normalized()
-        best = None
         kids = [c for c in self.nodes[i].get("children", []) if c in mats]
-        for c in kids:
-            v = mats[c].to_translation() - head
-            proj = v.dot(yaxis)
-            if proj > 1e-4 and (v - yaxis * proj).length < 0.2 * proj:
-                best = proj if best is None else min(best, proj)
-        if best is None and kids:
-            dists = [(mats[c].to_translation() - head).length for c in kids]
-            dists = [x for x in dists if x > 1e-4]
-            if dists:
-                best = sum(dists) / len(dists)
-        if best is None:
-            par = self.parent[i]
-            if par in mats:
-                best = max(0.02, (head - mats[par].to_translation()).length * 0.5)
-            else:
-                best = 0.1
-        return max(best, 1e-3)
+        kids = [c for c in kids if (mats[c].to_translation() - head).length > 1e-6]
+        if not kids:
+            return None
+        role = self.roles_by_node.get(i, "")
+        central_roles = {
+            "hips": ("spine", "chest", "upperChest"),
+            "spine": ("chest", "upperChest"),
+            "chest": ("upperChest", "neck"),
+            "upperChest": ("neck",),
+            "neck": ("head",),
+        }.get(role, ())
+        child_by_role = {self.roles_by_node.get(c): c for c in kids}
+        for target_role in central_roles:
+            if target_role in child_by_role:
+                return child_by_role[target_role]
+        if role in {"leftShoulder", "rightShoulder", "leftUpperArm", "rightUpperArm",
+                    "leftLowerArm", "rightLowerArm", "leftUpperLeg", "rightUpperLeg",
+                    "leftLowerLeg", "rightLowerLeg"}:
+            return min(kids, key=lambda c: (self.nodes[c].get("name", ""), c))
+        return min(kids, key=lambda c: (-(mats[c].to_translation() - head).length, c))
 
     # ---------------------------------------------------------------------------------------------
     def build_mesh(self, mesh_index, skin_index, collision=False, interactive_bindings=None):

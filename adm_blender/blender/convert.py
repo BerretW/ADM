@@ -15,6 +15,7 @@ C = Matrix(((1.0, 0.0, 0.0, 0.0),
 C_INV = C.transposed()
 C3 = C.to_3x3()
 C3_INV = C_INV.to_3x3()
+BONE_FRAME_CORRECTION = "adm_joint_frame_correction"
 
 
 def f32(x):
@@ -74,6 +75,20 @@ def matrix_to_list(m):
 
 def matrix_from_list(values):
     return Matrix([[values[c * 4 + r] for c in range(4)] for r in range(4)])
+
+
+def bone_frame_correction(bone):
+    """ADM joint frame relative to the visible Blender bone frame (B^-1 * J)."""
+    values = bone.get(BONE_FRAME_CORRECTION)
+    if values is None:
+        return Matrix.Identity(4)
+    if len(values) != 16:
+        raise ValueError(f"bone '{bone.name}' has an invalid ADM joint-frame correction")
+    return matrix_from_list(values)
+
+
+def set_bone_frame_correction(bone, correction):
+    bone[BONE_FRAME_CORRECTION] = matrix_to_list(correction)
 
 
 def trs_matrix_from_adm_node(node):
