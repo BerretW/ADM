@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "skills": {
+    "blender-motion-state-inspection": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/blender-motion-state-inspection/SKILL.md",
+      "computedHash": "1d765ea4375bd3bd0051dcc534a95d11db305c19ebf80e3de17040c15c12d64a"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "commit": "9c61ab243def98f72da12abd41cfcf5bcd91af9d",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-testing-patterns/SKILL.md",
+      "computedHash": "8113c05a831d4872c9294b0df26a335c09af423ee2e23d8b9b6817b300d96796"
+    },
+    "technical-documentation": {
+      "source": "wondelai/skills",
+      "commit": "c5265583b1a9740f06831e1d3e89b35bba3eb430",
+      "sourceType": "github",
+      "skillPath": "technical-documentation/SKILL.md",
+      "computedHash": "f7a22ff108d1b2df3b04e318085cfd659cba1b8571e833149ddfbbc56805f56e"
+    }
+  }
+}
