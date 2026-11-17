@@ -490,6 +490,9 @@ class AnimImporter:
                 frame_times = frame_times[frame_times <= key_times[-1] + 1e-8]
                 sample_times = np.unique(np.concatenate((key_times, frame_times)))
                 rest_local = {b.name: self.rest_rot[b.name][1] for b in arm.data.bones}
+                root = find_model_root(arm)
+                armature_rotation = ((root.matrix_world.inverted_safe() if root else Matrix.Identity(4))
+                                     @ arm.matrix_world).to_3x3().to_quaternion()
                 rest_global = {}
 
                 def get_rest_global(bone):
@@ -509,7 +512,8 @@ class AnimImporter:
                         if bone.name not in pose_global:
                             parent_pose = get_pose_global(bone.parent) if bone.parent else None
                             if bone.name in tracks:
-                                delta = _sample_quat_track(tracks[bone.name], float(time))
+                                model_delta = _sample_quat_track(tracks[bone.name], float(time))
+                                delta = armature_rotation.inverted() @ model_delta @ armature_rotation
                                 pose_global[bone.name] = delta @ rest_global[bone.name]
                             else:
                                 pose_global[bone.name] = (parent_pose @ rest_local[bone.name]

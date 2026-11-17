@@ -45,6 +45,9 @@ identities are superseded and are not supported; see the
 6. **Animation**: clip libraries (Actions → clips). You can choose:
    - for rig libraries, the binding: `SEMANTIC` (by role) or `EXACT` (one rig, `rigId`);
    - the target: armature, `model.any`, or vehicle/firearm mechanical components.
+   `SEMANTIC` rotation tracks are expressed in model-root space and converted through the target
+   armature object's transform on import. They animate mapped roles only; use `EXACT` to preserve
+   custom/helper bone tracks on the identical rig.
    Mechanical libraries are always `SEMANTIC`: choose their Model Root and matching profile, then animate
    objects marked with unique component roles. Import/export uses rest-relative translation and rotation
    deltas, and checks sampled tracks against the profile's axes and declared steering, hinge, or
@@ -63,6 +66,9 @@ separate. Physics and game behavior are not defined by the format.
 **Import and export:** use *File › Import/Export › ADM Model (.adm)* and *ADM Animation Library*.
 Drag & drop of `.adm` files also works.
 Exporting a mesh in Edit Mode uses its current edits and UVs without leaving Edit Mode.
+ADM exports also retain Blender bone display tails and roll as non-normative node extras, so a
+Blender-to-Blender round-trip preserves the visible bone shape. Older `.adm` files without this
+metadata can only infer bone tails from their joint hierarchy.
 
 ### Vertex color layers and tint swatches
 

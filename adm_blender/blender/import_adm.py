@@ -582,31 +582,41 @@ class ModelImporter:
                 k += 1
             used.add(bname)
             eb = arm.edit_bones.new(bname)
-            head = mats[i].to_translation()
-            child = self._bone_child(i, mats)
-            if child is not None:
-                tail = mats[child].to_translation()
+            display = self._bone_display(i)
+            if display is not None:
+                visual = mats[i] @ display[0]
+                head = visual.to_translation()
+                tail = visual @ display[1]
             else:
-                role = self.roles_by_node.get(i, "")
-                parent = self.parent[i]
-                incoming = head - mats[parent].to_translation() if parent in mats else Vector()
-                if role == "head":
-                    direction = Vector((0.0, 0.0, 1.0))
-                elif role in {"leftFoot", "rightFoot"}:
-                    direction = Vector((0.0, 1.0, 0.0))
-                elif incoming.length > 1e-6:
-                    direction = incoming.normalized()
+                visual = None
+                head = mats[i].to_translation()
+                child = self._bone_child(i, mats)
+                if child is not None:
+                    tail = mats[child].to_translation()
                 else:
-                    direction = Vector((0.0, 0.0, 1.0))
-                tail = head + direction * max(incoming.length * 0.5, 0.02)
+                    role = self.roles_by_node.get(i, "")
+                    parent = self.parent[i]
+                    incoming = head - mats[parent].to_translation() if parent in mats else Vector()
+                    if role == "head":
+                        direction = Vector((0.0, 0.0, 1.0))
+                    elif role in {"leftFoot", "rightFoot"}:
+                        direction = Vector((0.0, 1.0, 0.0))
+                    elif incoming.length > 1e-6:
+                        direction = incoming.normalized()
+                    else:
+                        direction = Vector((0.0, 0.0, 1.0))
+                    tail = head + direction * max(incoming.length * 0.5, 0.02)
             if (tail - head).length < 1e-6:
                 tail = head + Vector((0.0, 0.0, 0.02))
             eb.head = head
             eb.tail = tail
             eb.use_connect = False
             axis = (tail - head).normalized()
-            for reference in (Vector((0.0, 0.0, 1.0)), Vector((1.0, 0.0, 0.0)),
-                              Vector((0.0, 1.0, 0.0))):
+            references = [Vector((0.0, 0.0, 1.0)), Vector((1.0, 0.0, 0.0)),
+                          Vector((0.0, 1.0, 0.0))]
+            if visual is not None:
+                references.insert(0, visual.to_3x3().col[2])
+            for reference in references:
                 roll_axis = reference - axis * reference.dot(axis)
                 if roll_axis.length > 1e-5:
                     eb.align_roll(roll_axis.normalized())
@@ -655,6 +665,35 @@ class ModelImporter:
                     "leftLowerLeg", "rightLowerLeg"}:
             return min(kids, key=lambda c: (self.nodes[c].get("name", ""), c))
         return min(kids, key=lambda c: (-(mats[c].to_translation() - head).length, c))
+
+    def _bone_display(self, i):
+        extras = self.nodes[i].get("extras", {})
+        data = extras.get(cv.BONE_DISPLAY_EXTRA) if isinstance(extras, dict) else None
+        if data is None:
+            return None
+        name = self.nodes[i].get("name", str(i))
+        if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1:
+            self.warn(f"node '{name}': unsupported Blender bone-display metadata; using inferred display")
+            return None
+        tail = data.get("tail")
+        frame = data.get("visualFromJoint")
+
+        def valid_numbers(values, count):
+            return (isinstance(values, list) and len(values) == count
+                    and all(type(value) in (int, float) and np.isfinite(value) for value in values))
+
+        if not valid_numbers(tail, 3) or not valid_numbers(frame, 16):
+            self.warn(f"node '{name}': invalid Blender bone-display metadata; using inferred display")
+            return None
+        visual_from_joint = cv.matrix_from_list(frame)
+        if any(abs(visual_from_joint[3][c] - (1.0 if c == 3 else 0.0)) > 1e-5 for c in range(4)):
+            self.warn(f"node '{name}': invalid Blender bone-display frame; using inferred display")
+            return None
+        tail = Vector(tail)
+        if tail.length < 1e-6:
+            self.warn(f"node '{name}': zero-length Blender bone display; using inferred display")
+            return None
+        return visual_from_joint, tail
 
     # ---------------------------------------------------------------------------------------------
     def build_mesh(self, mesh_index, skin_index, collision=False, interactive_bindings=None):

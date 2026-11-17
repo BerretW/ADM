@@ -31,6 +31,7 @@ from adm_blender.tests.test_skeleton_profiles import humanoid_rig, quadruped_rig
 
 FAILS = []
 POS_TOL = 1e-5
+DISPLAY_TOL = 2e-5
 ANG_TOL_DEG = 0.05
 
 
@@ -625,6 +626,25 @@ def main(tmp):
         jb = bodyB.data.shape_keys.key_blocks["Jaw_Open"].value
         check(abs(jb - jaw) < 1e-4, f"frame {f}: ARKit jawOpen -> 'Jaw_Open' {jb:.4f} vs {jaw:.4f}")
 
+    armB.rotation_mode = "QUATERNION"
+    armB.rotation_quaternion = Euler((0.37, -0.21, 0.49)).to_quaternion()
+    bpy.context.view_layer.update()
+    R.apply_normalized_corrections(armB)
+    rotated_imp, _ = import_library(bpy.context, lib_path, AnimImportOptions(armature=armB, strict=False))
+    check(any("REFERENCE_POSE" in warning for warning in rotated_imp.warnings),
+          "rotated-armature test explicitly overrides the changed reference pose")
+    for f in (6, 11, 16):
+        sc.frame_set(f)
+        bpy.context.view_layer.update()
+        worst = max(ang_deg(
+            (R.model_matrix(armB) @ armB.pose.bones["b_" + n].matrix
+             @ cv.bone_frame_correction(armB.data.bones["b_" + n])).to_quaternion()
+            @ (R.model_matrix(armB) @ armB.data.bones["b_" + n].matrix_local
+               @ cv.bone_frame_correction(armB.data.bones["b_" + n])).to_quaternion().inverted(),
+            world_delta(armA, n)) for n in keyed)
+        check(worst < ANG_TOL_DEG, f"frame {f}: semantic rotations account for armature object rotation "
+              f"({worst:.4f} deg)")
+
     # ------------------------------------------------------------------ animals
     print("== animal profiles (PROVISIONAL)")
     quads = {}
@@ -681,6 +701,11 @@ def main(tmp):
     # ------------------------------------------------------------------ re-import heroA
     print("== skeleton round-trip (fresh file)")
     origin = {n: (armA.matrix_world @ armA.data.bones[n].matrix_local) for n in rolesA}
+    visible_bones = {
+        b.name: (armA.matrix_world @ b.head_local, armA.matrix_world @ b.tail_local,
+                 armA.matrix_world @ b.matrix_local)
+        for b in armA.data.bones
+    }
     weights0 = bone_weights(bodyA)
     corr0 = {b.name: tuple(b.adm.reference_correction) for b in armA.data.bones if b.adm.role}
     rootA_w = rootA.matrix_world.copy()
@@ -697,11 +722,22 @@ def main(tmp):
     dm = max(max(abs(a - b) for ra, rb_ in zip(
         rel @ origin[n], arm2.matrix_world @ arm2.data.bones[n].matrix_local
         @ cv.bone_frame_correction(arm2.data.bones[n])) for a, b in zip(ra, rb_)) for n in rolesA)
-    check(dm < POS_TOL, f"ADM joint frames preserved independently of visible bone axes ({dm:.2e})")
-    check(any((arm2.data.bones[n].matrix_local.to_3x3().col[1].normalized()
-               - (arm2.data.bones[n].matrix_local.to_3x3()
-                  @ cv.bone_frame_correction(arm2.data.bones[n]).to_3x3()).col[1].normalized()).length > 1e-3
-              for n in rolesA), "visual bone axes are decoupled from ADM joint frames")
+    check(dm < POS_TOL, f"ADM joint frames preserved ({dm:.2e})")
+    display_metadata = sum(
+        cv.BONE_DISPLAY_EXTRA in node.get("extras", {})
+        for node in doc["nodes"]
+    )
+    check(display_metadata == len(visible_bones),
+          f"Blender bone display metadata exported ({display_metadata}/{len(visible_bones)})")
+    visible_dev = max(
+        max((rel @ head - arm2.matrix_world @ arm2.data.bones[name].head_local).length,
+            (rel @ tail - arm2.matrix_world @ arm2.data.bones[name].tail_local).length,
+            max(abs(a - b) for ra, rb_ in zip(
+                rel @ matrix, arm2.matrix_world @ arm2.data.bones[name].matrix_local)
+                for a, b in zip(ra, rb_)))
+        for name, (head, tail, matrix) in visible_bones.items()
+    )
+    check(visible_dev < DISPLAY_TOL, f"visible bone shape preserved ({visible_dev:.2e})")
     check(rigid2 is not None and not rigid2.vertex_groups
           and not any(m.type == "ARMATURE" for m in rigid2.modifiers)
           and rigid2.parent_type == "BONE",

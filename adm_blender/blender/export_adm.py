@@ -25,7 +25,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.1 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.3 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -806,6 +806,18 @@ class ModelExporter:
             if rec.children:
                 n["children"] = list(rec.children)
             n.update(cv.node_transform_fields(rec.local, force_trs=rec.kind == "BONE"))
+            if rec.kind == "BONE":
+                bone = rec.bone
+                joint_frame = bone.matrix_local @ cv.bone_frame_correction(bone)
+                visual_from_joint = joint_frame.inverted_safe() @ bone.matrix_local
+                tail = bone.matrix_local.inverted_safe() @ bone.tail_local
+                n["extras"] = {
+                    cv.BONE_DISPLAY_EXTRA: {
+                        "version": 1,
+                        "visualFromJoint": cv.matrix_to_list(visual_from_joint),
+                        "tail": [cv.f32(v) for v in tail],
+                    }
+                }
             if rec.index in self.node_mesh:
                 n["mesh"] = self.node_mesh[rec.index]
             if rec.index in self.node_skin:

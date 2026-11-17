@@ -16,6 +16,7 @@ C_INV = C.transposed()
 C3 = C.to_3x3()
 C3_INV = C_INV.to_3x3()
 BONE_FRAME_CORRECTION = "adm_joint_frame_correction"
+BONE_DISPLAY_EXTRA = "adm_blender_bone_display"
 
 
 def f32(x):
