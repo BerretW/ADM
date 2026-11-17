@@ -535,6 +535,16 @@ def main(tmp):
     with open(path, "wb") as fh:
         fh.write(data)
     check(validate_file(path).ok, "validate_file heroA.adm")
+    missing_joint_display = deepcopy(doc)
+    missing_joint_display["nodes"][skin["joints"][0]]["extensions"].pop(K.JOINT_DISPLAY_EXT)
+    missing_display_report = validate_adm(write_container(K.ADM_MAGIC, missing_joint_display, rep.bin))
+    check("JOINT_DISPLAY_REQUIRED" in {e.code for e in missing_display_report.errors},
+          "required joint display data is enforced")
+    zero_joint_tail = deepcopy(doc)
+    zero_joint_tail["nodes"][skin["joints"][0]]["extensions"][K.JOINT_DISPLAY_EXT]["tail"] = [0, 0, 0]
+    zero_tail_report = validate_adm(write_container(K.ADM_MAGIC, zero_joint_tail, rep.bin))
+    check("JOINT_DISPLAY_TAIL" in {e.code for e in zero_tail_report.errors},
+          "zero-length joint display tail is rejected")
 
     # ------------------------------------------------------------------ retargeting
     print("== SEMANTIC retarget between humanoids (scale 1.25, roll 30 deg, other names)")
@@ -724,7 +734,7 @@ def main(tmp):
         @ cv.bone_frame_correction(arm2.data.bones[n])) for a, b in zip(ra, rb_)) for n in rolesA)
     check(dm < POS_TOL, f"ADM joint frames preserved ({dm:.2e})")
     display_metadata = sum(
-        cv.BONE_DISPLAY_EXTRA in node.get("extras", {})
+        K.JOINT_DISPLAY_EXT in node.get("extensions", {})
         for node in doc["nodes"]
     )
     check(display_metadata == len(visible_bones),

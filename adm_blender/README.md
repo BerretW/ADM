@@ -66,9 +66,11 @@ separate. Physics and game behavior are not defined by the format.
 **Import and export:** use *File › Import/Export › ADM Model (.adm)* and *ADM Animation Library*.
 Drag & drop of `.adm` files also works.
 Exporting a mesh in Edit Mode uses its current edits and UVs without leaving Edit Mode.
-ADM exports also retain Blender bone display tails and roll as non-normative node extras, so a
-Blender-to-Blender round-trip preserves the visible bone shape. Older `.adm` files without this
-metadata can only infer bone tails from their joint hierarchy.
+ADM exports retain Blender bone display tails and roll through the required `ADM_joint_display_v1`
+extension. Animation exports record source FPS and clip frame ranges through the required
+`ADM_animation_timing_v1` extension; animation import matches the source FPS by default and reports
+the scene-rate change. Import rejects skeleton files missing required display data rather than
+guessing bone tails or roll.
 
 ### Vertex color layers and tint swatches
 

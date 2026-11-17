@@ -289,6 +289,12 @@ class AnimExporter:
         duration = cv.f32_exact((fe - fs) / fps)
         out = {"id": clip.clip_id, "title": clip.title.strip(), "description": clip.description.strip(),
                "language": clip.language}
+        out["extensions"] = {
+            K.ANIMATION_TIMING_EXT: {
+                "frameStart": fs,
+                "frameEnd": fe,
+            }
+        }
         if tags:
             out["tags"] = tags
         out.update({"duration": duration, "loop": clip.loop, "rootMotion": clip.root_motion,
@@ -576,12 +582,21 @@ class AnimExporter:
         if not clips:
             raise ExportError(f"library '{self.lib.lib_id}' has no clips")
         doc = {"asset": {"generator": GENERATOR}, "library": libd, "clips": clips,
-               "accessors": self.b.accessors, "bufferViews": self.b.buffer_views}
+               "accessors": self.b.accessors, "bufferViews": self.b.buffer_views,
+               "extensions": {
+                   K.ANIMATION_TIMING_EXT: {
+                       "version": K.ANIMATION_TIMING_VERSION,
+                       "fps": self.context.scene.render.fps,
+                       "fpsBase": self.context.scene.render.fps_base,
+                   }
+               },
+               "extensionsUsed": [K.ANIMATION_TIMING_EXT],
+               "extensionsRequired": [K.ANIMATION_TIMING_EXT]}
         if any(ch.get("target", {}).get("parameter") in K.VERTEX_CONTROL_PARAMS
                for clip in clips for ch in clip.get("channels", [])
                if ch.get("target", {}).get("kind") == "shaderParameter"):
-            doc["extensionsUsed"] = [K.VERTEX_CONTROL_EXT]
-            doc["extensionsRequired"] = [K.VERTEX_CONTROL_EXT]
+            doc["extensionsUsed"].append(K.VERTEX_CONTROL_EXT)
+            doc["extensionsRequired"].append(K.VERTEX_CONTROL_EXT)
         data = write_container(K.ANIM_MAGIC, doc, self.b.bytes())
         report = validate_anim(data) if self.opts.validate else None
         if report is not None and not report.ok:

@@ -29,6 +29,7 @@ class AnimImportOptions:
         self.armature = None
         self.model_root = None
         self.frame_start = 1
+        self.match_source_frame_rate = True
         self.strict = True        # refuse incompatible profile / rigId instead of warning
         self.allow_provisional = True  # same-profile SEMANTIC binding for PROVISIONAL (animal) profiles
         self.set_active = True    # assign the first clip to the rig
@@ -144,6 +145,12 @@ class AnimImporter:
             raise ImportError_(f"{os.path.basename(self.filepath)} is not a valid ADM animation library", report)
         self.doc, self.bin = report.doc, report.bin
         lib = self.doc["library"]
+        self.timing = self.doc.get("extensions", {}).get(K.ANIMATION_TIMING_EXT)
+        scene = self.context.scene
+        self.import_fps = scene.render.fps / scene.render.fps_base
+        self.preserve_source_frames = self.timing is not None and self.opts.match_source_frame_rate
+        if self.preserve_source_frames:
+            self.import_fps = self.timing["fps"] / self.timing["fpsBase"]
         arm = self.opts.armature
         self.model_any = lib["targetProfile"] == K.MODEL_ANY_PROFILE
         self.component_target = lib["targetProfile"] in ("vehicle.car.v1", "weapon.firearm.v1")
@@ -165,7 +172,6 @@ class AnimImporter:
             self._check_compat(lib)
         self._prepare_targets(lib)
 
-        scene = self.context.scene
         self.registry = scene_shader_registry(scene)
         slib = scene.adm_anim.libraries.add()
         scene.adm_anim.active_library = len(scene.adm_anim.libraries) - 1
@@ -214,6 +220,17 @@ class AnimImporter:
                 if "payload" in ev:
                     e.payload = json.dumps(ev["payload"], ensure_ascii=False, separators=(",", ":"))
             actions.append(action)
+        if self.timing is None:
+            self.warn("library has no source frame-rate metadata; only animation time in seconds can be preserved")
+        elif self.preserve_source_frames:
+            old_fps = scene.render.fps / scene.render.fps_base
+            scene.render.fps = self.timing["fps"]
+            scene.render.fps_base = self.timing["fpsBase"]
+            if not math.isclose(old_fps, self.import_fps, rel_tol=1e-9, abs_tol=1e-9):
+                self.warn(f"scene frame rate changed from {old_fps:g} to {self.import_fps:g} fps "
+                          "to preserve the source frame range")
+        else:
+            self.warn("source frame rate was not applied; animation time is preserved at the current scene rate")
         slib.active_clip = 0
         if self.opts.set_active and actions:
             assign_action(None if self.component_target else self.arm, actions[0],
@@ -421,7 +438,7 @@ class AnimImporter:
     def import_clip(self, clip, lib):
         arm = self.arm
         scene = self.context.scene
-        fps = scene.render.fps / scene.render.fps_base
+        fps = self.import_fps
         f0 = self.opts.frame_start
         name = f"{lib['id']}:{clip['id']}"
         action = bpy.data.actions.new(name)
@@ -684,7 +701,11 @@ class AnimImporter:
         dur = clip["duration"]
         action.use_frame_range = True
         action.frame_start = f0
-        action.frame_end = f0 + max(dur * fps, 0.0)
+        clip_timing = clip.get("extensions", {}).get(K.ANIMATION_TIMING_EXT)
+        if self.preserve_source_frames and clip_timing is not None:
+            action.frame_end = f0 + max(clip_timing["frameEnd"] - clip_timing["frameStart"], 0.0)
+        else:
+            action.frame_end = f0 + max(dur * fps, 0.0)
         action.use_cyclic = clip["loop"] == "REPEAT"
         action["adm_clip_id"] = clip["id"]
         return action

@@ -93,15 +93,65 @@ def _validate_json_tree(value, depth=0, max_depth=64):
 def verify_interactive(manifest):
     """Independently check the interactive fixture's manifest-level binding contract."""
     name = "ADM_interactive_surfaces_v1"
+    joint_display = "ADM_joint_display_v1"
     used = manifest.get("extensionsUsed", [])
     required = manifest.get("extensionsRequired", [])
     if not isinstance(used, list) or not isinstance(required, list):
         raise AdmError("ADM_ERR_EXTENSIONS")
     supported = {"ADM_material_layers_v1", "ADM_vertex_control_v1", "ADM_external_images_v1",
-                 "ADM_physical_surfaces_v1", name}
+                 "ADM_physical_surfaces_v1", joint_display, name}
     for extension in required:
         if not isinstance(extension, str) or extension not in used or extension not in supported:
             raise AdmError("ADM_ERR_UNSUPPORTED_EXTENSION")
+    if joint_display in used:
+        nodes = manifest.get("nodes", [])
+        if not isinstance(nodes, list):
+            raise AdmError("ADM_ERR_JOINT_DISPLAY")
+
+        def number(value):
+            return type(value) is int or (type(value) is float and math.isfinite(value))
+
+        def valid_joint_display(data):
+            if not isinstance(data, dict) or set(data) != {"version", "displayFrame", "tail"}:
+                return False
+            frame, tail = data.get("displayFrame"), data.get("tail")
+            if data.get("version") != "1.0.0" or not isinstance(frame, list) or len(frame) != 16:
+                return False
+            if not all(number(value) for value in frame) or not isinstance(tail, list) or len(tail) != 3:
+                return False
+            if not all(number(value) for value in tail) or not any(value != 0 for value in tail):
+                return False
+            if frame[3] != 0 or frame[7] != 0 or frame[11] != 0 or frame[15] != 1:
+                return False
+            determinant = (frame[0] * (frame[5] * frame[10] - frame[9] * frame[6])
+                           - frame[4] * (frame[1] * frame[10] - frame[9] * frame[2])
+                           + frame[8] * (frame[1] * frame[6] - frame[5] * frame[2]))
+            return math.isfinite(determinant) and determinant != 0
+
+        joints = set()
+        if joint_display in required:
+            skins = manifest.get("skins", [])
+            if not isinstance(skins, list):
+                raise AdmError("ADM_ERR_JOINT_DISPLAY")
+            for skin in skins:
+                if not isinstance(skin, dict) or not isinstance(skin.get("joints"), list):
+                    raise AdmError("ADM_ERR_JOINT_DISPLAY")
+                for index in skin["joints"]:
+                    if type(index) is not int or not 0 <= index < len(nodes):
+                        raise AdmError("ADM_ERR_JOINT_DISPLAY")
+                    joints.add(index)
+        for index, node in enumerate(nodes):
+            if not isinstance(node, dict):
+                raise AdmError("ADM_ERR_JOINT_DISPLAY")
+            node_extensions = node.get("extensions", {})
+            if not isinstance(node_extensions, dict):
+                raise AdmError("ADM_ERR_JOINT_DISPLAY")
+            if joint_display in node_extensions and not valid_joint_display(node_extensions[joint_display]):
+                raise AdmError("ADM_ERR_JOINT_DISPLAY")
+        for index in joints:
+            node_extensions = nodes[index].get("extensions", {})
+            if joint_display not in node_extensions:
+                raise AdmError("ADM_ERR_JOINT_DISPLAY")
     extensions = manifest.get("extensions", {})
     if not isinstance(extensions, dict):
         raise AdmError("ADM_ERR_EXTENSIONS")

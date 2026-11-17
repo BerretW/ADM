@@ -431,6 +431,7 @@ class AdmValidator(_Base):
         self.check_meshes()
         self.check_nodes_and_scenes()
         self.check_skins()
+        self.check_joint_display()
         self.check_node_mesh_usage()
         self.check_skeleton_profiles()
         self.check_facial_profiles()
@@ -1228,6 +1229,50 @@ class AdmValidator(_Base):
                     self.skin_ok[si] = True
             if "skeletonProfile" in skin:
                 self.index(skin["skeletonProfile"], nprof, p + ".skeletonProfile", "skeletonProfiles")
+
+    def check_joint_display(self):
+        required = K.JOINT_DISPLAY_EXT in self.doc.get("extensionsRequired", [])
+        found = 0
+        for i, node in enumerate(self.nodes):
+            if not isinstance(node, dict):
+                continue
+            extensions = node.get("extensions", {})
+            has_data = isinstance(extensions, dict) and K.JOINT_DISPLAY_EXT in extensions
+            data = extensions.get(K.JOINT_DISPLAY_EXT) if has_data else None
+            path = f"nodes[{i}].extensions.{K.JOINT_DISPLAY_EXT}"
+            if not has_data:
+                if required and i in self.joint_nodes:
+                    self.r.error("JOINT_DISPLAY_REQUIRED", path,
+                                 "required joint-display data is missing from this skin joint")
+                continue
+            found += 1
+            if not self.keys(data, path, ("version", "displayFrame", "tail")):
+                continue
+            if data["version"] != K.JOINT_DISPLAY_VERSION:
+                self.r.error("JOINT_DISPLAY_VERSION", path + ".version",
+                             f"must be {K.JOINT_DISPLAY_VERSION!r}")
+            frame = data["displayFrame"]
+            if not _is_vec(frame, 16):
+                self.r.error("JOINT_DISPLAY_FRAME", path + ".displayFrame",
+                             "must be a finite column-major affine mat4")
+            else:
+                if any(abs(frame[c * 4 + 3] - (1.0 if c == 3 else 0.0)) > 1e-5
+                       for c in range(4)):
+                    self.r.error("JOINT_DISPLAY_FRAME", path + ".displayFrame",
+                                 "bottom row must be [0,0,0,1]")
+                if abs(det3(frame)) < 1e-12:
+                    self.r.error("JOINT_DISPLAY_FRAME", path + ".displayFrame",
+                                 "linear transform must be invertible")
+            tail = data["tail"]
+            if not _is_vec(tail, 3):
+                self.r.error("JOINT_DISPLAY_TAIL", path + ".tail",
+                             "must be a finite vec3")
+            elif sum(value * value for value in tail) < 1e-16:
+                self.r.error("JOINT_DISPLAY_TAIL", path + ".tail",
+                             "must not be the zero vector")
+        if required and not found:
+            self.r.error("JOINT_DISPLAY_EMPTY", "extensionsRequired",
+                         "required joint-display extension has no node data")
 
     def check_node_mesh_usage(self):
         for i, node in enumerate(self.nodes):
@@ -2295,6 +2340,7 @@ class AnimValidator(_Base):
         self.check_buffers()
         self.check_library()
         self.check_clips()
+        self.check_animation_timing()
 
     def check_text(self, obj, key, path, maxlen):
         v = obj.get(key)
@@ -2419,6 +2465,83 @@ class AnimValidator(_Base):
             sampler_kind = self.check_samplers(clip["samplers"], p, dur)
             self.check_channels(clip, p, binding, roles, sampler_kind)
             self.check_events(clip.get("events", []), p, dur)
+
+    def check_animation_timing(self):
+        clips = self.doc.get("clips")
+        if not isinstance(clips, list):
+            return
+        extensions = self.doc.get("extensions")
+        timing = extensions.get(K.ANIMATION_TIMING_EXT) if isinstance(extensions, dict) else None
+        required_extensions = self.doc.get("extensionsRequired", [])
+        required = isinstance(required_extensions, list) and K.ANIMATION_TIMING_EXT in required_extensions
+        if timing is None:
+            if required:
+                self.r.error("ANIMATION_TIMING_REQUIRED", "extensions",
+                             f"required extension '{K.ANIMATION_TIMING_EXT}' data is missing")
+            for ci, clip in enumerate(clips):
+                clip_extensions = clip.get("extensions") if isinstance(clip, dict) else None
+                if isinstance(clip_extensions, dict) and K.ANIMATION_TIMING_EXT in clip_extensions:
+                    self.r.error("ANIMATION_TIMING_LIBRARY_DATA", f"clips[{ci}].extensions",
+                                 "clip frame range requires top-level source frame-rate metadata")
+            return
+        path = f"extensions.{K.ANIMATION_TIMING_EXT}"
+        if not self.keys(timing, path, ("version", "fps", "fpsBase")):
+            return
+        if set(timing) != {"version", "fps", "fpsBase"}:
+            self.r.error("ANIMATION_TIMING_FIELDS", path,
+                         "must contain exactly version, fps and fpsBase")
+        if timing["version"] != K.ANIMATION_TIMING_VERSION:
+            self.r.error("ANIMATION_TIMING_VERSION", path + ".version",
+                         f"must be {K.ANIMATION_TIMING_VERSION!r}")
+        fps_valid = _is_int(timing["fps"]) and timing["fps"] > 0
+        fps_base_valid = _is_num(timing["fpsBase"]) and timing["fpsBase"] > 0
+        if not fps_valid:
+            self.r.error("ANIMATION_TIMING_FPS", path + ".fps", "must be a positive integer")
+        if not fps_base_valid:
+            self.r.error("ANIMATION_TIMING_FPS_BASE", path + ".fpsBase", "must be finite and greater than zero")
+        if not fps_valid or not fps_base_valid:
+            return
+        required_clip_fields = ("frameStart", "frameEnd")
+        for ci, clip in enumerate(clips):
+            if not isinstance(clip, dict):
+                continue
+            clip_path = f"clips[{ci}].extensions.{K.ANIMATION_TIMING_EXT}"
+            clip_extensions = clip.get("extensions")
+            clip_timing = clip_extensions.get(K.ANIMATION_TIMING_EXT) \
+                if isinstance(clip_extensions, dict) else None
+            if clip_timing is None:
+                self.r.error("ANIMATION_TIMING_CLIP_DATA", clip_path,
+                             "source frame range is required when the library declares source frame rate")
+                continue
+            if not self.keys(clip_timing, clip_path, required_clip_fields):
+                continue
+            if set(clip_timing) != set(required_clip_fields):
+                self.r.error("ANIMATION_TIMING_FIELDS", clip_path,
+                             "must contain exactly frameStart and frameEnd")
+            frame_start, frame_end = clip_timing["frameStart"], clip_timing["frameEnd"]
+            if not _is_num(frame_start):
+                self.r.error("ANIMATION_TIMING_FRAME_START", clip_path + ".frameStart",
+                             "must be a finite number")
+            if not _is_num(frame_end):
+                self.r.error("ANIMATION_TIMING_FRAME_END", clip_path + ".frameEnd",
+                             "must be a finite number")
+            if not (_is_num(frame_start) and _is_num(frame_end)):
+                continue
+            if frame_end < frame_start:
+                self.r.error("ANIMATION_TIMING_FRAME_RANGE", clip_path,
+                             "frameEnd must be greater than or equal to frameStart")
+                continue
+            duration = clip.get("duration")
+            if _is_num(duration):
+                expected_duration = (frame_end - frame_start) * timing["fpsBase"] / timing["fps"]
+                if not math.isfinite(expected_duration):
+                    self.r.error("ANIMATION_TIMING_DURATION", clip_path,
+                                 "frame range and source frame rate produce a non-finite duration")
+                    continue
+                tolerance = max(1e-6, abs(expected_duration) * 2e-6)
+                if abs(expected_duration - duration) > tolerance:
+                    self.r.error("ANIMATION_TIMING_DURATION", clip_path,
+                                 "frame range and source frame rate do not match clip duration")
 
     def check_samplers(self, samplers, p, dur):
         kinds = {}

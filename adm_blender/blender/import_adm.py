@@ -538,6 +538,15 @@ class ModelImporter:
     # ---------------------------------------------------------------------------------------------
     def build_armature(self, gi, as_node=None):
         g = self.arm_groups[gi]
+        display_data = {}
+        for i in g["members"]:
+            display_data[i] = self._bone_display(i)
+            if display_data[i] is None:
+                name = self.nodes[i].get("name", str(i))
+                raise ImportError_(
+                    f"node '{name}' has no {K.JOINT_DISPLAY_EXT} data; "
+                    "the exact Blender bone shape cannot be reconstructed"
+                )
         p = g["parent"]
         if as_node is not None:
             name = _safe(self.nodes[as_node].get("name"), f"Armature_{gi}")
@@ -582,40 +591,19 @@ class ModelImporter:
                 k += 1
             used.add(bname)
             eb = arm.edit_bones.new(bname)
-            display = self._bone_display(i)
-            if display is not None:
-                visual = mats[i] @ display[0]
-                head = visual.to_translation()
-                tail = visual @ display[1]
-            else:
-                visual = None
-                head = mats[i].to_translation()
-                child = self._bone_child(i, mats)
-                if child is not None:
-                    tail = mats[child].to_translation()
-                else:
-                    role = self.roles_by_node.get(i, "")
-                    parent = self.parent[i]
-                    incoming = head - mats[parent].to_translation() if parent in mats else Vector()
-                    if role == "head":
-                        direction = Vector((0.0, 0.0, 1.0))
-                    elif role in {"leftFoot", "rightFoot"}:
-                        direction = Vector((0.0, 1.0, 0.0))
-                    elif incoming.length > 1e-6:
-                        direction = incoming.normalized()
-                    else:
-                        direction = Vector((0.0, 0.0, 1.0))
-                    tail = head + direction * max(incoming.length * 0.5, 0.02)
+            display_frame, display_tail = display_data[i]
+            visual = mats[i] @ display_frame
+            head = visual.to_translation()
+            tail = visual @ display_tail
             if (tail - head).length < 1e-6:
-                tail = head + Vector((0.0, 0.0, 0.02))
+                raise ImportError_(f"node '{self.nodes[i].get('name', i)}' has a degenerate bone display")
             eb.head = head
             eb.tail = tail
             eb.use_connect = False
             axis = (tail - head).normalized()
             references = [Vector((0.0, 0.0, 1.0)), Vector((1.0, 0.0, 0.0)),
                           Vector((0.0, 1.0, 0.0))]
-            if visual is not None:
-                references.insert(0, visual.to_3x3().col[2])
+            references.insert(0, visual.to_3x3().col[2])
             for reference in references:
                 roll_axis = reference - axis * reference.dot(axis)
                 if roll_axis.length > 1e-5:
@@ -642,58 +630,35 @@ class ModelImporter:
         g["object"] = obj
         return obj
 
-    def _bone_child(self, i, mats):
-        head = mats[i].to_translation()
-        kids = [c for c in self.nodes[i].get("children", []) if c in mats]
-        kids = [c for c in kids if (mats[c].to_translation() - head).length > 1e-6]
-        if not kids:
-            return None
-        role = self.roles_by_node.get(i, "")
-        central_roles = {
-            "hips": ("spine", "chest", "upperChest"),
-            "spine": ("chest", "upperChest"),
-            "chest": ("upperChest", "neck"),
-            "upperChest": ("neck",),
-            "neck": ("head",),
-        }.get(role, ())
-        child_by_role = {self.roles_by_node.get(c): c for c in kids}
-        for target_role in central_roles:
-            if target_role in child_by_role:
-                return child_by_role[target_role]
-        if role in {"leftShoulder", "rightShoulder", "leftUpperArm", "rightUpperArm",
-                    "leftLowerArm", "rightLowerArm", "leftUpperLeg", "rightUpperLeg",
-                    "leftLowerLeg", "rightLowerLeg"}:
-            return min(kids, key=lambda c: (self.nodes[c].get("name", ""), c))
-        return min(kids, key=lambda c: (-(mats[c].to_translation() - head).length, c))
-
     def _bone_display(self, i):
-        extras = self.nodes[i].get("extras", {})
-        data = extras.get(cv.BONE_DISPLAY_EXTRA) if isinstance(extras, dict) else None
+        extensions = self.nodes[i].get("extensions", {})
+        data = extensions.get(K.JOINT_DISPLAY_EXT) if isinstance(extensions, dict) else None
         if data is None:
             return None
         name = self.nodes[i].get("name", str(i))
-        if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1:
-            self.warn(f"node '{name}': unsupported Blender bone-display metadata; using inferred display")
-            return None
+        if (not isinstance(data, dict)
+                or data.get("version") != K.JOINT_DISPLAY_VERSION):
+            raise ImportError_(f"node '{name}' has an unsupported {K.JOINT_DISPLAY_EXT} version")
+        if set(data) != {"version", "displayFrame", "tail"}:
+            raise ImportError_(f"node '{name}' has an invalid {K.JOINT_DISPLAY_EXT} object")
         tail = data.get("tail")
-        frame = data.get("visualFromJoint")
+        frame = data.get("displayFrame")
 
         def valid_numbers(values, count):
             return (isinstance(values, list) and len(values) == count
                     and all(type(value) in (int, float) and np.isfinite(value) for value in values))
 
         if not valid_numbers(tail, 3) or not valid_numbers(frame, 16):
-            self.warn(f"node '{name}': invalid Blender bone-display metadata; using inferred display")
-            return None
-        visual_from_joint = cv.matrix_from_list(frame)
-        if any(abs(visual_from_joint[3][c] - (1.0 if c == 3 else 0.0)) > 1e-5 for c in range(4)):
-            self.warn(f"node '{name}': invalid Blender bone-display frame; using inferred display")
-            return None
-        tail = Vector(tail)
-        if tail.length < 1e-6:
-            self.warn(f"node '{name}': zero-length Blender bone display; using inferred display")
-            return None
-        return visual_from_joint, tail
+            raise ImportError_(f"node '{name}' has invalid {K.JOINT_DISPLAY_EXT} vectors")
+        display_frame = cv.mat_from_adm(cv.matrix_from_list(frame))
+        if any(abs(display_frame[3][c] - (1.0 if c == 3 else 0.0)) > 1e-5 for c in range(4)):
+            raise ImportError_(f"node '{name}' has a non-affine {K.JOINT_DISPLAY_EXT} frame")
+        if not np.isfinite(np.array(display_frame, dtype=np.float64)).all():
+            raise ImportError_(f"node '{name}' has a non-finite {K.JOINT_DISPLAY_EXT} frame")
+        display_tail = cv.vec_from_adm(tail)
+        if display_tail.length < 1e-6:
+            raise ImportError_(f"node '{name}' has a zero-length {K.JOINT_DISPLAY_EXT} tail")
+        return display_frame, display_tail
 
     # ---------------------------------------------------------------------------------------------
     def build_mesh(self, mesh_index, skin_index, collision=False, interactive_bindings=None):

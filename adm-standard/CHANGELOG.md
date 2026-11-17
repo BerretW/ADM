@@ -1,5 +1,19 @@
 # Changelog
 
+## ADM 1.0 optional animation-timing extension — 2026-11-18
+
+- Added the normative `ADM_animation_timing_v1@1.0.0` contract for source frame rates and exact
+  per-clip frame ranges while keeping core sample times and durations in seconds.
+- Blender animation imports can match the source frame rate to preserve the original frame range;
+  the scene-rate change is reported and can be disabled explicitly.
+
+## ADM 1.0 optional joint-display extension — 2026-11-17
+
+- Added the normative `ADM_joint_display_v1@1.0.0` contract for exact display frames, bone heads,
+  tails and roll without changing core node, skinning or animation semantics.
+- Blender exports declare the extension required and provide data for every exported bone node;
+  importers reject missing data instead of estimating bone geometry.
+
 ## ADM 1.0 shader registry republication — 2026-11-15
 
 - Reissued the current 42 shader definitions and their referenced contracts as the authoritative

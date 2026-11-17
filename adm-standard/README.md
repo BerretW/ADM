@@ -86,6 +86,10 @@ Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_t
 - `profiles/humanoid.vrm1.md`: VRM 1.0 humanoid. Role data, ADM-REF-NORM-1 corrections and reference-pose rules are normative. Tests `HUM-001..006`.
 - `extensions/ADM_humanoid_sockets_v1.md`: normative equipment socket names, role ancestry,
   model-space frames and `mount.root` composition for `ADM-HUMANOID-SOCKETS-1`.
+- `extensions/ADM_joint_display_v1.md`: normative joint display frames and bone endpoints for
+  exact cross-tool skeleton editing under `ADM-JOINT-DISPLAY-1`.
+- `extensions/ADM_animation_timing_v1.md`: normative source frame-rate and clip-range metadata for
+  exact authoring-timeline round trips under `ADM-ANIMATION-TIMING-1`.
 - `fixtures/expectations/humanoid_sockets.expected.json`: exact registry-to-socket-name expectation used
   by the reference tests.
 - `proposals/animal.quadruped.v1.md` and `proposals/skeleton-profile-proposals.json`: non-normative animal profile proposals, outside ADM 1.0.

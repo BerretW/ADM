@@ -21,14 +21,18 @@ identities are superseded and are not supported. See the
    and enable ADM Tools.
 4. Open the **ADM** tab in the 3D View sidebar (`N`).
 
-Alternatively, build the extension from the repository root (PowerShell example):
+Build and validate the extension from the repository root:
 
-```powershell
-New-Item -ItemType Directory -Force .\dist | Out-Null
-& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --command extension build --source-dir .\adm_blender --output-dir .\dist
+```bat
+build.bat
 ```
 
-Install the generated ZIP from `dist`. The build excludes tests and Python caches.
+The script runs the Python, ADM conformance, and Blender integration tests, bumps the patch
+version only after they pass, builds a versioned ZIP into `dist`, and writes a build report there.
+Use `build.bat -CheckOnly` to run the tests and create a report without changing the version or
+building a ZIP. Set `BLENDER_EXE` to override the Blender executable path; otherwise the script
+uses Blender from `PATH` or the default Blender 5.2 installation. The build excludes tests and
+Python caches. Install the generated ZIP from `dist`.
 
 See the [add-on guide](adm_blender/README.md) for authoring, import/export and animation workflows.
 

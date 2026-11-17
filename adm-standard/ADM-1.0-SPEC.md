@@ -135,6 +135,11 @@ Accessor byteOffset defaults to 0, component sizes are F32/U32=4, U16=2, U8=1; e
 
 A node is a transform and may refer to a mesh and skin. A node with morphable mesh MAY additionally contain `weights:[number...]` whose length equals the mesh target count; weights MUST be finite within [0,1]. If `skin` is set, `mesh` MUST also be set. All nodes MUST be reachable from exactly one scene root in the file; scene root sets MUST be disjoint in v1.0. Every node MUST have at most one parent. No cycles, duplicate child indices, or roots that also occur as children. A node MAY have children and a mesh simultaneously. A scene root MUST NOT have a parent. Node names are display labels, not identity: indices are authoritative. A writer SHOULD provide stable human-readable names.
 
+The core node and skin schemas define joint transforms and skinning but do not define an editable
+bone's display tail or roll. Files that require exact cross-tool bone display geometry use the
+versioned `ADM_joint_display_v1` extension; its endpoints and frame MUST NOT alter core skinning or
+animation semantics.
+
 ## 7. Meshes and primitive vertex attributes
 
 `meshes`: array of `{ "name"?: string, "primitives": [primitive, ...], "targetNames"?: [string...], "weights"?: [number...] }` with at least one primitive. A primitive:
@@ -385,6 +390,8 @@ Normative role and pivot conventions for `vehicle.car.v1` and `weapon.firearm.v1
 `.adm_anim` is a separate **complete** animation library containing no mesh geometry. It shares the exact 64-byte chunk container, directory, JSON encoding, chunk-addressed bufferViews, accessors, and type definitions from §§2–5, except for this format's 4-byte magic: ASCII `AMA0` = hex `41 4D 41 30`. `major=1`, `minor=0`, flags=reserved=0. Physical length and all offsets MUST satisfy §3. A `.adm` parser MUST NOT accept this magic as `.adm`, and vice versa. No legacy `ADS\0` support.
 
 Top-level `.adm_anim` manifest **required**: `asset` object, `library` object, `clips` array, `bufferViews` array, `accessors` array. **Optional**: `eventsSchema`, `chunkDependencies`, `streamHints`, `extensionsUsed`, `extensionsRequired`, `extensions`, `extras`. Unknown top-level fields forbidden. `library` has required fields `{ "id":library_id, "title":string, "description":string, "language":string, "targetProfile":string, "binding":"SEMANTIC"|"EXACT" }` and only these optional fields: `rigId`, `tags`, `author`, `license`, `revision`, `namespace`, `motionScale`, `sourceHeight`, `rootMotionSource`. Unknown library fields are invalid. `title` and `description` MUST contain non-whitespace Unicode text, max 256 and 2048 Unicode code points respectively. `language` MUST match a valid BCP-47 language tag (case-insensitive comparison; writer SHOULD use canonical casing). `targetProfile` MUST identify a registered skeleton profile, a registered mechanical model profile (`vehicle.car.v1`, `weapon.firearm.v1`), `model.any.v1`, or a versioned published custom profile. A SEMANTIC `component` channel requires a matching mechanical `modelProfiles` entry on the target model; mechanical roles are not skin joints. `model.any.v1` is registered by ADM 1.0 for material/morph/expression-only libraries, requires `binding=SEMANTIC`, and forbids `bone` and `component` targets and `rootMotion=EXTRACT`; its tracks can bind any ADM model possessing their explicitly identified target roles. `binding=EXACT` requires `rigId`; SEMANTIC MUST NOT include it. `tags`, when present, MUST be an array of unique lowercase segments matching the clip tag syntax in §14. `author` and `license`, when present, MUST be strings. `revision`, when present, MUST be SemVer 2.0.0. `namespace`, when present, MUST be a lowercase reverse-DNS name with at least two labels; it qualifies the library identity but does not change `library.id`. `motionScale` MAY be `"SOURCE_HEIGHT"` only; it requires finite `sourceHeight > 0` meters. `sourceHeight` without `motionScale` is invalid. With `SOURCE_HEIGHT`, a semantic humanoid target MUST provide finite `targetHeight > 0` meters; missing target height makes the binding incompatible, not an unscaled fallback. `rootMotionSource`, when present, MUST be `"hips"` and is valid only for `targetProfile:"humanoid.vrm1"` in this revision. It identifies the semantic track used by EXTRACT clips, not a new skeleton role. If author/license is absent no authorship or licensing conclusion is implied. Catalog indexers MUST be able to extract `library` and `clips[*]` metadata without reading ANIM chunks.
+
+`ADM_animation_timing_v1` optionally carries the source timeline rate and each clip's source frame range. Its exact schema, duration consistency rule, import behavior, and conformance tests are normative in [`extensions/ADM_animation_timing_v1.md`](extensions/ADM_animation_timing_v1.md). It MUST be required when a writer promises exact reproduction of the authoring frame range; it does not change the core animation's time-in-seconds playback semantics.
 
 `library.id` is the **authoritative** ID, never derived from the filename. Full clip identifiers are `library.id + ':' + clip.id`. Library ID syntax `segment ('@' segment)*`, clip id `segment`, segment regex `[a-z][a-z0-9_]*`. Full IDs are lowercase ASCII and case-sensitive. `human@walking@wounded:walk1` is valid; whitespace, uppercase, slash, colon in segment, empty segment or duplicate clip id are invalid. Library IDs SHOULD have ≥2 segments; if not, still syntactically valid. An application MUST NOT choose between two simultaneously loaded identical full IDs without an explicit namespace/version override from its asset manager; this file format does not define resource search paths or override precedence.
 
@@ -668,6 +675,7 @@ spec/
   profiles/                # pinned normative ADM 1.0 profiles and annexes
   proposals/               # non-normative profile proposals outside ADM 1.0
   registry/                # namespace/extension ID registry and immutable shader profiles
+  extensions/              # separately versioned normative extension contracts
   fixtures/valid/          # byte-perfect samples and expected evaluator output
   fixtures/invalid/        # validation failures with codes
   reference/               # engine-independent reader and animation evaluator
@@ -682,6 +690,10 @@ Recommended source citation references:
 - Apple ARKit named coefficients: https://developer.apple.com/documentation/arkit/arfaceanchor/blendshapelocation/
 
 **Final status:** ADM 1.0 is frozen by this publication. Changes to normative behavior require a later version under §28. The independent conformance corpus, validator, numerical evaluator and interoperability certification described in §25 are separate implementation and certification deliverables; none is implied by publication of this specification.
+
+`ADM_joint_display_v1` is a separately versioned optional extension under this policy. Its
+node-local display data is required only by files that declare it in `extensionsRequired`; it does
+not revise the frozen ADM 1.0 core.
 
 
 

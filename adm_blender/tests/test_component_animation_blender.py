@@ -5,6 +5,7 @@ import math
 import os
 import sys
 import tempfile
+from copy import deepcopy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -19,6 +20,8 @@ from adm_blender.blender.export_anim import AnimExporter  # noqa: E402
 from adm_blender.blender.import_anim import AnimImportOptions, import_library  # noqa: E402
 from adm_blender.blender.import_adm import ImportError_  # noqa: E402
 from adm_blender.core.buffers import read_accessor_np  # noqa: E402
+from adm_blender.core.container import write_container  # noqa: E402
+from adm_blender.core import constants as K  # noqa: E402
 from adm_blender.core.validate import validate_anim  # noqa: E402
 
 
@@ -76,6 +79,8 @@ def add_curve(channelbag, path, index, value_start, value_end):
 def run():
     adm_blender.register()
     scene = bpy.context.scene
+    scene.render.fps = 30
+    scene.render.fps_base = 1.0
     source_root, source = make_model("Source")
     target_root, target = make_model("Target")
     target_obj = target["weapon.bolt"]
@@ -105,13 +110,23 @@ def run():
     clip.action = action
     clip.use_action_range = False
     clip.frame_start = 1
-    clip.frame_end = 25
+    clip.frame_end = 32
     clip.root_motion = "IN_PLACE"
 
     exporter = AnimExporter(bpy.context, library)
     data, report = exporter.export()
     check(report.ok, "component animation exporter produces valid ADM")
     doc = validate_anim(data).doc
+    timing = doc["extensions"]["ADM_animation_timing_v1"]
+    clip_timing = doc["clips"][0]["extensions"]["ADM_animation_timing_v1"]
+    check(timing["fps"] == 30 and timing["fpsBase"] == 1.0
+          and clip_timing["frameStart"] == 1 and clip_timing["frameEnd"] == 32,
+          "export records source frame rate and the full 32-frame clip range")
+    invalid_timing = deepcopy(doc)
+    invalid_timing["clips"][0]["extensions"]["ADM_animation_timing_v1"]["frameEnd"] = 31
+    invalid_report = validate_anim(write_container(K.ANIM_MAGIC, invalid_timing, validate_anim(data).bin))
+    check(any(issue.code == "ANIMATION_TIMING_DURATION" for issue in invalid_report.errors),
+          "validator rejects a source frame range that conflicts with clip duration")
     tracks = {(channel["target"]["role"], channel["path"]): channel
               for channel in doc["clips"][0]["channels"]}
     check(("weapon.bolt", "translation") in tracks and ("weapon.bolt", "rotation") in tracks,
@@ -142,6 +157,7 @@ def run():
         stream.write(data)
         path = stream.name
     try:
+        scene.render.fps = 24
         target_profiles = json.loads(target_root.adm.model_profiles_json)
         target_profiles[0]["metadata"]["articulations"][0]["translationMin"] = -0.005
         target_root.adm.model_profiles_json = json.dumps(target_profiles, separators=(",", ":"))
@@ -157,8 +173,12 @@ def run():
             bpy.context, path, AnimImportOptions(model_root=target_root, set_active=True))
     finally:
         os.unlink(path)
-    check(not imp.warnings, "component animation imports without unresolved-role diagnostics")
-    scene.frame_set(25)
+    check(any("scene frame rate changed" in warning for warning in imp.warnings)
+          and scene.render.fps == 30,
+          "import restores source frame rate and reports the scene setting change")
+    check(round(imp.context.scene.adm_anim.libraries[-1].clips[0].action.frame_end) == 32,
+          "import preserves the 32-frame action range")
+    scene.frame_set(32)
     bpy.context.view_layer.update()
     check(all(abs(a - b) < 1e-5 for a, b in zip(target_obj.location, (0.2, 0.31, 0.4))),
           "import evaluates translation delta relative to target rest transform")

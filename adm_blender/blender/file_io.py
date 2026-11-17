@@ -233,6 +233,9 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
                                     description="Bind SEMANTIC libraries of PROVISIONAL (animal) profiles to a rig "
                                                 "declaring the same profile (not certified interoperable)")
     frame_start: IntProperty(name="Start Frame", default=1)
+    match_source_frame_rate: BoolProperty(
+        name="Match Source Frame Rate", default=True,
+        description="Set the scene frame rate from the animation file to preserve its frame range")
 
     def invoke(self, context, event):
         arm = active_armature(context)
@@ -249,6 +252,7 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
         self.layout.prop(self, "strict")
         self.layout.prop(self, "allow_provisional")
         self.layout.prop(self, "frame_start")
+        self.layout.prop(self, "match_source_frame_rate")
 
     def execute(self, context):
         from .import_anim import AnimImportOptions, import_library
@@ -262,7 +266,8 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
             imp, lib = import_library(context, self.filepath,
                                       AnimImportOptions(armature=arm, model_root=root, strict=self.strict,
                                                         allow_provisional=self.allow_provisional,
-                                                        frame_start=self.frame_start))
+                                                        frame_start=self.frame_start,
+                                                        match_source_frame_rate=self.match_source_frame_rate))
         except ImportError_ as exc:
             show_report(context, os.path.basename(self.filepath), exc.report, [exc])
             self.report({"ERROR"}, str(exc))
