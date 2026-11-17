@@ -840,6 +840,7 @@ class ADM_PT_animation(_Side, bpy.types.Panel):
         row = lay.row()
         row.template_list("ADM_UL_libraries", "", s, "libraries", s, "active_library", rows=2)
         _list_buttons(row, "scene", "libraries", "active_library")
+        lay.operator("import_anim.bvh_adm", text="Import BVH Animation", icon="IMPORT")
         lay.operator("import_anim.mixamo_fbx", text="Import Mixamo Animation", icon="IMPORT")
         lib = _active_library(context)
         if lib is None:
@@ -904,6 +905,7 @@ class ADM_PT_animation(_Side, bpy.types.Panel):
         r.enabled = not clip.use_action_range
         r.prop(clip, "frame_start")
         r.prop(clip, "frame_end")
+        col.prop(clip, "fps")
         col.prop(clip, "title")
         col.prop(clip, "description")
         if not clip.description.strip():

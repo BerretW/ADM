@@ -611,6 +611,8 @@ class ADMAnimClip(PropertyGroup):
     use_action_range: BoolProperty(name="Use Action Range", default=True, update=_clip_action_update)
     frame_start: IntProperty(name="Start", default=1)
     frame_end: IntProperty(name="End", default=25)
+    fps: FloatProperty(name="FPS", default=0.0, min=0.0, max=1000.0,
+                       description="Playback rate for this clip; 0 uses the scene frame rate")
     loop: EnumProperty(name="Loop", items=[(m, m.capitalize(), "") for m in K.LOOP_MODES], default="REPEAT")
     root_motion: EnumProperty(name="Root Motion", default="IN_PLACE", items=[
         ("IN_PLACE", "In Place", ""), ("EXTRACT", "Extract", ""), ("IGNORE", "Ignore", "")])

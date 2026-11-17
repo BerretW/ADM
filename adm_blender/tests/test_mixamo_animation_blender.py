@@ -164,6 +164,8 @@ def run():
     timing = doc["clips"][0]["extensions"]["ADM_animation_timing_v1"]
     check(report.ok and timing["frameStart"] == 1 and timing["frameEnd"] == 32,
           "the exported ADM clip retains its source frame timing")
+    check(timing["fps"] == 30 and timing["fpsBase"] == 1.0,
+          "the exported ADM clip retains its individual playback rate")
 
     backwards_source, backwards_names = _make_armature(
         "BackwardsMixamoSource", mixamo=True, mirrored=True)

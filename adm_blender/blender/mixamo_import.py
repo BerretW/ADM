@@ -52,11 +52,24 @@ def _restore_target(arm, snapshot):
             arm.animation_data.action_slot = snapshot["action_slot"]
 
 
-def _configure_humanoid(arm, overwrite, set_profile=True):
+def _configure_humanoid(arm, overwrite, set_profile=True, explicit_roles=None):
     if set_profile:
         arm.data.adm.profile = SP.HUMANOID
         arm.data.adm.export_profile = True
-    rig_tools.auto_map_profile(arm, overwrite=overwrite, profile_id=SP.HUMANOID)
+    if explicit_roles is None:
+        rig_tools.auto_map_profile(arm, overwrite=overwrite, profile_id=SP.HUMANOID)
+    else:
+        bones = {bone.name: bone for bone in arm.data.bones}
+        unknown_bones = set(explicit_roles) - set(bones)
+        if unknown_bones:
+            raise ValueError(f"{arm.name}: mapping references unknown bones: "
+                             + ", ".join(sorted(unknown_bones)))
+        for bone in arm.data.bones:
+            bone.adm.role = explicit_roles.get(bone.name, "")
+        valid_roles = set(SP.roles(SP.HUMANOID))
+        for role in explicit_roles.values():
+            if role not in valid_roles:
+                raise ValueError(f"{arm.name}: unsupported humanoid role {role!r}")
     roles, duplicates = _mapped_roles(arm)
     missing = sorted(set(SP.required_roles(SP.HUMANOID)) - set(roles))
     if missing or duplicates:
@@ -85,7 +98,7 @@ def _align_source_facing(context, arm):
 def _copy_clip(source, destination):
     destination.use_action_range = False
     for attr in ("clip_id", "title", "description", "language", "tags", "action", "frame_start",
-                 "frame_end", "loop", "root_motion", "root_bone"):
+                 "frame_end", "fps", "loop", "root_motion", "root_bone"):
         setattr(destination, attr, getattr(source, attr))
     destination.use_action_range = source.use_action_range
     for source_event in source.events:
@@ -97,7 +110,10 @@ def _copy_clip(source, destination):
 
 def retarget_mixamo_action(context, source_arm, source_action, target_arm, *,
                            library_index=None, library_id="", library_title="", library_description="",
-                           clip_id="", clip_title="", clip_description="", root_motion="EXTRACT"):
+                           library_author="", library_license="", library_revision="", library_namespace="",
+                           library_tags="",
+                           clip_id="", clip_title="", clip_description="", root_motion="EXTRACT",
+                           source_role_mapping=None, clip_fps=0.0):
     """Map a Mixamo action to a humanoid profile and import it onto the target rig."""
     if source_arm is None or source_arm.type != "ARMATURE":
         raise ValueError("the imported FBX must contain one armature")
@@ -148,7 +164,7 @@ def retarget_mixamo_action(context, source_arm, source_action, target_arm, *,
     source_warnings = ()
     success = False
     try:
-        _configure_humanoid(source_arm, overwrite=True)
+        _configure_humanoid(source_arm, overwrite=True, explicit_roles=source_role_mapping)
         source_warnings = _align_source_facing(context, source_arm)
         _configure_humanoid(target_arm, overwrite=False, set_profile=False)
 
@@ -158,6 +174,11 @@ def retarget_mixamo_action(context, source_arm, source_action, target_arm, *,
         source_library.title = output_title
         source_library.description = output_description
         source_library.language = output_language or "en"
+        source_library.author = library_author
+        source_library.license = library_license
+        source_library.revision = library_revision
+        source_library.namespace = library_namespace
+        source_library.tags = library_tags
         source_library.target = "RIG"
         source_library.armature = source_arm
         source_library.binding = "SEMANTIC"
@@ -169,6 +190,7 @@ def retarget_mixamo_action(context, source_arm, source_action, target_arm, *,
         source_clip.language = output_language or "en"
         source_clip.action = source_action
         source_clip.use_action_range = True
+        source_clip.fps = clip_fps
         source_clip.root_motion = root_motion
 
         exporter = AnimExporter(context, source_library)

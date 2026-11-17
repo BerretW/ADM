@@ -151,6 +151,15 @@ class AnimImporter:
         self.preserve_source_frames = self.timing is not None and self.opts.match_source_frame_rate
         if self.preserve_source_frames:
             self.import_fps = self.timing["fps"] / self.timing["fpsBase"]
+            if not math.isfinite(self.import_fps) or not 0.001 <= self.import_fps <= 1000.0:
+                raise ImportError_("project frame rate is outside Blender import support "
+                                   "(0.001 to 1000 fps)")
+            for clip in self.doc["clips"]:
+                clip_timing = clip["extensions"][K.ANIMATION_TIMING_EXT]
+                clip_fps = clip_timing["fps"] / clip_timing["fpsBase"]
+                if not math.isfinite(clip_fps) or not 0.001 <= clip_fps <= 1000.0:
+                    raise ImportError_(f"clip {clip['id']!r} frame rate is outside Blender import support "
+                                       "(0.001 to 1000 fps)")
         arm = self.opts.armature
         self.model_any = lib["targetProfile"] == K.MODEL_ANY_PROFILE
         self.component_target = lib["targetProfile"] in ("vehicle.car.v1", "weapon.firearm.v1")
@@ -206,6 +215,9 @@ class AnimImporter:
             sc.tags = ", ".join(clip.get("tags", []))
             sc.loop = clip["loop"]
             sc.root_motion = clip["rootMotion"]
+            clip_timing = clip.get("extensions", {}).get(K.ANIMATION_TIMING_EXT)
+            sc.fps = (clip_timing["fps"] / clip_timing["fpsBase"]
+                      if self.preserve_source_frames and clip_timing is not None else 0.0)
             if clip["rootMotion"] == "EXTRACT" and self.binding == "EXACT":
                 sc.root_bone = self._root_bone(clip)
             sc.use_action_range = False
@@ -229,6 +241,12 @@ class AnimImporter:
             if not math.isclose(old_fps, self.import_fps, rel_tol=1e-9, abs_tol=1e-9):
                 self.warn(f"scene frame rate changed from {old_fps:g} to {self.import_fps:g} fps "
                           "to preserve the source frame range")
+            clip_rates = [clip["extensions"][K.ANIMATION_TIMING_EXT]["fps"]
+                          / clip["extensions"][K.ANIMATION_TIMING_EXT]["fpsBase"]
+                          for clip in self.doc["clips"]]
+            if any(not math.isclose(rate, self.import_fps, rel_tol=1e-9, abs_tol=1e-9)
+                   for rate in clip_rates):
+                self.warn("clips retain individual frame rates; Play Clip applies the selected clip's rate")
         else:
             self.warn("source frame rate was not applied; animation time is preserved at the current scene rate")
         slib.active_clip = 0
@@ -438,7 +456,9 @@ class AnimImporter:
     def import_clip(self, clip, lib):
         arm = self.arm
         scene = self.context.scene
-        fps = self.import_fps
+        clip_timing = clip.get("extensions", {}).get(K.ANIMATION_TIMING_EXT)
+        fps = (clip_timing["fps"] / clip_timing["fpsBase"]
+               if self.preserve_source_frames and clip_timing is not None else self.import_fps)
         f0 = self.opts.frame_start
         name = f"{lib['id']}:{clip['id']}"
         action = bpy.data.actions.new(name)
@@ -701,7 +721,6 @@ class AnimImporter:
         dur = clip["duration"]
         action.use_frame_range = True
         action.frame_start = f0
-        clip_timing = clip.get("extensions", {}).get(K.ANIMATION_TIMING_EXT)
         if self.preserve_source_frames and clip_timing is not None:
             action.frame_end = f0 + max(clip_timing["frameEnd"] - clip_timing["frameStart"], 0.0)
         else:

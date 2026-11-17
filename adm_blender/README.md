@@ -71,10 +71,12 @@ separate. Physics and game behavior are not defined by the format.
 Drag & drop of `.adm` files also works.
 Exporting a mesh in Edit Mode uses its current edits and UVs without leaving Edit Mode.
 ADM exports retain Blender bone display tails and roll through the required `ADM_joint_display_v1`
-extension. Animation exports record source FPS and clip frame ranges through the required
-`ADM_animation_timing_v1` extension; animation import matches the source FPS by default and reports
-the scene-rate change. Import rejects skeleton files missing required display data rather than
-guessing bone tails or roll.
+extension. `ADM_animation_timing_v1` version 1.1.0 records the project FPS plus each clip's FPS and
+frame range. Changing a clip's FPS while keeping its frame range changes its playback speed and
+duration. **Play Clip** applies that clip's rate to Blender's scene, which has one active frame rate.
+Animation import preserves per-clip rates by default and reports project-rate changes. The earlier
+1.0.0 timing payload is rejected and is not migrated automatically. Import rejects skeleton files
+missing required display data rather than guessing bone tails or roll.
 
 **Mixamo FBX:** use *File › Import › Mixamo Animation (.fbx)* or the button in **Animation Libraries**.
 Choose the target armature (it must use `humanoid.vrm1`), then create a library or append to one for that
@@ -85,6 +87,35 @@ humanoid forward direction. Hips translation is extracted by default; the dialog
 in-place or ignored root motion. Animation frame rate and frame range are preserved by the ADM timing
 extension. Imported FBX objects are removed after success by default; enable **Keep Imported FBX Objects**
 to retain the source rig and meshes for inspection.
+
+**BVH animation:** click **Import BVH Animation** in **Animation Libraries**, or choose
+*File › Import › BVH Animation (.bvh)*. The active rig is selected by default; if the scene has one
+armature and no active rig, the wizard selects it. Otherwise, search for the rig by name under
+**Target Rig** at the top of the import options. This field keeps the selected object name while
+the preview is refreshed or removed. The target must use `humanoid.vrm1`. Select one or more BVH
+files. The wizard checks the hierarchy and frame data before import, shows frame count,
+frame rate, duration and joint-mapping totals, and asks you to confirm. It suggests roles from joint
+names; if a required role is missing, add overrides in `JointName=humanoidRole` form, separated by
+semicolons or newlines. The mapping must cover every required humanoid role. Blender operator presets
+can save reusable mapping overrides.
+
+Create a library or append the clips to a library for the selected rig. A batch uses each filename
+as its clip ID and title, and each clip keeps its parsed FPS by default. Change the per-file FPS in
+the confirmation dialog to change that clip's playback speed without resampling its frames. The
+dialog shows a live armature preview for the first file. Change **Forward** and **Up** to adjust the
+BVH axis conversion; **Align lowest bone to ground** and **Preview Translation** adjust the displayed
+preview and any retained source armature. These placement controls do not move the retargeted target
+rig. The Blender importer supports source and clip rates from 0.001 through 1000 FPS and reports
+rates outside that range. The wizard preserves library author, license, revision, namespace and tags.
+It records each source filename in the clip description. Hips translation is extracted by default; you can choose
+in-place or ignored root motion. The source armature is removed after retargeting by default; enable
+**Keep Imported BVH Rig** to retain it.
+
+The wizard uses Blender's BVH importer after ADM Tools validates the file and proposes a complete
+humanoid role map. A complete name-based map is not proof that the source has a compatible reference
+pose or facing direction; the retargeter reports adjustments and warnings. Files without a complete
+humanoid role map are rejected unless you supply the missing role overrides. BVH import does not claim
+support for non-humanoid retargeting or independent interoperability.
 
 ### Vertex color layers and tint swatches
 

@@ -1,6 +1,7 @@
 """Blender actions -> ADM animation library (.adm_anim)."""
 
 import json
+import math
 import re
 
 import bpy
@@ -276,7 +277,12 @@ class AnimExporter:
         if bad:
             raise ExportError(f"clip '{clip.clip_id}': invalid tags {', '.join(bad)}")
         scene = self.context.scene
-        fps = scene.render.fps / scene.render.fps_base
+        scene_fps = scene.render.fps / scene.render.fps_base
+        fps = float(clip.fps) if clip.fps > 0.0 else scene_fps
+        if not math.isfinite(fps) or fps <= 0.0:
+            raise ExportError(f"clip '{clip.clip_id}': FPS must be finite and greater than zero")
+        fps_numerator = max(1, int(round(fps)))
+        fps_base = fps_numerator / fps
         fs, fe = (float(clip.action.frame_range[0]), float(clip.action.frame_range[1])) if clip.use_action_range \
             else (float(clip.frame_start), float(clip.frame_end))
         if fe < fs:
@@ -293,6 +299,8 @@ class AnimExporter:
             K.ANIMATION_TIMING_EXT: {
                 "frameStart": fs,
                 "frameEnd": fe,
+                "fps": fps_numerator,
+                "fpsBase": fps_base,
             }
         }
         if tags:

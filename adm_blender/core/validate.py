@@ -2501,7 +2501,11 @@ class AnimValidator(_Base):
             self.r.error("ANIMATION_TIMING_FPS_BASE", path + ".fpsBase", "must be finite and greater than zero")
         if not fps_valid or not fps_base_valid:
             return
-        required_clip_fields = ("frameStart", "frameEnd")
+        project_rate = timing["fps"] / timing["fpsBase"]
+        if not math.isfinite(project_rate) or project_rate <= 0.0:
+            self.r.error("ANIMATION_TIMING_RATE", path,
+                         "effective project frame rate must be finite and greater than zero")
+        required_clip_fields = ("frameStart", "frameEnd", "fps", "fpsBase")
         for ci, clip in enumerate(clips):
             if not isinstance(clip, dict):
                 continue
@@ -2517,7 +2521,7 @@ class AnimValidator(_Base):
                 continue
             if set(clip_timing) != set(required_clip_fields):
                 self.r.error("ANIMATION_TIMING_FIELDS", clip_path,
-                             "must contain exactly frameStart and frameEnd")
+                             "must contain exactly frameStart, frameEnd, fps and fpsBase")
             frame_start, frame_end = clip_timing["frameStart"], clip_timing["frameEnd"]
             if not _is_num(frame_start):
                 self.r.error("ANIMATION_TIMING_FRAME_START", clip_path + ".frameStart",
@@ -2527,21 +2531,35 @@ class AnimValidator(_Base):
                              "must be a finite number")
             if not (_is_num(frame_start) and _is_num(frame_end)):
                 continue
+            clip_fps_valid = _is_int(clip_timing["fps"]) and clip_timing["fps"] > 0
+            clip_fps_base_valid = _is_num(clip_timing["fpsBase"]) and clip_timing["fpsBase"] > 0
+            if not clip_fps_valid:
+                self.r.error("ANIMATION_TIMING_FPS", clip_path + ".fps",
+                             "must be a positive integer")
+            if not clip_fps_base_valid:
+                self.r.error("ANIMATION_TIMING_FPS_BASE", clip_path + ".fpsBase",
+                             "must be finite and greater than zero")
+            if clip_fps_valid and clip_fps_base_valid:
+                clip_rate = clip_timing["fps"] / clip_timing["fpsBase"]
+                if not math.isfinite(clip_rate) or clip_rate <= 0.0:
+                    self.r.error("ANIMATION_TIMING_RATE", clip_path,
+                                 "effective clip frame rate must be finite and greater than zero")
             if frame_end < frame_start:
                 self.r.error("ANIMATION_TIMING_FRAME_RANGE", clip_path,
                              "frameEnd must be greater than or equal to frameStart")
                 continue
             duration = clip.get("duration")
-            if _is_num(duration):
-                expected_duration = (frame_end - frame_start) * timing["fpsBase"] / timing["fps"]
+            if _is_num(duration) and clip_fps_valid and clip_fps_base_valid:
+                expected_duration = ((frame_end - frame_start) * clip_timing["fpsBase"]
+                                     / clip_timing["fps"])
                 if not math.isfinite(expected_duration):
                     self.r.error("ANIMATION_TIMING_DURATION", clip_path,
-                                 "frame range and source frame rate produce a non-finite duration")
+                                 "frame range and clip frame rate produce a non-finite duration")
                     continue
                 tolerance = max(1e-6, abs(expected_duration) * 2e-6)
                 if abs(expected_duration - duration) > tolerance:
                     self.r.error("ANIMATION_TIMING_DURATION", clip_path,
-                                 "frame range and source frame rate do not match clip duration")
+                                 "frame range and clip frame rate do not match clip duration")
 
     def check_samplers(self, samplers, p, dur):
         kinds = {}

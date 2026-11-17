@@ -105,7 +105,7 @@ try {
         @{ Name = "Python version"; Args = @("-c", "import sys; assert sys.version_info >= (3, 11), 'Python 3.11+ required'; print(sys.version)") },
         @{ Name = "Python unit tests"; Args = @("-m", "unittest", "adm_blender.tests.test_skeleton_profiles",
             "adm_blender.tests.test_container", "adm_blender.tests.test_draft4",
-            "adm_blender.tests.test_gputex", "-v") },
+            "adm_blender.tests.test_gputex", "adm_blender.tests.test_bvh", "-v") },
         @{ Name = "ADM standard tests"; Args = @(".\adm-standard\tools\run_tests.py") },
         @{ Name = "Interactive surface conformance"; Args = @(".\adm-standard\tools\test_interactive_surfaces.py") },
         @{ Name = "Shader vertex-mask conformance"; Args = @(".\adm-standard\tools\test_shader_vertex_masks.py") },
@@ -133,7 +133,8 @@ try {
         "test_shader_preview.py",
         "test_texture_formats.py",
         "test_component_animation_blender.py",
-        "test_mixamo_animation_blender.py"
+        "test_mixamo_animation_blender.py",
+        "test_bvh_blender.py"
     )
     foreach ($test in $blenderTests) {
         $testPath = ".\adm_blender\tests\$test"

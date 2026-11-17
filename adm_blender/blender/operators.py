@@ -2114,6 +2114,10 @@ class ADM_OT_play_clip(bpy.types.Operator):
         lib, clip = _active_library(context), _active_clip(context)
         assign_action(lib.armature, clip.action)
         sc = context.scene
+        if clip.fps > 0.0:
+            fps_numerator = max(1, int(round(clip.fps)))
+            sc.render.fps = fps_numerator
+            sc.render.fps_base = fps_numerator / clip.fps
         if clip.use_action_range:
             fs, fe = clip.action.frame_range
         else:
@@ -2140,7 +2144,7 @@ class ADM_OT_events_from_markers(bpy.types.Operator):
     def execute(self, context):
         clip = _active_clip(context)
         sc = context.scene
-        fps = sc.render.fps / sc.render.fps_base
+        fps = clip.fps if clip.fps > 0.0 else sc.render.fps / sc.render.fps_base
         fs, fe = (clip.action.frame_range if clip.use_action_range and clip.action else
                   (clip.frame_start, clip.frame_end))
         markers = list(sc.timeline_markers)

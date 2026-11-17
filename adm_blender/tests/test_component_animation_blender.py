@@ -111,6 +111,7 @@ def run():
     clip.use_action_range = False
     clip.frame_start = 1
     clip.frame_end = 32
+    clip.fps = 60.0
     clip.root_motion = "IN_PLACE"
 
     exporter = AnimExporter(bpy.context, library)
@@ -120,13 +121,20 @@ def run():
     timing = doc["extensions"]["ADM_animation_timing_v1"]
     clip_timing = doc["clips"][0]["extensions"]["ADM_animation_timing_v1"]
     check(timing["fps"] == 30 and timing["fpsBase"] == 1.0
-          and clip_timing["frameStart"] == 1 and clip_timing["frameEnd"] == 32,
-          "export records source frame rate and the full 32-frame clip range")
+          and clip_timing["frameStart"] == 1 and clip_timing["frameEnd"] == 32
+          and clip_timing["fps"] == 60 and clip_timing["fpsBase"] == 1.0
+          and abs(doc["clips"][0]["duration"] - 31 / 60) < 1e-6,
+          "export preserves the 32-frame range and uses per-clip FPS to set playback duration")
     invalid_timing = deepcopy(doc)
     invalid_timing["clips"][0]["extensions"]["ADM_animation_timing_v1"]["frameEnd"] = 31
     invalid_report = validate_anim(write_container(K.ANIM_MAGIC, invalid_timing, validate_anim(data).bin))
     check(any(issue.code == "ANIMATION_TIMING_DURATION" for issue in invalid_report.errors),
-          "validator rejects a source frame range that conflicts with clip duration")
+          "validator rejects a clip frame range that conflicts with its duration")
+    old_contract = deepcopy(doc)
+    old_contract["extensions"]["ADM_animation_timing_v1"]["version"] = "1.0.0"
+    old_report = validate_anim(write_container(K.ANIM_MAGIC, old_contract, validate_anim(data).bin))
+    check(any(issue.code == "ANIMATION_TIMING_VERSION" for issue in old_report.errors),
+          "validator rejects the superseded single-rate timing contract")
     tracks = {(channel["target"]["role"], channel["path"]): channel
               for channel in doc["clips"][0]["channels"]}
     check(("weapon.bolt", "translation") in tracks and ("weapon.bolt", "rotation") in tracks,
@@ -178,6 +186,8 @@ def run():
           "import restores source frame rate and reports the scene setting change")
     check(round(imp.context.scene.adm_anim.libraries[-1].clips[0].action.frame_end) == 32,
           "import preserves the 32-frame action range")
+    check(imp.context.scene.adm_anim.libraries[-1].clips[0].fps == 60.0,
+          "import preserves per-clip FPS independently of the project rate")
     scene.frame_set(32)
     bpy.context.view_layer.update()
     check(all(abs(a - b) < 1e-5 for a, b in zip(target_obj.location, (0.2, 0.31, 0.4))),

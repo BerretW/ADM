@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Upgraded `ADM_animation_timing_v1` to schema `1.1.0` with per-clip frame rates. The prior
+  `1.0.0` timing payload is no longer accepted; history remains in Git and older development
+  animation files are not automatically migrated.
 - Marked ADM 1.0 as **Development / Experimental**: normative requirements remain exact for the
   current revision, but incompatible changes are allowed before a separate stable-release decision.
 - Replaced the shader-definition freeze check with registry integrity checks and CI comparison

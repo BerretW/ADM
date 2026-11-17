@@ -116,8 +116,8 @@ Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_t
   model-space frames and `mount.root` composition for `ADM-HUMANOID-SOCKETS-1`.
 - `extensions/ADM_joint_display_v1.md`: normative joint display frames and bone endpoints for
   exact cross-tool skeleton editing under `ADM-JOINT-DISPLAY-1`.
-- `extensions/ADM_animation_timing_v1.md`: normative source frame-rate and clip-range metadata for
-  exact authoring-timeline round trips under `ADM-ANIMATION-TIMING-1`.
+- `extensions/ADM_animation_timing_v1.md`: normative project and per-clip frame-rate and clip-range
+  metadata for exact authoring-timeline round trips under `ADM-ANIMATION-TIMING-1`.
 - `fixtures/expectations/humanoid_sockets.expected.json`: exact registry-to-socket-name expectation used
   by the reference tests.
 - `proposals/animal.quadruped.v1.md` and `proposals/skeleton-profile-proposals.json`: non-normative animal profile proposals, outside ADM 1.0.
