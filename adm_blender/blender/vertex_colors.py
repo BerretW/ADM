@@ -333,7 +333,8 @@ class ADM_OT_initialize_shader_masks(bpy.types.Operator):
         mat = obj.active_material if obj is not None and obj.type == "MESH" else None
         return obj is not None and obj.type == "MESH" and obj.adm.adm_type != "COLLIDER" \
             and obj.data.is_editable and in_adm_model(obj) and mat is not None \
-            and mat.adm.shader_version == K.SHADER_PROFILE_V2 and mat.adm.shader in K.COLOR1_CONTRACTS
+            and K.has_color1_profile(mat.adm.shader, mat.adm.shader_version) \
+            and mat.adm.shader in K.COLOR1_CONTRACTS
 
     def execute(self, context):
         obj = context.object

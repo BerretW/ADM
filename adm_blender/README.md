@@ -452,6 +452,16 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   controls. The export option must also enable **Vertex Controls** for the model. Tint, normal strength,
   wetness color, roughness and dielectric/metallic F0 are previewed. Core 20 `1.0.0` profiles keep
   `COLOR_1` reserved; the additive `2.0.0` profiles apply the registered `COLOR_1` masks.
+  `adm.pbr.metallic_roughness@2.1.0` derives chipped edge wear from geometry and normal-map
+  transitions. `COLOR_1.B` permits wear and `COLOR_1.G` permits dirt; the engine supplies their
+  amounts per instance, and those amounts are not stored in ADM.
+  To inspect it in Blender, open the 3D View sidebar with `N`, select **ADM**, and click
+  **Create Edge Wear Test Scene (2.1.0)** in **ADM Tools**. The add-on creates a separate Cycles scene
+  with textured convex geometry, a flat-mask control, a normal-map edge sample, and two dirt
+  instances. Select a wear sample and adjust **Engine Wear Preview** in **ADM Tools › Shader Test**.
+  For another mesh using the profile, select it and click **Enable Wear Preview** to show the
+  control. The slider is per object, simulates the engine, and is not exported. The test uses Cycles
+  rendered view for geometric pointiness; the source texture and mesh remain unchanged.
   The F0 preview has Blender bake coverage but no independent renderer interoperability test. See
   `adm-standard/SPEC_GAPS.md`.
 - Image export (the **Images** option in File > Export > ADM):

@@ -299,7 +299,7 @@ def _param_owner_refresh(self):
     mat = self.id_data
     if isinstance(mat, bpy.types.Material) and (
         mat.adm.shader not in ("CORE", "LAYERED", "CUSTOM")
-        or mat.adm.shader_version == K.SHADER_PROFILE_V2
+        or K.has_color1_profile(mat.adm.shader, mat.adm.shader_version)
     ):
         from .materials import refresh_shader_preview
         refresh_shader_preview(mat)
@@ -382,6 +382,8 @@ def _preview_update(self, context):
 
 
 def _shader_update(self, context):
+    if self.shader_version == K.SHADER_PROFILE_EDGE_WEAR and self.shader != "CORE":
+        self.shader_version = "1.0.0"
     if self.shader == "TWO_LAYER" and self.shader_version != "1.0.0":
         self.shader_version = "1.0.0"
     required_alpha = {
@@ -406,6 +408,9 @@ def _shader_update(self, context):
 
 
 def _shader_version_update(self, context):
+    if self.shader_version == K.SHADER_PROFILE_EDGE_WEAR and self.shader != "CORE":
+        self.shader_version = "1.0.0"
+        return
     if self.shader in ("INTERACTIVE", "TWO_LAYER") and self.shader_version != "1.0.0":
         self.shader_version = "1.0.0"
         return
@@ -538,6 +543,7 @@ class ADMMaterialProps(PropertyGroup):
     shader_version: EnumProperty(name="Profile Version", items=[
         ("1.0.0", "1.0.0 (legacy)", "Preserve the original profile behavior"),
         ("2.0.0", "2.0.0 (COLOR_1)", "Enable this profile's COLOR_1 mask contract"),
+        ("2.1.0", "2.1.0 (edge wear)", "Use geometric edge wear and per-instance dirt on PBR"),
     ], default="1.0.0", update=_shader_version_update)
     custom_shader: StringProperty(name="Custom Shader", description="id@version of a scene shader definition",
                                   update=_custom_shader_update)

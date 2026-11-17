@@ -535,6 +535,19 @@ class ADM_PT_tools(_Side, bpy.types.Panel):
         col.operator("adm.generate_lods", icon="MOD_DECIM")
         col.operator("adm.create_attachment", icon="EMPTY_ARROWS")
         box = lay.box()
+        box.label(text="Shader Test", icon="NODE_MATERIAL")
+        box.operator("adm.create_edge_wear_harness", icon="NODE_MATERIAL")
+        obj = context.object
+        if obj is not None and obj.type == "MESH" and obj.active_material is not None:
+            mat = obj.active_material
+            if mat.adm.shader == "CORE" and mat.adm.shader_version == K.SHADER_PROFILE_EDGE_WEAR:
+                from .shader_preview import PREVIEW_WEAR_AMOUNT
+                if PREVIEW_WEAR_AMOUNT in obj:
+                    box.prop(obj, f'["{PREVIEW_WEAR_AMOUNT}"]', text="Engine Wear Preview", slider=True)
+                else:
+                    box.operator("adm.enable_wear_preview")
+                box.label(text="Preview only; not exported", icon="INFO")
+        box = lay.box()
         box.label(text="Convert", icon="FILE_REFRESH")
         col = box.column(align=True)
         col.operator_menu_enum("adm.set_type", "adm_type", text="Set ADM Type", icon="OBJECT_DATA")
@@ -624,7 +637,7 @@ def draw_vertex_colors(layout, context, show_palette_picker=True):
         layout.label(text=f"Active profile: {key[0]}@{key[1]}", icon="NODE_MATERIAL")
     if wm.vertex_color_layer == "COLOR_0":
         layout.label(text="R: Tint  G: Normal  B: Reflectivity  A: Wetness")
-    elif mat is not None and mat.adm.shader_version == K.SHADER_PROFILE_V2 \
+    elif mat is not None and K.has_color1_profile(mat.adm.shader, mat.adm.shader_version) \
             and mat.adm.shader in K.COLOR1_CONTRACTS:
         for channel, effect in zip(K.SHADER_MASK_CHANNELS, K.COLOR1_CONTRACTS[mat.adm.shader]):
             layout.label(text=f"{channel}: {effect['label']}")
@@ -640,7 +653,7 @@ def draw_vertex_colors(layout, context, show_palette_picker=True):
         layout.label(text=f"{name}: {attr.domain} / {attr.data_type}" if attr else f"{name}: missing",
                      icon="CHECKMARK" if attr else "ERROR")
     layout.operator("adm.vertex_colors", text="Initialize Layers", icon="ADD").action = "INITIALIZE"
-    if mat is not None and mat.adm.shader_version == K.SHADER_PROFILE_V2 \
+    if mat is not None and K.has_color1_profile(mat.adm.shader, mat.adm.shader_version) \
             and mat.adm.shader in K.COLOR1_CONTRACTS:
         layout.operator("adm.initialize_shader_masks", icon="ADD")
     layout.prop(wm, "vertex_color_scope")
@@ -1171,7 +1184,7 @@ def _shader_param_groups(shader, version, names):
     if shader in ("TERRAIN_4", "TWO_LAYER") or (shader == "LAYERED" and version == K.SHADER_PROFILE_V2):
         for i in range(2 if shader == "TWO_LAYER" else 4):
             add_group(f"layer_{i}", f"Layer {i}", f"layer{i}_")
-    if shader != "CUSTOM" and version == K.SHADER_PROFILE_V2:
+    if K.has_color1_profile(shader, version):
         for channel, effect in zip(K.SHADER_MASK_CHANNELS, K.COLOR1_CONTRACTS.get(shader, ())):
             add_group(f"color1_{channel.lower()}", f"COLOR_1 {channel} - {effect['label']}",
                       f"color1_{channel.lower()}_")
@@ -1383,7 +1396,7 @@ def draw_material(lay, context, mat):
                 if rec.use_normal_factor:
                     b.prop(rec, "normal_factor")
         lay.operator("adm.material_layers_from_pbr", icon="IMPORT")
-    elif p.shader == "CUSTOM" or p.shader_version == K.SHADER_PROFILE_V2 \
+    elif p.shader == "CUSTOM" or K.has_color1_profile(p.shader, p.shader_version) \
             or p.shader not in ("CORE", "LAYERED", "CUTOUT", "EMISSIVE", "DECAL"):
         params = registry.get(p.shader_key())
         if params is None:

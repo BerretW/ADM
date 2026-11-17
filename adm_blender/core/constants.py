@@ -105,6 +105,8 @@ SHADER_WATER = ("adm.nature.water", "1.0.0")
 SHADER_FABRIC = ("adm.surface.fabric", "1.0.0")
 SHADER_INTERACTIVE = ("adm.surface.interactive", "1.0.0")
 SHADER_PROFILE_V2 = "2.0.0"
+SHADER_PROFILE_EDGE_WEAR = "2.1.0"
+SHADER_PROFILE_COLOR1_VERSIONS = frozenset({SHADER_PROFILE_V2, SHADER_PROFILE_EDGE_WEAR})
 SHADER_MASK_CHANNELS = ("R", "G", "B", "A")
 LAYERS_EXT = "ADM_material_layers_v1"
 VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
@@ -564,6 +566,13 @@ for _key, _kind in tuple(OFFICIAL_SHADER_KINDS.items()):
     OFFICIAL_SHADERS[_v2_key] = _params
     OFFICIAL_SHADER_KINDS[_v2_key] = _kind
 
+_core_edge_wear_key = (SHADER_CORE[0], SHADER_PROFILE_EDGE_WEAR)
+OFFICIAL_SHADERS[_core_edge_wear_key] = [
+    dict(param) for param in OFFICIAL_SHADERS[(SHADER_CORE[0], SHADER_PROFILE_V2)]
+    if param["name"] not in ("color1_g_strength", "color1_b_strength")
+]
+OFFICIAL_SHADER_KINDS[_core_edge_wear_key] = "CORE"
+
 OFFICIAL_SHADER_KINDS[SHADER_TWO_LAYER] = "TWO_LAYER"
 OFFICIAL_SHADER_KEYS["TWO_LAYER"] = SHADER_TWO_LAYER
 OFFICIAL_SHADERS[SHADER_TWO_LAYER] = [
@@ -574,13 +583,25 @@ OFFICIAL_SHADERS[SHADER_TWO_LAYER] = [
 ]
 
 OFFICIAL_SHADER_IDS = {kind: key[0] for key, kind in OFFICIAL_SHADER_KINDS.items()}
+OFFICIAL_SHADER_COLOR1_KEYS = frozenset(
+    key for key in OFFICIAL_SHADERS if key[1] in SHADER_PROFILE_COLOR1_VERSIONS
+)
+
+
+def has_color1_profile(shader_kind, version):
+    """Return whether an official shader kind/version pair defines COLOR_1 semantics."""
+    shader_id = OFFICIAL_SHADER_IDS.get(shader_kind)
+    return shader_id is not None and (shader_id, version) in OFFICIAL_SHADER_COLOR1_KEYS
+
+
 OFFICIAL_SHADER_V2_KEYS = {
     kind: (shader_id, SHADER_PROFILE_V2) for kind, shader_id in OFFICIAL_SHADER_IDS.items()
     if kind not in ("INTERACTIVE", "TWO_LAYER")
 }
 SHADER_COLOR_TEXTURES = frozenset(
     set(SHADER_COLOR_TEXTURES) | {
-        p["name"] for key, params in OFFICIAL_SHADERS.items() if key[1] == SHADER_PROFILE_V2
+        p["name"] for key, params in OFFICIAL_SHADERS.items()
+        if key[1] in SHADER_PROFILE_COLOR1_VERSIONS
         for p in params if p["type"] == "TEXTURE" and p["name"].endswith("_texture")
         and not p["name"].endswith(("_metallic_texture", "_roughness_texture"))
     }

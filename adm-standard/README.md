@@ -101,6 +101,8 @@ These tests are executed by the reference Blender toolkit (`adm_blender/tests/te
 
 - `shaders/registry.json` contains the Core 20, interactive and two-layer shader profiles and typed schemas.
 - `shaders/adm.surface.two_layer.v1.md` defines the grayscale-mask two-layer PBR profile.
+- `shaders/ADM_shader_vertex_masks_v2.md` defines the `COLOR_1` contracts for profile 2.0.0.
+- `shaders/ADM_shader_vertex_masks_v2_1.md` defines PBR metallic-roughness 2.1.0 edge wear and dirt.
 - `shaders/*.v1.md` contains a contract annex for each non-core profile; §8 retains the existing core and layered semantics.
 - `tools/build_shader_registry.py --check` detects drift between Blender's normative parameter tables and the generated registry.
 - `tools/test_shader_registry.py` validates IDs, parameter defaults and annex presence. `adm_blender/tests/test_shader_math.py` checks independent scalar/vector reference values.

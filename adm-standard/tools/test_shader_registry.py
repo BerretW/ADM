@@ -25,6 +25,13 @@ assert set(K.OFFICIAL_SHADER_KINDS) == set(K.OFFICIAL_SHADERS)
 assert set(K.OFFICIAL_SHADER_KEYS.values()) == {
     key for key in K.OFFICIAL_SHADER_KINDS if key[1] == "1.0.0"
 }
+edge_wear_key = (K.SHADER_CORE[0], K.SHADER_PROFILE_EDGE_WEAR)
+assert K.has_color1_profile("CORE", K.SHADER_PROFILE_EDGE_WEAR)
+assert not K.has_color1_profile("GLASS", K.SHADER_PROFILE_EDGE_WEAR)
+edge_wear_params = {parameter["name"] for parameter in K.OFFICIAL_SHADERS[edge_wear_key]}
+assert "color1_g_strength" not in edge_wear_params
+assert "color1_b_strength" not in edge_wear_params
+assert {"color1_g_color", "color1_b_color"} <= edge_wear_params
 for entry in entries:
     relative_path = entry["contract"].split("#", 1)[0]
     contract = (root / "adm-standard" / "shaders" / relative_path).resolve()

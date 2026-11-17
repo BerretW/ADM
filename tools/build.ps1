@@ -122,6 +122,9 @@ try {
         "test_terrain_workflow.py",
         "test_skeleton_blender.py",
         "test_material_slots.py",
+        "test_shader_harness.py",
+        "test_shader_profiles.py",
+        "test_shader_preview.py",
         "test_texture_formats.py",
         "test_component_animation_blender.py",
         "test_mixamo_animation_blender.py"

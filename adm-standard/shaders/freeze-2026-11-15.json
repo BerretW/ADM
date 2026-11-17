@@ -41,7 +41,8 @@
     "adm.terrain.four_layer@1.0.0": "e4bfd16875313d145473d0fb2487e6f044f20bbdcb2399b0cb50a3ebad2e319b",
     "adm.terrain.four_layer@2.0.0": "c94650f873452690466130a490d82009595c28c7e1b989baf7b74d7235b570c0",
     "adm.vehicle.paint@1.0.0": "a551133a8afea43726d2b79c9ee95b885d2f5257966807ffa6b306a5af5da315",
-    "adm.vehicle.paint@2.0.0": "b88ff217a36e34238deb4fa5456f727047db97b1362696eaf4b456be38a15bb8"
+    "adm.vehicle.paint@2.0.0": "b88ff217a36e34238deb4fa5456f727047db97b1362696eaf4b456be38a15bb8",
+    "adm.pbr.metallic_roughness@2.1.0": "c18dfb9cc463e66efc18ce27c372956c00ef9b708adaaa286543b2f3016b0d40"
   },
   "contracts": {
     "../ADM-1.0-SPEC.md#83-required-core-shader-and-reference-parameter-table": "f4c97ff3aaf22acf1cfc81e90604960d0689a7c8d537008cea5ecb23c492f08c",
@@ -66,6 +67,7 @@
     "adm.surface.interactive.v1.md": "fa69f751e5bde810259071917702b74caa78215efd622e3129d23bb8d4b4a030",
     "adm.surface.two_layer.v1.md": "20a91d49bbe99733d768c3921ec1d12b5a8194ffcc32e25b48a98b2938e3c9d5",
     "adm.terrain.four_layer.v1.md": "323a67759c02bc76437bdaca6e1bbbe0e3a0e51a4b68d3c83cf042ffee453dce",
-    "adm.vehicle.paint.v1.md": "7365609c6a57342f1b41ce57b9a54d4efe86018ff7f59ad15da88caff720298e"
+    "adm.vehicle.paint.v1.md": "7365609c6a57342f1b41ce57b9a54d4efe86018ff7f59ad15da88caff720298e",
+    "ADM_shader_vertex_masks_v2_1.md": "083cfdfcbf10195006ad230b5b8d25a983b4c31430b5f0d04a8a5197748dee32"
   }
 }

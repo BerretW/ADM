@@ -103,6 +103,14 @@ def set_param(mat, name, value):
         v.value_f = value
 
 
+def set_color1(obj, color):
+    attr = obj.data.color_attributes.get("COLOR_1")
+    if attr is None:
+        attr = obj.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+    attr.data.foreach_set("color", np.tile(color, len(attr.data)).ravel())
+    return attr
+
+
 def preview_bsdf(mat, materials):
     output = next(n for n in mat.node_tree.nodes
                   if n.type == "OUTPUT_MATERIAL" and n.is_active_output)
@@ -131,6 +139,7 @@ def main():
     check(bpy.ops.adm.create_model_root(name="PreviewRoot") == {"FINISHED"}, "create model root")
     root = bpy.data.objects["PreviewRoot"]
     tex = image("any_tex", lambda x, y: (0.5, 0.5, 1.0, 1.0))
+    plane[SP.PREVIEW_WEAR_AMOUNT] = 0.6
 
     # Texture edits must affect the active preview, not just the portable fallback.
     mat = bpy.data.materials.new("texture_refresh")
@@ -201,6 +210,9 @@ def main():
             check(close(m["baseColorFactor"], (0.3, 0.6, 0.9, 1.0), 1e-5), f"{kind}: fallback base color exported")
             names = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             check(set(m.get("shaderParameters", {})) == names, f"{kind}: all overridden parameters exported")
+            if key == (K.SHADER_CORE[0], K.SHADER_PROFILE_EDGE_WEAR):
+                check(SP.PREVIEW_WEAR_AMOUNT not in str(report.doc),
+                      "CORE@2.1.0: preview wear amount is not exported")
         mat.adm.vertex_controls_enabled = False
         mat.adm.shader_version = "1.0.0"
         mat.adm.shader = "CORE"
@@ -269,6 +281,126 @@ def main():
         check(close(color0_after[8, 8, :3], (0.310625, 0.310625, 0.4215625)),
               f"COLOR_0 wetness follows the COLOR_1 overlay ({color0_after[8, 8, :3]})")
         mat.adm.vertex_controls_enabled = False
+
+    # 1c. PBR metallic-roughness 2.1.0 derives edge wear and instance dirt at runtime.
+    mat = bpy.data.materials.new("edge_wear_21")
+    plane.data.materials.clear()
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    mat.adm.shader_version = K.SHADER_PROFILE_EDGE_WEAR
+    fallback = M.principled_of(mat)
+    fallback.inputs["Base Color"].default_value = (0.2, 0.2, 0.2, 1.0)
+    fallback.inputs["Specular IOR Level"].default_value = 0.0
+    set_color1(plane, (0.0, 0.0, 1.0, 0.0))
+    plane[SP.PREVIEW_WEAR_AMOUNT] = 1.0
+    set_param(mat, "color1_b_color", (0.82, 0.82, 0.82))
+    set_param(mat, "color1_b_roughness", 0.3)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    flat = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(close(flat[8, 8, :3], (0.2, 0.2, 0.2)),
+          f"CORE@2.1.0: COLOR_1.B alone does not wear a flat surface ({flat[8, 8, :3]})")
+
+    normal_image = image(
+        "normal_edge_step",
+        lambda x, y: (0.5, 0.5, 1.0, 1.0) if x < RES // 2 else (1.0, 0.5, 0.5, 1.0),
+    )
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    normal_tex = nodes.new("ShaderNodeTexImage")
+    normal_tex.image = normal_image
+    uv_node = nodes.new("ShaderNodeTexCoord")
+    links.new(uv_node.outputs["UV"], normal_tex.inputs["Vector"])
+    normal_map = nodes.new("ShaderNodeNormalMap")
+    links.new(normal_tex.outputs["Color"], normal_map.inputs["Color"])
+    links.new(normal_map.outputs["Normal"], fallback.inputs["Normal"])
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    normal_edge = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(np.max(normal_edge[:, 7:9, 0]) > normal_edge[8, 3, 0] + 0.1,
+          "CORE@2.1.0: normal-map transitions trigger wear only at the transition")
+    check(np.ptp(normal_edge[:, 7, 0]) > 0.03,
+          "CORE@2.1.0: procedural chips vary along the same edge")
+    plane[SP.PREVIEW_WEAR_AMOUNT] = 0.0
+    plane.update_tag()
+    no_wear = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(np.max(np.abs(no_wear[:, 7:9, 0] - 0.2)) < 0.01,
+          "CORE@2.1.0: zero engine wear disables wear with an enabled vertex mask")
+    plane[SP.PREVIEW_WEAR_AMOUNT] = 0.5
+    plane.update_tag()
+    half_wear = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(np.max(np.abs(half_wear[:, 7:9, 0] - (normal_edge[:, 7:9, 0] + 0.2) / 2)) < 0.02,
+          "CORE@2.1.0: engine wear adjusts the overlay without changing the mask")
+    plane[SP.PREVIEW_WEAR_AMOUNT] = 1.0
+    plane.update_tag()
+    instance = plane.copy()
+    scene.collection.objects.link(instance)
+    instance[SP.PREVIEW_WEAR_AMOUNT] = 0.0
+    instance.location.x += 3.0
+    instance.update_tag()
+    instance_wear = bake_socket(instance, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(np.max(np.abs(instance_wear[:, 7:9, 0] - 0.2)) < 0.01,
+          "CORE@2.1.0: shared-material instances can have independent engine wear")
+    bpy.data.objects.remove(instance, do_unlink=True)
+
+    base_texture = image("edge_wear_base", lambda x, y: (0.1, 0.3, 0.5, 1.0), non_color=False)
+    base_node = nodes.new("ShaderNodeTexImage")
+    base_node.image = base_texture
+    links.new(base_node.outputs["Color"], fallback.inputs["Base Color"])
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    textured = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(close(textured[8, 3, :3], (0.1, 0.3, 0.5)),
+          "CORE@2.1.0: the original base texture remains visible away from edges")
+    check(np.max(textured[:, 7:9, 0]) > 0.2,
+          "CORE@2.1.0: wear changes the textured material at normal-map edges")
+    links.remove(base_node.outputs["Color"].links[0])
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    set_color1(plane, (0.0, 0.0, 0.0, 0.0))
+    no_wear_mask = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(close(no_wear_mask[8, 7, :3], (0.2, 0.2, 0.2)),
+          "CORE@2.1.0: COLOR_1.B still gates detected normal-map edges")
+    links.remove(normal_map.outputs["Normal"].links[0])
+
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, radius=1.0, location=(3.0, 0.0, 0.0))
+    sphere = bpy.context.active_object
+    sphere.name = "edge_wear_curvature_test"
+    sphere.data.materials.append(mat)
+    sphere[SP.PREVIEW_WEAR_AMOUNT] = 1.0
+    set_color1(sphere, (0.0, 0.0, 1.0, 0.0))
+    for polygon in sphere.data.polygons:
+        polygon.use_smooth = True
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    curved = bake_socket(sphere, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(max(curved[8, 8, :3]) > 0.2,
+          "CORE@2.1.0: positive geometric curvature triggers wear")
+
+    set_color1(plane, (0.0, 1.0, 0.0, 0.0))
+    bpy.ops.mesh.primitive_plane_add(size=2.0, location=(0.0, 3.0, 0.0))
+    second_instance = bpy.context.active_object
+    second_instance.name = "edge_wear_dirt_instance"
+    second_instance.data.materials.append(mat)
+    set_color1(second_instance, (0.0, 1.0, 0.0, 0.0))
+    set_param(mat, "color1_g_color", (0.18, 0.14, 0.1))
+    set_param(mat, "color1_g_roughness", 0.95)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    dirt_amount_node = next(node for node in mat.node_tree.nodes
+                            if node.name == "ADM Preview Per-instance Dirt Amount")
+    amount_a = bake_socket(plane, mat, dirt_amount_node.outputs["Random"])[8, 8, 0]
+    amount_b = bake_socket(second_instance, mat, dirt_amount_node.outputs["Random"])[8, 8, 0]
+    check(0.0 <= amount_a <= 1.0 and 0.0 <= amount_b <= 1.0 and abs(amount_a - amount_b) > 1e-4,
+          f"CORE@2.1.0: dirt amount varies per instance ({amount_a:.3f}, {amount_b:.3f})")
+    dirt_a = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    dirt_b = bake_socket(second_instance, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    expected_a = tuple(0.2 * (1.0 - amount_a) + target * amount_a for target in (0.18, 0.14, 0.1))
+    expected_b = tuple(0.2 * (1.0 - amount_b) + target * amount_b for target in (0.18, 0.14, 0.1))
+    check(close(dirt_a, expected_a) and close(dirt_b, expected_b),
+          "CORE@2.1.0: COLOR_1.G gates per-instance dirt without storing its amount in ADM")
+    bpy.data.objects.remove(sphere, do_unlink=True)
+    bpy.data.objects.remove(second_instance, do_unlink=True)
 
     # The explicit mask-preview mode works even when the profile's effect is disabled.
     window = bpy.context.window_manager.adm

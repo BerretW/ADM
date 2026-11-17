@@ -505,7 +505,8 @@ class MaterialExporter:
             out.setdefault("extensions", {})[K.VERTEX_CONTROL_EXT] = vc
             self.extensions_used.add(K.VERTEX_CONTROL_EXT)
             self.extensions_required.add(K.VERTEX_CONTROL_EXT)
-        if mat.adm.shader != "CORE" or mat.adm.shader_version == K.SHADER_PROFILE_V2:
+        if mat.adm.shader != "CORE" or K.has_color1_profile(
+                mat.adm.shader, mat.adm.shader_version):
             defaults = {"baseColorFactor": [1.0, 1.0, 1.0, 1.0], "metallicFactor": 1.0,
                         "roughnessFactor": 1.0, "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE"}
             for key, value in defaults.items():
@@ -1022,7 +1023,7 @@ def apply_shader(mat, m, scene, resolve_image):
     with quiet_param_updates():
         _apply_shader(mat, m, scene, resolve_image)
     if mat.adm.shader != "CORE" or mat.adm.vertex_controls_enabled \
-            or mat.adm.shader_version == K.SHADER_PROFILE_V2:
+            or K.has_color1_profile(mat.adm.shader, mat.adm.shader_version):
         refresh_shader_preview(mat)
 
 
@@ -1819,11 +1820,12 @@ def refresh_shader_preview(mat):
     mask_preview = window is not None and window.vertex_color_preview
     if mat.adm.shader == "CORE":
         convert_to_adm_material(mat)
-        if mat.adm.vertex_controls_enabled or mat.adm.shader_version == K.SHADER_PROFILE_V2 or mask_preview:
+        if mat.adm.vertex_controls_enabled or K.has_color1_profile(
+                mat.adm.shader, mat.adm.shader_version) or mask_preview:
             from . import shader_preview
             shader_preview.build(mat)
     elif mat.adm.shader == "LAYERED":
-        if mat.adm.shader_version == K.SHADER_PROFILE_V2 or mask_preview:
+        if K.has_color1_profile(mat.adm.shader, mat.adm.shader_version) or mask_preview:
             from . import shader_preview
             shader_preview.build(mat)
         else:
@@ -1841,7 +1843,7 @@ def refresh_shader_preview(mat):
     else:
         from . import shader_preview
         if mat.adm.shader in shader_preview.BUILDERS or mat.adm.vertex_controls_enabled \
-                or mat.adm.shader_version == K.SHADER_PROFILE_V2 or mask_preview:
+                or K.has_color1_profile(mat.adm.shader, mat.adm.shader_version) or mask_preview:
             convert_to_adm_material(mat)
             shader_preview.build(mat)
 

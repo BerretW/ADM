@@ -10,6 +10,7 @@ from adm_blender.core import constants as K
 contracts = {
     K.SHADER_CORE: "../ADM-1.0-SPEC.md#83-required-core-shader-and-reference-parameter-table",
     K.SHADER_LAYERED: "../ADM-1.0-SPEC.md#84-standard-optional-layered-shader-adm-shader-layered-1",
+    (K.SHADER_CORE[0], K.SHADER_PROFILE_EDGE_WEAR): "ADM_shader_vertex_masks_v2_1.md",
 }
 for key in K.OFFICIAL_SHADERS:
     if key not in contracts:

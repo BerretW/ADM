@@ -15,9 +15,12 @@ fabric tangent lobes) use Principled BSDF approximations; ``APPROXIMATE`` lists 
 import bpy
 
 from ..core import constants as K
-from .materials import PREVIEW_PREFIX, UV_NAMES, _from, material_output, principled_of
+from .materials import (
+    PREVIEW_PREFIX, UV_NAMES, _from, material_output, normal_map_node, principled_of, slot_texture_node,
+)
 
 APPROXIMATE = frozenset({"SKIN", "FUR", "FABRIC"})
+PREVIEW_WEAR_AMOUNT = "adm_preview_wear_amount"
 
 # Principled inputs mirrored live from the fallback BSDF when they are plain values.
 _DRIVEN_INPUTS = ("Base Color", "Alpha", "Metallic", "Roughness", "Emission Color", "Emission Strength")
@@ -677,13 +680,26 @@ def _set_input(g, socket, value):
 
 def _apply_color1_masks(g, bsdf):
     effects = K.COLOR1_CONTRACTS.get(g.a.shader)
-    if g.a.shader_version != K.SHADER_PROFILE_V2 or effects is None:
+    if not K.has_color1_profile(g.a.shader, g.a.shader_version) or effects is None:
         return bsdf
     masks = _vertex_color(g, "COLOR_1")
+    edge_wear_profile = (
+        g.a.shader == "CORE" and g.a.shader_version == K.SHADER_PROFILE_EDGE_WEAR)
+    edge_signal = _edge_wear_signal(g) if edge_wear_profile else None
     for channel, effect in zip(K.SHADER_MASK_CHANNELS, effects):
         index = K.SHADER_MASK_CHANNELS.index(channel)
-        mask = g.math(
-            "MULTIPLY", masks[index], g.num(f"color1_{channel.lower()}_strength"), clamp=True)
+        if edge_wear_profile and channel == "G":
+            runtime = g.new("ShaderNodeObjectInfo", "Per-instance Dirt Amount").outputs["Random"]
+            mask = g.math("MULTIPLY", masks[index], runtime, clamp=True)
+        elif edge_wear_profile and channel == "B":
+            amount = g.new("ShaderNodeAttribute", "Per-instance Wear Amount",
+                           attribute_type="OBJECT", attribute_name=PREVIEW_WEAR_AMOUNT).outputs["Fac"]
+            mask = g.math("MULTIPLY", masks[index], edge_signal, clamp=True)
+            mask = g.math("MULTIPLY", mask, amount, clamp=True)
+            mask = g.math("MULTIPLY", mask, _wear_pattern(g), clamp=True)
+        else:
+            mask = g.math(
+                "MULTIPLY", masks[index], g.num(f"color1_{channel.lower()}_strength"), clamp=True)
         op = effect["op"]
         if op == "layer":
             continue
@@ -746,6 +762,71 @@ def _apply_color1_masks(g, bsdf):
                 blended = g.mix("VECTOR", current, normal, mask)
                 g.link(g.vmath("NORMALIZE", blended), bsdf.inputs["Normal"])
     return bsdf
+
+
+def _wear_pattern(g):
+    coordinates = g.new("ShaderNodeTexCoord", "Wear Pattern Coordinates")
+    noise = g.new("ShaderNodeTexNoise", "Chipped Wear Pattern")
+    g.link(coordinates.outputs["Generated"], noise.inputs["Vector"])
+    noise.inputs["Scale"].default_value = 24.0
+    noise.inputs["Detail"].default_value = 2.0
+    noise.inputs["Roughness"].default_value = 0.7
+    return g.math("MULTIPLY", g.math("SUBTRACT", noise.outputs["Fac"], 0.42), 8.0, clamp=True)
+
+
+def _edge_wear_signal(g):
+    geometry = g.new("ShaderNodeNewGeometry", "Convex Curvature")
+    pointiness = geometry.outputs.get("Pointiness")
+    if pointiness is None:
+        raise RuntimeError("Blender Geometry node does not expose Pointiness for the edge-wear preview")
+    convexity = g.math(
+        "MULTIPLY", g.math("SUBTRACT", pointiness, 0.5), 16.0, clamp=True)
+    bevel = g.new("ShaderNodeBevel", "Local Edge Detection", samples=8)
+    bevel.inputs["Radius"].default_value = 0.08
+    local_edge = g.vmath("DISTANCE", geometry.outputs["Normal"], bevel.outputs["Normal"])
+    convexity = g.math("MULTIPLY", convexity, g.math("MULTIPLY", local_edge, 8.0, clamp=True), clamp=True)
+    normal_edge = _normal_map_edge(g)
+    return g.math("MAXIMUM", convexity, normal_edge, clamp=True)
+
+
+def _normal_map_edge(g):
+    source = slot_texture_node(g.mat, "NORMAL")
+    normal_node = normal_map_node(g.mat)
+    if source is None or source.image is None or normal_node is None:
+        return 0.0
+    width, height = source.image.size[:2]
+    if width < 1 or height < 1:
+        return 0.0
+    uv = g.clone(source.inputs["Vector"])
+    if uv is None:
+        uv = g.new("ShaderNodeTexCoord", "Normal Edge Coordinates").outputs["Generated"]
+    strength = g.clone(normal_node.inputs["Strength"])
+    if strength is None:
+        strength = normal_node.inputs["Strength"].default_value
+
+    def decode(color):
+        tangent = g.vmath("MULTIPLY_ADD", color, (2.0, 2.0, 2.0), (-1.0, -1.0, -1.0))
+        scaled = g.mix("VECTOR", (0.0, 0.0, 1.0), tangent, strength)
+        return g.vmath("NORMALIZE", scaled)
+
+    center = decode(source.outputs["Color"])
+    neighbors = []
+    for label, offset in (
+        ("U+", (1.0 / width, 0.0, 0.0)),
+        ("U-", (-1.0 / width, 0.0, 0.0)),
+        ("V+", (0.0, 1.0 / height, 0.0)),
+        ("V-", (0.0, -1.0 / height, 0.0)),
+    ):
+        tex = g.new("ShaderNodeTexImage", f"Normal Edge Sample {label}")
+        tex.image = source.image
+        tex.interpolation = source.interpolation
+        tex.extension = source.extension
+        g.link(g.vmath("ADD", uv, offset), tex.inputs["Vector"])
+        neighbors.append(g.vmath("DISTANCE", center, decode(tex.outputs["Color"])))
+    difference = neighbors[0]
+    for neighbor in neighbors[1:]:
+        difference = g.math("MAXIMUM", difference, neighbor)
+    return g.math("MULTIPLY", difference, 0.5, clamp=True)
 
 
 def _copy_principled(g, source, name):
@@ -881,13 +962,15 @@ BUILDERS = {
 def build(mat):
     """Build the preview for ``mat``'s official profile; returns the preview output or None."""
     a = mat.adm
+    color1_profile = K.has_color1_profile(a.shader, a.shader_version)
     version2 = a.shader_version == K.SHADER_PROFILE_V2 and a.shader != "INTERACTIVE"
     window = bpy.context.window_manager.adm if bpy.context.window_manager else None
     mask_preview = window is not None and window.vertex_color_preview
     fn = BUILDERS.get(a.shader)
-    if version2 and a.shader in ("LAYERED", "TERRAIN_4"):
+    if color1_profile and a.shader in ("LAYERED", "TERRAIN_4"):
         fn = _terrain
-    if mat.node_tree is None or (fn is None and not a.vertex_controls_enabled and not version2 and not mask_preview):
+    if mat.node_tree is None or (
+            fn is None and not a.vertex_controls_enabled and not color1_profile and not mask_preview):
         return None
     g = _Graph(mat)
     if mask_preview:
@@ -902,7 +985,7 @@ def build(mat):
         g.link(color, emission.inputs["Color"])
         return g.output(emission)
     bsdf = fn(g) if fn is not None else g.bsdf()
-    if version2:
+    if color1_profile:
         bsdf = _apply_color1_masks(g, bsdf)
     bsdf = _apply_vertex_controls(g, bsdf)
     return g.output(bsdf)

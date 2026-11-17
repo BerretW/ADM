@@ -25,7 +25,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.6 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.9 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -503,7 +503,8 @@ class ModelExporter:
             columns.append(uv[tri_loops])
         if not collision and not self.opts.vertex_controls and me.color_attributes.get("COLOR_1") is not None:
             v2_materials = [slot.material for slot in obj.material_slots if slot.material is not None
-                            and slot.material.adm.shader_version == K.SHADER_PROFILE_V2]
+                            and K.has_color1_profile(slot.material.adm.shader,
+                                                    slot.material.adm.shader_version)]
             if v2_materials:
                 names = ", ".join(sorted({material.name for material in v2_materials}))
                 raise ExportError(
