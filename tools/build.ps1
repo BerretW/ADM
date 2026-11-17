@@ -109,7 +109,13 @@ try {
         @{ Name = "ADM standard tests"; Args = @(".\adm-standard\tools\run_tests.py") },
         @{ Name = "Interactive surface conformance"; Args = @(".\adm-standard\tools\test_interactive_surfaces.py") },
         @{ Name = "Shader vertex-mask conformance"; Args = @(".\adm-standard\tools\test_shader_vertex_masks.py") },
-        @{ Name = "Independent conformance"; Args = @(".\adm-standard\tools\test_independent_conformance.py") }
+        @{ Name = "Independent conformance"; Args = @(".\adm-standard\tools\test_independent_conformance.py") },
+        @{ Name = "Shader registry and development changes"; Args = @(
+            ".\adm-standard\tools\build_shader_registry.py", "--check") },
+        @{ Name = "Shader registry development-change records"; Args = @(
+            ".\adm-standard\tools\check_shader_registry_changes.py") },
+        @{ Name = "Shader registry tests"; Args = @(".\adm-standard\tools\test_shader_registry.py") },
+        @{ Name = "Reference-test catalog"; Args = @(".\adm-standard\tools\test_reference_catalog.py") }
     )
     foreach ($check in $pythonChecks) {
         Invoke-Step -Name $check.Name -Executable $pythonExe -Arguments $check.Args

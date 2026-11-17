@@ -1,17 +1,21 @@
-# ADM 1.0 Final Standard Kit
+# ADM 1.0 Development / Experimental
 
-**Status:** Final ADM 1.0 specification, published 2026-11-14. This is a project publication; external standards-body ratification and implementation certification are not implied.
+**Status:** Open standard, development edition. ADM 1.0 defines exact, normative rules for the current revision, but those rules are not publicly stable. Breaking changes are allowed until a separate decision declares a stable release.
 
-This kit contains the frozen normative specification for the **native, chunk-streamable** game-model format `.adm` and the independent animation-library format `.adm_anim`. Models are **asset descriptions**, not game entities. ADM 1.0 is not binary compatible with legacy ADM, ADS or `.ads_anim` formats.
+This kit contains the normative specification for the **native, chunk-streamable** game-model
+format `.adm` and independent animation-library format `.adm_anim`. ADM is implementation- and
+engine-independent. Models are **asset descriptions**, not game entities. Historical development
+files may be incompatible and are not automatically migrated.
 
-**Shader registry republication:** on 2026-11-15 the current shader schemas and contracts replaced
-the earlier published development definitions under the same identities. Compatibility with those
-earlier definitions is not supported. The reissued definitions are frozen; see the
-[publication record](SPEC_GAPS.md#shader-registry-republication).
+The file header identifies the current binary format as `1.0`; extension contracts, shader
+contracts and the Blender add-on have independent versions. See [§28](ADM-1.0-SPEC.md#28-development-version-policy-extension-registry-and-governance)
+for when to change each version. The historic shader hash snapshot records its 2026-11-15
+publication state; CI now checks current changes against Git and requires a linked development
+record instead of freezing published entries.
 
 ## Contents
 
-- `ADM-1.0-SPEC.md`: final normative specification, including the exact 64-byte header, 80-byte chunk directory entries, chunk-addressed bufferViews, safety rules, model data, animation libraries, morphs, two-bone IK, shaders and PBR fallback.
+- `ADM-1.0-SPEC.md`: current normative specification, including the exact 64-byte header, 80-byte chunk directory entries, chunk-addressed bufferViews, safety rules, model data, animation libraries, morphs, two-bone IK, shaders and PBR fallback.
 - `fixtures/valid/`: binary reference examples and their readable JSON manifests, including the
   two-display `interactive_terminal.adm`.
 - `fixtures/invalid/`: intentionally corrupted/invalid container and interactive-surface files.
@@ -30,11 +34,14 @@ earlier definitions is not supported. The reissued definitions are frozen; see t
   published fixtures; it does not certify full semantic conformance.
 - `tools/test_shader_vertex_masks.py`: independent numerical vectors and v2 profile-channel checks;
   it does not import Blender's implementation.
-- `shaders/freeze-2026-11-15.json` and `tools/check_shader_registry_freeze.py`: reviewed baseline
-  and immutability check for the published shader entries and their referenced contract text.
+- `shaders/freeze-2026-11-15.json`: historical hash record of the shader publication on 2026-11-15.
+- `shaders/revisions.json` and `tools/check_shader_registry_changes.py`: records intentional
+  contract edits; CI detects changed but unrecorded profiles and contracts.
+- `fixtures/reference-catalog.json`: machine-readable coverage, existing reference assets, and
+  missing fixture data and expectations for eight test categories.
 - `tools/run_tests.py`: reproducible tests for the supplied files.
 - `TEST-RESULTS.md`: executed tests and known gaps.
-- `CHANGELOG.md`: publication history and final 1.0 release record.
+- `CHANGELOG.md`: development and publication history.
 
 ## Run tests
 
@@ -43,11 +50,25 @@ python3 tools/run_tests.py
 python3 tools/test_profiles.py
 python3 tools/test_independent_conformance.py
 python3 tools/test_shader_vertex_masks.py
-python3 tools/check_shader_registry_freeze.py
+python3 tools/test_shader_registry.py
+python3 tools/check_shader_registry_changes.py
+python3 tools/test_reference_catalog.py
 python3 tools/container.py fixtures/valid/triangle.adm
 ```
 
 `tools/run_tests.py` uses Python 3.9+ standard library. It is the container-kit test only; it does not test renderer equivalence, full animation evaluation, complete semantic/IK conformance, ARKit52 or full Blender round-trip. Additional reference toolkit tests are recorded in `TEST-RESULTS.md`.
+
+## Versioning and development policy
+
+The current edition is **ADM 1.0 – Development / Experimental**. The requirements remain
+normative for this revision, but future changes may be incompatible. The project does not promise
+support for historical development files or automatic migration. A stable public version will be
+announced only by a separate decision.
+
+The standard edition, file-format header, each extension, each shader contract, and the Blender
+add-on use separate version identifiers. Raise a version only when it communicates an actual
+compatibility boundary; do not retain obsolete implementations only to support an earlier
+development asset. See [the version policy](ADM-1.0-SPEC.md#28-development-version-policy-extension-registry-and-governance).
 
 ## Major design decisions
 
@@ -63,9 +84,16 @@ python3 tools/container.py fixtures/valid/triangle.adm
 - Vehicle/weapon roles are defined in the **normative annexes** `profiles/vehicle.car.v1.md` and `profiles/weapon.firearm.v1.md`. Independent profile certification is a separate activity. No gameplay behavior is encoded.
 - The quadruped profile proposal is kept under `proposals/` and is **outside ADM 1.0**; it is not present in the normative skeleton registry.
 
-## Conformance status (separate from specification finality)
+## Conformance status
 
-The normative text is final. The repository's fixtures and validators are reference-implementation tests and cover only a subset of §25/§30. The independent validator, complete numerical conformance corpus, renderer/IK interoperability evidence and production stress tests are not included here; no implementation is certified by this publication. See `SPEC_GAPS.md` for the precise conformance status and excluded proposals.
+The repository's fixtures and validators cover only a subset of §25/§30. The reference
+implementation is not evidence of interoperability, and no independent second implementation has
+verified these fixtures. The numerical conformance corpus, renderer/IK interoperability evidence
+and production stress tests remain incomplete. See [`SPEC_GAPS.md`](SPEC_GAPS.md) and the
+[reference-test catalog](fixtures/reference-catalog.json) for implemented checks, partial
+coverage, untested behavior and required fixture data. The expected values are engine-independent;
+the catalog adds no engine-specific ADM metadata. A stable public version will be declared only by
+a separate decision.
 
 The specification governs the data format; engine scheduling, gameplay behavior, renderer backend and network replication stay outside its scope.
 
@@ -82,7 +110,7 @@ Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_t
 
 ## Skeleton profile registry and sockets
 
-- `profiles/skeleton-profiles.json`: frozen ADM 1.0 registry of the normative humanoid profile and exact-only generic profile.
+- `profiles/skeleton-profiles.json`: current ADM 1.0 registry of the normative humanoid profile and exact-only generic profile.
 - `profiles/humanoid.vrm1.md`: VRM 1.0 humanoid. Role data, ADM-REF-NORM-1 corrections and reference-pose rules are normative. Tests `HUM-001..006`.
 - `extensions/ADM_humanoid_sockets_v1.md`: normative equipment socket names, role ancestry,
   model-space frames and `mount.root` composition for `ADM-HUMANOID-SOCKETS-1`.
@@ -93,7 +121,7 @@ Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_t
 - `fixtures/expectations/humanoid_sockets.expected.json`: exact registry-to-socket-name expectation used
   by the reference tests.
 - `proposals/animal.quadruped.v1.md` and `proposals/skeleton-profile-proposals.json`: non-normative animal profile proposals, outside ADM 1.0.
-- `SPEC_GAPS.md`: finalized design dispositions, excluded proposals and separate certification limitations.
+- `SPEC_GAPS.md`: current decisions, excluded proposals and implementation/certification limitations.
 
 These tests are executed by the reference Blender toolkit (`adm_blender/tests/test_skeleton_profiles.py`, `test_skeleton_blender.py`). They are not independent certification.
 

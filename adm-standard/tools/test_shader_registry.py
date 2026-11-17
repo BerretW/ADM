@@ -11,12 +11,19 @@ sys.path.insert(0, str(root))
 
 from adm_blender.core import constants as K
 from adm_blender.core.validate import param_value_error
-from check_shader_registry_freeze import contract_digest, digest, verify_baseline_history, verify_freeze
+from check_shader_registry_changes import (
+    contract_digest,
+    validate_revision_log,
+    verify_recorded_changes,
+    verify_registry,
+    verify_historical_freeze_history,
+    verify_revision_history,
+)
 
 registry_path = root / "adm-standard" / "shaders" / "registry.json"
 registry = json.loads(registry_path.read_text(encoding="utf-8"))
 entries = registry["shaders"]
-assert registry["registryVersion"] == "1.1.0"
+assert "registryVersion" not in registry
 assert len(entries) == len({(entry["id"], entry["version"]) for entry in entries})
 assert all(re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", entry["id"]) for entry in entries)
 assert {(entry["id"], entry["version"]) for entry in entries} == set(K.OFFICIAL_SHADERS)
@@ -55,54 +62,52 @@ for kind, effects in K.COLOR1_CONTRACTS.items():
                 name = f"{prefix}_{prop}_{suffix}"
                 assert name in params and params[name]["type"] == typ, f"{kind} missing {name}"
 
-baseline = json.loads((registry_path.parent / "freeze-2026-11-15.json").read_text(encoding="utf-8"))
-contracts = {entry["contract"]: contract_digest(entry["contract"], registry_path.parent) for entry in entries}
-verify_freeze(registry, baseline, contracts)
-
-
-def expect_freeze_failure(test_registry, test_baseline, test_contracts, message):
-    try:
-        verify_freeze(test_registry, test_baseline, test_contracts)
-    except ValueError as exc:
-        assert message in str(exc), str(exc)
-    else:
-        raise AssertionError(f"freeze check should reject {message}")
-
-
-changed = deepcopy(registry)
-changed["shaders"][0]["parameters"].append({"name": "new_parameter"})
-expect_freeze_failure(changed, baseline, contracts, "changed without a new version")
-removed = deepcopy(registry)
-removed["shaders"].pop(0)
-expect_freeze_failure(removed, baseline, contracts, "published shader removed")
-changed_contracts = dict(contracts)
-changed_contracts[entries[0]["contract"]] = "changed"
-expect_freeze_failure(registry, baseline, changed_contracts, "published shader contract changed")
-added = deepcopy(registry)
-new_entry = deepcopy(added["shaders"][0])
-new_entry["version"] = "9.0.0"
-added["shaders"].append(new_entry)
-expect_freeze_failure(added, baseline, contracts, "new shader needs a reviewed freeze entry")
-extended = deepcopy(baseline)
-extended["profiles"][f'{new_entry["id"]}@{new_entry["version"]}'] = digest(new_entry)
-verify_freeze(added, extended, contracts)
-verify_baseline_history(extended, baseline)
-tampered = deepcopy(baseline)
-tampered["profiles"][f'{entries[0]["id"]}@{entries[0]["version"]}'] = digest(changed["shaders"][0])
+profiles, _ = verify_registry(registry, registry_path.parent)
+assert len(profiles) == len(entries)
+revision_log = json.loads((registry_path.parent / "revisions.json").read_text(encoding="utf-8"))
+changelog = (root / "adm-standard" / "CHANGELOG.md").read_text(encoding="utf-8")
+records = validate_revision_log(revision_log, changelog)
+assert verify_revision_history(revision_log, {"records": []}) == records
+freeze_record = json.loads((registry_path.parent / "freeze-2026-11-15.json").read_text(encoding="utf-8"))
+verify_historical_freeze_history(freeze_record, freeze_record)
+changed_history = deepcopy(freeze_record)
+changed_history["profiles"].pop(next(iter(changed_history["profiles"])))
 try:
-    verify_baseline_history(tampered, baseline)
+    verify_historical_freeze_history(changed_history, freeze_record)
 except ValueError as exc:
-    assert "published freeze record changed or removed" in str(exc)
+    assert "historical shader publication record changed or removed" in str(exc)
 else:
-    raise AssertionError("freeze history should reject replacing an existing hash")
-tampered_contract = deepcopy(baseline)
-tampered_contract["contracts"][entries[0]["contract"]] = "changed"
+    raise AssertionError("the historical publication record must remain auditable")
+
+record = {
+    "id": "test-record",
+    "date": "2026-11-17",
+    "summary": "Test a documented shader contract change.",
+    "changelog": "CHANGELOG.md#unreleased",
+    "profiles": [f'{entries[0]["id"]}@{entries[0]["version"]}'],
+    "contracts": [entries[0]["contract"]],
+}
+verify_recorded_changes(set(record["profiles"]), set(record["contracts"]), [record])
 try:
-    verify_baseline_history(tampered_contract, baseline)
+    verify_recorded_changes(set(record["profiles"]), set(record["contracts"]), [])
 except ValueError as exc:
-    assert "published freeze record changed or removed" in str(exc)
+    assert "unrecorded shader profiles" in str(exc)
+    assert "unrecorded shader contracts" in str(exc)
 else:
-    raise AssertionError("freeze history should reject replacing an existing contract hash")
+    raise AssertionError("unrecorded shader changes must fail")
+try:
+    verify_revision_history({"records": []}, {"records": [record]})
+except ValueError as exc:
+    assert "changed or removed" in str(exc)
+else:
+    raise AssertionError("existing change records must remain in history")
+try:
+    verify_recorded_changes(set(), set(), [record])
+except ValueError as exc:
+    assert "recorded but unchanged shader profiles" in str(exc)
+else:
+    raise AssertionError("change records must not claim unchanged profiles")
+
 with tempfile.TemporaryDirectory() as temporary:
     contract_dir = pathlib.Path(temporary)
     sample = contract_dir / "contract.md"
@@ -112,4 +117,4 @@ with tempfile.TemporaryDirectory() as temporary:
     assert contract_digest("contract.md#contract", contract_dir) == anchored
     sample.write_text("# Document\n\n## Contract\nChanged\n\n## Other\nChanged\n", encoding="utf-8")
     assert contract_digest("contract.md#contract", contract_dir) != anchored
-print(f"PASS shader registry ({len(entries)} official profiles)")
+print(f"PASS shader registry ({len(entries)} official profiles); revision records and change coverage")

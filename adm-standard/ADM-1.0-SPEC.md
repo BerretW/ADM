@@ -1,16 +1,16 @@
 # ADM 1.0 — Apparatus Drawable Model & Animation Standard
 
-**Status:** Final ADM 1.0 specification — published 2026-11-14. This is a project publication; no external standards-body ratification is implied.<br>
-**Date:** 2026-11-14
-**Formats:** `.adm` (drawable model), `.adm_anim` (standalone animation library)  
-**Version:** 1.0 (`major=1, minor=0`) for each independent file format  
-**Compatibility:** intentionally incompatible with all legacy ADM / ADS / `.ads_anim` variants  
-**Intended license:** specification CC0-1.0; reference implementations preferably MIT or Apache-2.0  
-**Conformance:** this publication freezes the normative text; it does not certify an implementation. Independent conformance testing and certification are separate activities described in §25 and §30.
+**Status:** ADM 1.0 – Development / Experimental. The current text is normative for this development revision; it is not a stable public release.<br>
+**Development policy adopted:** 2026-11-17
+**Formats:** `.adm` (drawable model), `.adm_anim` (standalone animation library)
+**Current file-format version:** 1.0 (`major=1, minor=0`) for both container magics
+**Compatibility:** older ADM / ADS / `.ads_anim` and superseded development layouts are not automatically migrated
+**Intended license:** specification CC0-1.0; reference implementations preferably MIT or Apache-2.0
+**Conformance:** this specification defines exact requirements for the current development revision; it does not certify an implementation. Independent conformance testing and certification are separate activities described in §25 and §30.
 
 > **Normative rule:** ADM describes reusable *model assets*, NOT game entities. It standardizes appearance, standardized shader bindings and shader-parameter animation, rest transforms, articulation, visual animation, morph shapes, attachment markers, LOD, geometric collision descriptors, and metadata. It does not define NPC AI, inventory, network replication, vehicle drivetrain, damage logic, scripts, character controllers, game physics, or audio playback. An application supplies these systems.
 >
-> **Final release:** This document freezes the ADM 1.0 file and semantic requirements. It supersedes earlier proposals; legacy ADM, ADS and `.ads_anim` files are not compatible and are not grandfathered in.
+> **Development release:** ADM remains an open, implementation-independent standard. Breaking changes are allowed before a separate decision declares a stable public release. The Git history records earlier development text; historical development assets do not receive automatic migration or compatibility support.
 
 ## 1. Document scope and interpretation
 
@@ -75,7 +75,7 @@ extension rules. The application, not ADM, supplies runtime images and interacti
 | 52 | 4 | u32 | directoryEntrySize = 80 |
 | 56 | 8 | u64 | reserved = 0 |
 
-`align16(x) = (x+15) & ~15` evaluated with checked 64-bit arithmetic. The directory occupies exactly `80*chunkCount` bytes. It begins immediately after the aligned manifest; all intervening bytes MUST be zero. Data begins at or after `align16(directoryOffset + 80*chunkCount)`. Empty (metadata-only) animation libraries MAY contain no data chunks. A reader MUST reject unknown major/minor versions, flags, reserved values, noncanonical region offsets, overlapped regions and lengths extending beyond fileSize. Maximum interoperable manifest length is 16 MiB. Producers MUST write JSON object text without BOM, duplicate keys or non-finite numbers. JSON order is not normative. JSON metadata MUST be parseable without fetching any chunk payload.
+`align16(x) = (x+15) & ~15` evaluated with checked 64-bit arithmetic. The directory occupies exactly `80*chunkCount` bytes. It begins immediately after the aligned manifest; all intervening bytes MUST be zero. Data begins at or after `align16(directoryOffset + 80*chunkCount)`. Empty (metadata-only) animation libraries MAY contain no data chunks. A reader MUST reject unknown major/minor versions with `ADM_ERR_UNSUPPORTED_VERSION`, unsupported header layouts with `ADM_ERR_UNSUPPORTED_LAYOUT`, flags, reserved values, noncanonical region offsets, overlapped regions and lengths extending beyond fileSize. A recognized older development layout is rejected with a diagnostic; readers do not migrate it. Maximum interoperable manifest length is 16 MiB. Producers MUST write JSON object text without BOM, duplicate keys or non-finite numbers. JSON order is not normative. JSON metadata MUST be parseable without fetching any chunk payload.
 
 ### 3.2 Fixed directory entry (80 bytes each)
 
@@ -203,13 +203,12 @@ registry addition does not change ADM 1.0 container or mesh encoding.
 
 ### 8.1 Shader registry, binding identity and discovery
 
-**Republication notice (2026-11-15):** the shader registry and referenced contracts are reissued
-as the authoritative ADM 1.0 definitions, replacing earlier development definitions under the
-same identities. Compatibility with those earlier definitions is not promised. This one-time
-correction does not change the ADM container version; from this republication onward the
-immutability and exact-version rules below apply to these definitions.
+**Historical republication (2026-11-15):** the repository reissued the shader registry and
+referenced contracts after earlier development definitions had changed under the same identities.
+The retained hash file records that publication point; it is historical evidence, not an immutable
+compatibility baseline.
 
-A shader is identified by an exact pair `(shader.id, shader.version)`, serialized as `"shader":{"id":"adm.pbr.metallic_roughness","version":"1.0.0"}`. `id` is a nonempty ASCII dot-qualified identifier (regex `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+`, length 3..160 bytes), compared byte-for-byte. The `adm.` prefix is reserved for the official registry; external publishers SHOULD use reverse-DNS prefixes they control (for example `org.example.hologram`). `version` MUST be an exact SemVer 2.0.0 version without build metadata or ranges; a reader MUST NOT silently substitute another version. Official registry entries are immutable after publication; a semantic change requires a new version. `shader` defaults to the core PBR shader. A material's `animationId`, when present, MUST match `[a-z][a-z0-9_]*` and be unique across all `materials` in one model. It is a portable animation binding key, NOT an array index or user-visible material title. Animatable shader materials MUST provide `animationId`.
+A shader is identified by an exact pair `(shader.id, shader.version)`, serialized as `"shader":{"id":"adm.pbr.metallic_roughness","version":"1.0.0"}`. `id` is a nonempty ASCII dot-qualified identifier (regex `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+`, length 3..160 bytes), compared byte-for-byte. The `adm.` prefix is reserved for the official registry; external publishers SHOULD use reverse-DNS prefixes they control (for example `org.example.hologram`). `version` MUST be an exact SemVer 2.0.0 version without build metadata or ranges; a reader MUST NOT silently substitute another version. During development, a contract may change only with a matching development-change record and changelog entry. Increment the shader contract's major version when its meaning changes incompatibly; consumers that do not support the exact pair use the specified PBR fallback and report that status. The development process does not require keeping superseded shader definitions available. `shader` defaults to the core PBR shader. A material's `animationId`, when present, MUST match `[a-z][a-z0-9_]*` and be unique across all `materials` in one model. It is a portable animation binding key, NOT an array index or user-visible material title. Animatable shader materials MUST provide `animationId`.
 
 `shaderDefinitions`, optional on the `.adm` top-level, is an array of **embedded descriptive schemas** (no executable code). Each entry MUST have `{ "id":string, "version":string, "parameters":[...] }` and MAY have `"description"` and `"author"` strings. No two entries may have the same `(id,version)`. Its parameter entries MUST satisfy §8.2. An embedded definition is required for each *non-official custom shader referenced by a material*, so parsers can validate names/types and editors can expose an inspector without internet access. Official `adm.*` shader definitions MUST NOT be redefined in the file: the published registry takes precedence. An embedded custom definition describes the interface, not an interoperable rendering algorithm; custom implementations require a separately published shader contract, and otherwise conform only by rendering the PBR fallback. Missing embedded custom definition is invalid even if an application has an implementation installed.
 
@@ -662,9 +661,39 @@ The full identifier is `human@walking@wounded:walk1`. The application may show t
 **Model instantiation:** a single `.adm` may have hundreds of nodes and many meshes. The `.adm_anim` library does not reference the model filename, uses the target profile, and may animate any model validating against that profile. Nothing in this example causes an NPC to move automatically; a host chooses when/where it evaluates the clip.
 
 
-## 28. Version policy, extension registry, and open standard governance
+## 28. Development version policy, extension registry, and governance
 
-Any change to binary header, semantics, required fields, or published interpolation/IK math is a MAJOR revision. A MINOR revision may add **explicitly optional** fields that 1.0 readers can safely ignore only when declared via a recognized extension; files with minor>0 require a reader that explicitly supports that minor version. Unknown required extensions MUST be rejected; optional extensions may be ignored only when doing so preserves core meaning. `extensionsRequired` MUST be subset of `extensionsUsed`, and extension IDs MUST be versioned in registry documents. Custom skeleton profile IDs MUST be versioned and published with validation rules and example rigs before advertised interoperable.
+ADM 1.0 is the current development edition, not a promise of stable compatibility. Normative
+requirements still apply exactly to a conforming implementation of the current revision. An
+incompatible change is allowed when it is technically justified, is recorded in the changelog, and
+updates affected validators, fixtures and tests. The Git history preserves prior revisions; the
+project does not promise automatic migration or support for historical development files.
+
+Use the following independent version identifiers:
+
+| Version identifier | Source | When to change it |
+|---|---|---|
+| ADM edition | This specification, currently `ADM 1.0 – Development / Experimental` | Change only when the project adopts a separately identified edition or stable release. |
+| ADM file-format version | The binary header, currently `1.0` | Change when an incompatible change affects core bytes or semantics that the header must distinguish. Readers reject unsupported values and do not migrate earlier layouts. |
+| Extension version | The extension's own contract and data | Change when that extension's interface or meaning changes; an extension does not change the core file version. |
+| Shader contract version | The exact `(shader.id, shader.version)` pair | Use SemVer to identify compatibility-relevant contract changes; shader versions do not change the ADM file-format version. |
+| Blender add-on version | `adm_blender/blender_manifest.toml` | Change for add-on releases only; it does not identify an ADM format or shader revision. |
+
+The skeleton-profile registry's `registryVersion` identifies that registry document's schema, and
+each profile has its own version. Neither value is the ADM edition or file-format version. The
+shader registry has no separate registry version because its entries already carry exact contract
+versions and its structure is checked against the reference implementation.
+
+Do not increment any version for a cosmetic edit. Use a version change when it communicates a
+real compatibility boundary. Do not retain obsolete parsers or compatibility layers solely for
+historical development data. If a reader recognizes an unsupported file-format, extension or shader
+version, it MUST reject that required feature with an explanatory diagnostic or use only the
+normative fallback explicitly allowed for that feature; it MUST NOT silently reinterpret the data.
+Unknown required extensions MUST be rejected; an unknown optional extension may be ignored only
+when doing so preserves core meaning. `extensionsRequired` MUST be a subset of `extensionsUsed`,
+and extension IDs and contracts MUST be versioned in their own specifications. Custom skeleton
+profile IDs MUST be versioned and published with validation rules and example rigs before being
+advertised as interoperable.
 
 Suggested repository layout:
 
@@ -674,7 +703,7 @@ spec/
   schemas/                 # JSON Schema for both manifest kinds
   profiles/                # pinned normative ADM 1.0 profiles and annexes
   proposals/               # non-normative profile proposals outside ADM 1.0
-  registry/                # namespace/extension ID registry and immutable shader profiles
+  registry/                # namespace/extension ID registry and shader profiles
   extensions/              # separately versioned normative extension contracts
   fixtures/valid/          # byte-perfect samples and expected evaluator output
   fixtures/invalid/        # validation failures with codes
@@ -689,11 +718,11 @@ Recommended source citation references:
 - VRM Animation 1.0: https://github.com/vrm-c/vrm-specification/blob/master/specification/VRMC_vrm_animation-1.0/README.md
 - Apple ARKit named coefficients: https://developer.apple.com/documentation/arkit/arfaceanchor/blendshapelocation/
 
-**Final status:** ADM 1.0 is frozen by this publication. Changes to normative behavior require a later version under §28. The independent conformance corpus, validator, numerical evaluator and interoperability certification described in §25 are separate implementation and certification deliverables; none is implied by publication of this specification.
+**Development status:** this text is normative for the current ADM 1.0 development revision and may change incompatibly under §28. The independent conformance corpus, validator, numerical evaluator and interoperability certification described in §25 are separate implementation and certification deliverables; none is implied by this specification.
 
 `ADM_joint_display_v1` is a separately versioned optional extension under this policy. Its
 node-local display data is required only by files that declare it in `extensionsRequired`; it does
-not revise the frozen ADM 1.0 core.
+not revise core fields.
 
 
 
@@ -740,11 +769,11 @@ fixtures and tests do not substitute for independent runtime renderer certificat
 
 **Profile conformance:** `VEH-001..006` and `WPN-001..006` are defined in the normative annexes, with structural fixtures and a baseline validator. These are not a complete numerical animation or Blender round-trip certification suite. Skeleton profile tests `HUM-001..006` are defined for `humanoid.vrm1`; the bundled checks are reference-implementation tests, not independent certification.
 
-**Publication and certification:** ADM 1.0 is final; the reference kit includes a container validator and only partial coverage of the cases above. It does NOT include complete numerical animation solvers, renderer golden images or an independent full semantic validator; KTX2/DDS subset checks (§8.6) exist in the Blender add-on's validator. Passing the bundled scripts alone is not evidence of full ADM 1.0 conformance or certification.
+**Development and certification:** ADM 1.0 is experimental; the reference kit includes a container validator and only partial coverage of the cases above. It does NOT include complete numerical animation solvers, renderer golden images or an independent full semantic validator; KTX2/DDS subset checks (§8.6) exist in the Blender add-on's validator. Passing the bundled scripts alone is not evidence of full ADM 1.0 conformance or certification.
 
 
 ## 31. Incorporated normative profile annexes
 
 The following files are normative components of ADM 1.0, not optional commentary. A tool claiming the named profile MUST implement both §29 and its corresponding annex. `profiles/vehicle.car.v1.md` defines `ADM-VEHICLE-CAR-1`; `profiles/weapon.firearm.v1.md` defines `ADM-WEAPON-FIREARM-1` and modular `weapon.attachment.v1`. Ambiguities are errors, not permission to guess: discrepancy between the core document and an annex MUST be reported. The profile registry is version-pinned by this publication.
 
-**Skeleton profile annexes:** `profiles/skeleton-profiles.json` is the frozen ADM 1.0 registry; `profiles/humanoid.vrm1.md` defines the normative humanoid roles, reference pose and retarget rules. The `generic.v1` profile permits exact binding only. Quadruped proposals are excluded from ADM 1.0 and retained under `proposals/`; they are not entries in the normative registry and MUST NOT be used for ADM 1.0 semantic binding.
+**Skeleton profile annexes:** `profiles/skeleton-profiles.json` is the current ADM 1.0 profile registry; `profiles/humanoid.vrm1.md` defines the current normative humanoid roles, reference pose and retarget rules. The `generic.v1` profile permits exact binding only. Quadruped proposals are not in the current registry and are retained under `proposals/`; they MUST NOT be used for semantic binding unless adopted through a documented standard change.

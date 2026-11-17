@@ -123,7 +123,7 @@ class ContainerTests(unittest.TestCase):
 
     def test_reference_container_invalid_fixtures(self):
         expected = {
-            "bad_header_size.adm": "ADM_ERR_HEADER",
+            "bad_header_size.adm": "ADM_ERR_UNSUPPORTED_LAYOUT",
             "bad_file_size.adm": "ADM_ERR_BOUNDS",
             "bad_chunk_offset.adm": "ADM_ERR_CHUNK_BOUNDS",
             "bad_dependency_cycle.adm": "ADM_ERR_DEPENDENCY_CYCLE",
@@ -322,8 +322,8 @@ class ContainerTests(unittest.TestCase):
     def test_header_bounds_and_legacy_rejected(self):
         _, _, data = self.sample()
         for index, value, code in (
-                (1, 2, "HEADER"), (2, 1, "HEADER"), (3, 32, "HEADER"),
-                (4, 1, "HEADER"), (5, len(data) + 1, "BOUNDS"),
+                (3, 32, "UNSUPPORTED_LAYOUT"), (4, 1, "HEADER"),
+                (5, len(data) + 1, "BOUNDS"),
                 (6, 80, "HEADER"), (7, 0xffffffffffffffff, "BOUNDS"),
                 (8, 0xffffffffffffffff, "BOUNDS"), (9, 65536, "BOUNDS"),
                 (10, 81, "HEADER"), (11, 1, "HEADER")):
@@ -331,8 +331,16 @@ class ContainerTests(unittest.TestCase):
                 self.assert_code("ADM_ERR_" + code, read_container,
                                  patch_header(data, index, value), ADM_MAGIC)
         self.assert_code("ADM_ERR_TRUNCATED_HEADER", read_container, b"ADM0", ADM_MAGIC)
+        self.assert_code("ADM_ERR_UNSUPPORTED_VERSION", read_container,
+                         patch_header(data, 1, 2), ADM_MAGIC)
+        self.assert_code("ADM_ERR_UNSUPPORTED_VERSION", read_container,
+                         patch_header(data, 2, 1), ADM_MAGIC)
+        with self.assertRaisesRegex(AdmFormatError, "Older development versions are not migrated"):
+            read_container(patch_header(data, 1, 2), ADM_MAGIC)
         legacy = ADM_MAGIC + struct.pack("<HHQQII", 1, 0, 2, 32, 0, 0) + b"{}" + b"\0" * 32
-        self.assert_code("ADM_ERR_HEADER", read_container, legacy, ADM_MAGIC)
+        self.assert_code("ADM_ERR_UNSUPPORTED_LAYOUT", read_container, legacy, ADM_MAGIC)
+        with self.assertRaisesRegex(AdmFormatError, "Older development layouts are not migrated"):
+            read_container(legacy, ADM_MAGIC)
 
     def test_directory_bounds_order_padding_integrity(self):
         _, _, data = self.sample()

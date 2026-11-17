@@ -39,12 +39,13 @@ jobs:
           python adm-standard/tools/test_profiles.py
           python adm-standard/tools/test_independent_conformance.py
           python adm-standard/tools/test_shader_vertex_masks.py
-      - name: Validate shader registry
+          python adm-standard/tools/test_reference_catalog.py
+      - name: Validate shader registry and development changes
         env:
-          FREEZE_BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SHADER_CHANGE_BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           python adm-standard/tools/build_shader_registry.py --check
-          python adm-standard/tools/check_shader_registry_freeze.py --base-revision-env FREEZE_BASE_REVISION
+          python adm-standard/tools/check_shader_registry_changes.py --base-revision-env SHADER_CHANGE_BASE_REVISION
           python adm-standard/tools/test_shader_registry.py
       - name: Regenerate fixtures without external inputs
         run: |

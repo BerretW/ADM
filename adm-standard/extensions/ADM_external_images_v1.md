@@ -1,6 +1,6 @@
 # `ADM_external_images_v1`
 
-Version 1.0.0, incorporated by the final ADM 1.0 specification.
+Version 1.0.0, incorporated by the current ADM 1.0 Development / Experimental specification.
 
 ## Declaration and image schema
 

@@ -18,7 +18,6 @@ for key in K.OFFICIAL_SHADERS:
             else f"{key[0]}.v1.md"
 
 data = {
-    "registryVersion": "1.1.0",
     "shaders": [
         {"id": sid, "version": version, "parameters": K.OFFICIAL_SHADERS[(sid, version)],
          "contract": contracts[(sid, version)]}

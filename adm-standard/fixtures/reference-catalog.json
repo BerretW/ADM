@@ -1,0 +1,246 @@
+{
+  "independentImplementationsVerified": 0,
+  "interoperabilityClaim": false,
+  "categories": [
+    {
+      "id": "static-model",
+      "status": "partial",
+      "fixtures": [
+        "adm-standard/fixtures/valid/triangle.adm",
+        "adm-standard/fixtures/valid/triangle.json"
+      ],
+      "expectations": [],
+      "referenceTests": [
+        "adm-standard/tools/test_independent_conformance.py"
+      ],
+      "verifiedChecks": [
+        "The binary fixture is accepted by the standalone container reader and Blender validator."
+      ],
+      "notTested": [
+        "Expected world-space transforms, normals, UVs and cross-reader geometry results."
+      ],
+      "requiredFixtureData": [
+        "A model with explicit UVs, normals, multiple primitives and non-identity nested transforms."
+      ],
+      "requiredExpectationFields": [
+        "nodes.count",
+        "meshes.count",
+        "primitives.count",
+        "vertices.count",
+        "indices.count",
+        "attributes.present",
+        "transforms.local",
+        "transforms.world"
+      ]
+    },
+    {
+      "id": "material-test",
+      "status": "partial",
+      "fixtures": [
+        "adm-standard/fixtures/profiles/shader_masks_v2.adm"
+      ],
+      "expectations": [
+        "adm-standard/fixtures/expectations/shader_masks_v2.json"
+      ],
+      "referenceTests": [
+        "adm-standard/tools/test_shader_vertex_masks.py",
+        "adm_blender/tests/test_shader_math.py",
+        "adm_blender/tests/test_shader_preview.py"
+      ],
+      "verifiedChecks": [
+        "The mask expectation file provides reference vectors for registered COLOR_1 profiles."
+      ],
+      "notTested": [
+        "A single measured material fixture covering every listed PBR, COLOR_0, tint and emission behavior."
+      ],
+      "requiredFixtureData": [
+        "Materials covering PBR, COLOR_0 tint, COLOR_1 masks, emission and portable fallbacks."
+      ],
+      "requiredExpectationFields": [
+        "materials.shaderBindings",
+        "materials.pbrParameters",
+        "materials.vertexColor0",
+        "materials.vertexColor1",
+        "materials.fallbackParameters",
+        "materials.sampledOutputs"
+      ]
+    },
+    {
+      "id": "humanoid",
+      "status": "partial",
+      "fixtures": [],
+      "expectations": [],
+      "referenceTests": [
+        "adm_blender/tests/test_skeleton_profiles.py",
+        "adm_blender/tests/test_skeleton_blender.py"
+      ],
+      "verifiedChecks": [
+        "The reference implementation exercises skeleton profile and Blender authoring behavior."
+      ],
+      "notTested": [
+        "A shared skinned humanoid fixture with expected retarget, bone-transform and IK results."
+      ],
+      "requiredFixtureData": [
+        "A skinned humanoid model with the normative role hierarchy and authored reference pose."
+      ],
+      "requiredExpectationFields": [
+        "skeleton.profileId",
+        "skeleton.roles",
+        "skeleton.parents",
+        "skin.influences",
+        "animation.sampleTimes",
+        "animation.boneWorldTransforms",
+        "retarget.transforms",
+        "ik.targetAndJointTransforms"
+      ]
+    },
+    {
+      "id": "animation",
+      "status": "partial",
+      "fixtures": [
+        "adm-standard/fixtures/valid/catalog-only.adm_anim",
+        "adm-standard/fixtures/valid/shader_parameter_tracks.adm_anim",
+        "adm-standard/fixtures/profiles/vehicle_front_wheel_spin.adm_anim"
+      ],
+      "expectations": [],
+      "referenceTests": [
+        "adm-standard/tools/run_tests.py",
+        "adm_blender/tests/test_component_animation_blender.py",
+        "adm_blender/tests/test_mixamo_animation_blender.py"
+      ],
+      "verifiedChecks": [
+        "The reference tests exercise metadata-only catalogs and selected animation import/export workflows."
+      ],
+      "notTested": [
+        "Golden sampled values for the same humanoid, root-motion, morph and interpolation clips."
+      ],
+      "requiredFixtureData": [
+        "Animation assets with sampled root motion, morph targets, semantic retargeting and interpolation edge cases."
+      ],
+      "requiredExpectationFields": [
+        "clips.duration",
+        "clips.sampleTimes",
+        "channels.values",
+        "rootMotion.transforms",
+        "morph.weights",
+        "interpolation.results"
+      ]
+    },
+    {
+      "id": "modular-vehicle",
+      "status": "partial",
+      "fixtures": [
+        "adm-standard/fixtures/profiles/vehicle_car_minimal.adm",
+        "adm-standard/fixtures/profiles/vehicle_front_wheel_spin.adm_anim"
+      ],
+      "expectations": [],
+      "referenceTests": [
+        "adm-standard/tools/test_profiles.py",
+        "adm_blender/tests/test_component_animation_blender.py"
+      ],
+      "verifiedChecks": [
+        "The profile validator and Blender workflow test exercise selected vehicle roles and component tracks."
+      ],
+      "notTested": [
+        "A complete modular vehicle's socket placements and expected animation transforms."
+      ],
+      "requiredFixtureData": [
+        "A complete vehicle asset with modular parts, sockets, nested transforms and wheel/steering animation."
+      ],
+      "requiredExpectationFields": [
+        "components.roles",
+        "sockets.localTransforms",
+        "nodes.worldTransforms",
+        "animation.componentTransforms",
+        "profile.validationResults"
+      ]
+    },
+    {
+      "id": "modular-weapon",
+      "status": "partial",
+      "fixtures": [
+        "adm-standard/fixtures/profiles/weapon_firearm_minimal.adm",
+        "adm-standard/fixtures/profiles/weapon_magazine_attachment.adm",
+        "adm-standard/fixtures/profiles/weapon_visual_bolt_shift.adm_anim"
+      ],
+      "expectations": [],
+      "referenceTests": [
+        "adm-standard/tools/test_profiles.py",
+        "adm_blender/tests/test_component_animation_blender.py"
+      ],
+      "verifiedChecks": [
+        "The profile validator exercises selected firearm and attachment structures."
+      ],
+      "notTested": [
+        "Expected mount-frame composition and sampled mechanism transforms across implementations."
+      ],
+      "requiredFixtureData": [
+        "A firearm and attachable parts with declared interfaces, mount frames and animated mechanisms."
+      ],
+      "requiredExpectationFields": [
+        "components.roles",
+        "mountInterfaces",
+        "sockets.localTransforms",
+        "animation.componentTransforms",
+        "profile.validationResults"
+      ]
+    },
+    {
+      "id": "interactive-surface",
+      "status": "partial",
+      "fixtures": [
+        "adm-standard/fixtures/valid/interactive_terminal.adm"
+      ],
+      "expectations": [
+        "adm-standard/fixtures/expectations/interactive_terminal.expected.json"
+      ],
+      "referenceTests": [
+        "adm-standard/tools/test_interactive_surfaces.py",
+        "adm_blender/tests/test_interactive_blender.py"
+      ],
+      "verifiedChecks": [
+        "Reference tests cover surface identity, UV/hit mapping, runtime color/alpha equations and fallback data."
+      ],
+      "notTested": [
+        "Independent runtime rendering and engine-level interactive hit testing."
+      ],
+      "requiredFixtureData": [
+        "An independently consumed render fixture for visual fallback and runtime display comparison."
+      ],
+      "requiredExpectationFields": [
+        "surfaces.ids",
+        "surfaces.nodePrimitiveUvBindings",
+        "hitTest.uv",
+        "runtime.colorAlpha",
+        "fallback.material"
+      ]
+    },
+    {
+      "id": "terrain",
+      "status": "partial",
+      "fixtures": [
+        "ADM/terrain_four_layer_v2.adm"
+      ],
+      "expectations": [],
+      "referenceTests": [
+        "adm_blender/tests/test_terrain_workflow.py"
+      ],
+      "verifiedChecks": [
+        "The Blender terrain workflow test exercises reference implementation import/export."
+      ],
+      "notTested": [
+        "Expected cross-tile transforms, LOD equivalence and material-layer evaluations in a second reader."
+      ],
+      "requiredFixtureData": [
+        "A self-contained terrain tile set with multiple LODs, layer textures and cross-tile transforms."
+      ],
+      "requiredExpectationFields": [
+        "tiles.nodes",
+        "tiles.lodGroups",
+        "tiles.worldTransforms",
+        "materials.layerParameters",
+        "materials.uvBindings"
+      ]
+    }
+  ]
+}

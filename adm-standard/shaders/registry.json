@@ -1,5 +1,4 @@
 {
-  "registryVersion": "1.1.0",
   "shaders": [
     {
       "id": "adm.pbr.metallic_roughness",

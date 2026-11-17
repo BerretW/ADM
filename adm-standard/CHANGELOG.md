@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Marked ADM 1.0 as **Development / Experimental**: normative requirements remain exact for the
+  current revision, but incompatible changes are allowed before a separate stable-release decision.
+- Replaced the shader-definition freeze check with registry integrity checks and CI comparison
+  against the base revision. Changed shader identities and contract references now require a
+  `shaders/revisions.json` record linked to this changelog.
+- Removed the unused top-level shader-registry version; exact shader contract versions remain on
+  each `(shader.id, shader.version)` identity.
+- Clarified the independent roles of the ADM edition, binary file-format, extension, shader-contract
+  and Blender add-on versions.
+
+### Added
+
+- Added a machine-readable reference-test catalog that records existing fixture evidence and
+  explicitly lists missing fixtures and expectations for all eight test categories.
+- Added explanatory rejection diagnostics for unsupported container versions and layouts.
+
 ## ADM 1.0 optional animation-timing extension — 2026-11-18
 
 - Added the normative `ADM_animation_timing_v1@1.0.0` contract for source frame rates and exact

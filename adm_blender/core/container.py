@@ -398,10 +398,23 @@ def read_container(data, expected_magic, limits=DEFAULT_LIMITS, *, file_size=Non
         _fail("TRUNCATED_HEADER", "file shorter than the 64-byte header")
     (magic, major, minor, hsize, flags, size, moff, mlen, doff,
      count, esize, reserved) = HEADER.unpack(source.read(0, HEADER_SIZE))
-    if (expected_magic not in (ADM_MAGIC, ANIM_MAGIC) or magic != expected_magic
-            or (major, minor, hsize, flags, moff, esize, reserved)
-            != (VERSION_MAJOR, VERSION_MINOR, HEADER_SIZE, 0, HEADER_SIZE, ENTRY.size, 0)):
-        _fail("HEADER", "unsupported magic, version or header fields")
+    if expected_magic not in (ADM_MAGIC, ANIM_MAGIC) or magic != expected_magic:
+        _fail("HEADER", "unsupported magic")
+    if (major, minor) != (VERSION_MAJOR, VERSION_MINOR):
+        _fail(
+            "UNSUPPORTED_VERSION",
+            f"container version {major}.{minor} is unsupported; this reader supports "
+            f"{VERSION_MAJOR}.{VERSION_MINOR} (ADM 1.0 Development / Experimental). "
+            "Older development versions are not migrated.",
+        )
+    if hsize != HEADER_SIZE:
+        _fail(
+            "UNSUPPORTED_LAYOUT",
+            f"header size {hsize} is unsupported; ADM 1.0 Development / Experimental "
+            f"requires {HEADER_SIZE} bytes. Older development layouts are not migrated.",
+        )
+    if (flags, moff, esize, reserved) != (0, HEADER_SIZE, ENTRY.size, 0):
+        _fail("HEADER", "invalid header fields")
     if (size != source.size or not 2 <= mlen <= MAX_MANIFEST or count > 65535
             or doff != _align(_add(moff, mlen)) or _add(doff, count * ENTRY.size) > size):
         _fail("BOUNDS", "invalid file, manifest or directory bounds")

@@ -1,13 +1,17 @@
 # ADM Tools for Blender (5.2+)
 
-Blender extension for the final ADM 1.0 specification (`adm-standard/ADM-1.0-SPEC.md`).
+Blender extension for **ADM 1.0 – Development / Experimental**
+(`adm-standard/ADM-1.0-SPEC.md`).
 The workflow and layout follow Sollumz: object types, create/convert tools, a sidebar tab,
 validation and import/export. This is a reference implementation; its tests do not constitute
-independent ADM conformance certification.
+independent ADM conformance certification or proof of interoperability. ADM is an
+implementation-independent open standard. Incompatible changes are allowed during development;
+historical files may not be supported or migrated. A stable public version will be declared only
+by a separate decision.
 
-The shader registry was reissued on 2026-11-15. Earlier development schemas with the same
-identities are superseded and are not supported; see the
-[publication record](../adm-standard/SPEC_GAPS.md#shader-registry-republication).
+The ADM edition, binary file-format, extensions, shader contracts and Blender add-on have
+independent version identifiers. See the [version policy](../adm-standard/ADM-1.0-SPEC.md#28-development-version-policy-extension-registry-and-governance)
+and [development-change controls](../adm-standard/SPEC_GAPS.md#shader-development-change-control).
 
 ## Installation
 
@@ -371,7 +375,7 @@ in the tool, which re-exports only changed tiles.
   top row of the 1–5 px high tint palette, and previews tint/normal/wetness. Dielectric and metallic F0 are represented
   by separate Principled lobes mixed at the material metallic factor; the effective dielectric F0 is
   encoded as IOR and metallic F0 as the lobe base color. Cycles tests bake both node outputs.
-  Core 20 `1.0.0` profiles preserve but ignore `COLOR_1`; their compatible `2.0.0` versions use the
+  Core 20 `1.0.0` profiles preserve but ignore `COLOR_1`; their separately versioned `2.0.0` profiles use the
   registered shader-specific mask effects described above.
 
 ### Interactive display surfaces

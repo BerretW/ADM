@@ -84,6 +84,14 @@ def copy_expectations(source_root, output_root):
             target.write_bytes(source.read_bytes())
 
 
+def copy_reference_catalog(source_root, output_root):
+    source = source_root / "reference-catalog.json"
+    if source.is_file():
+        target = output_root / source.name
+        if source.resolve() != target.resolve():
+            target.write_bytes(source.read_bytes())
+
+
 def build_invalid_fixtures(records, output_root):
     invalid_dir = output_root / "invalid"
     invalid_dir.mkdir(parents=True, exist_ok=True)
@@ -189,6 +197,7 @@ def main(argv=None):
     build_invalid_fixtures(records, output_root)
     build_semantic_invalid_fixtures(records, output_root)
     copy_expectations(FIXTURE_DIR, output_root)
+    copy_reference_catalog(FIXTURE_DIR, output_root)
     print(f"Built fixtures under {output_root}")
 
 

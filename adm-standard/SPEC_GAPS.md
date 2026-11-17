@@ -1,45 +1,36 @@
-# ADM 1.0 Conformance Status and Excluded Proposals
+# ADM 1.0 Development / Experimental: Coverage and Open Work
 
-ADM 1.0's normative text is final. This register records the design decisions frozen into the
-standard, proposals deliberately excluded from this version, and separate implementation and
-certification work that is not supplied by publication. The remaining items do not reopen or qualify
-the normative requirements.
+ADM 1.0 is an open, implementation-independent standard in development. Its current normative text
+defines exact, testable requirements, but the project may make incompatible changes before declaring
+a stable public release. This register distinguishes implemented, partial and unverified
+capabilities; it does not claim that reference-implementation tests prove interoperability.
 
-## Shader registry republication
+## Shader development-change control
 
-On 2026-11-15 the current registry and referenced contracts were reissued as the authoritative
-baseline. This is a one-time correction to the earlier publication, not a claim that the earlier
-definitions were immutable. Earlier development schemas and assets are not supported and may be
-incompatible; no automatic migration is provided. From republication onward, the immutability rule
-in [§8.1](ADM-1.0-SPEC.md#81-shader-registry-binding-identity-and-discovery) applies.
+On 2026-11-15 the shader registry and referenced contracts were reissued after development
+definitions had changed under the same identities. This history explains the retained
+`shaders/freeze-2026-11-15.json`; that file records the published state at that date and is no longer
+a rule that blocks development changes. Earlier development assets are not automatically migrated.
 
-Between commit `0d03081` and republication, the following 20 existing identities acquired
-metallic/roughness texture, channel-selection or inversion parameters without a version change:
+The former freeze mechanism prevented intentional edits to every existing `(shader.id, version)` and
+its contract text. It also required new shader identities and contract text to be added to an
+append-only hash baseline, even during experimental development. Those compatibility constraints
+are removed. Registry generation, ID/schema/default validation, and CI checks against the pull
+request or push base remain in place.
 
-- `adm.terrain.four_layer@1.0.0` and `adm.terrain.four_layer@2.0.0`.
-- `@2.0.0`: `adm.animal.feather`, `adm.animal.fur`, `adm.animal.scales`,
-  `adm.building.brick`, `adm.building.concrete`, `adm.building.roof`,
-  `adm.character.skin`, `adm.nature.bark`, `adm.nature.rock`, `adm.nature.water`,
-  `adm.pbr.layered`, `adm.pbr.metallic_roughness`, `adm.surface.cutout`,
-  `adm.surface.decal`, `adm.surface.fabric`, `adm.surface.foliage`,
-  `adm.surface.glass` and `adm.vehicle.paint`.
+For every shader registry or referenced-contract change, CI compares the change with the base
+revision. `shaders/revisions.json` must identify each changed profile and contract, state why it
+changed, and link to a changelog heading. CI fails if a changed item is missing from the new record,
+if a record claims an unchanged item, or if an earlier record is edited or removed. Reviewers
+approve the change through the normal Git review process. The comparison is skipped when no base
+revision is available; local registry integrity and revision-record checks still run.
 
-The new `adm.surface.two_layer@1.0.0` is a separate identity, not a change to an earlier one.
-`shaders/freeze-2026-11-15.json` records hashes of all 42 reissued entries and their referenced
-contract text; `tools/check_shader_registry_freeze.py` checks these in CI. The check is deliberately
-conservative: any text change in a referenced contract is flagged, not just semantic changes.
-For specification links with a heading anchor, it checks that heading's section; for other contracts
-it checks the entire file. It does not recursively freeze other documents referenced by a contract.
+The shader contract version still identifies compatibility-relevant meaning. Increment its major
+version for an incompatible contract change; the experimental process does not require the project
+to preserve or implement superseded versions. A reader uses the exact declared version, or reports
+the normative fallback where the contract permits one.
 
-The freeze file is an append-only publication record: do not replace or remove existing hashes.
-For a new shader version, preserve the old entry and contract, publish the new contract separately
-if needed, and add its reviewed hashes to the record. Changes to existing hashes, including
-non-semantic editorial corrections, require explicit review rather than silently regenerating
-the baseline. CI also checks that published hashes are unchanged from the pull request or push base
-when a base revision containing the record is available. The first publication and manually
-dispatched runs without a base rely on repository review to protect the baseline itself.
-
-## Finalized design decisions
+## Current design decisions
 
 | ID | Area | Normative disposition |
 |---|---|---|
@@ -57,15 +48,28 @@ dispatched runs without a base rely on repository review to protect the baseline
 | `SPEC_GAP-RETARGET-MAP` | §11 registry | ADM 1.0 registers no cross-profile map format or mapping. `retargetMaps` must be empty; different profile IDs are INCOMPATIBLE. A future mapping requires a reviewed versioned profile-pair annex with explicit role transforms and fixtures. |
 | `SPEC_GAP-CUSTOM-PROFILE` | §11 / §28 | Unregistered reverse-DNS versioned IDs are EXACT_ONLY. Semantic use requires a complete published annex and machine-readable registry entry with role, hierarchy, pose, correction, retarget, IK/socket and fixture rules. |
 | `SPEC_GAP-KTX2-SUBSET` | §8.6 | Resolved in P3: optional KTX2/DDS subsets, RGBA8/BC1/BC3, sRGB/UNORM role rules, mips and mandatory same-size PNG/JPEG fallback are specified. Unsupported encodings and layouts are rejected. |
-| `SPEC_GAP-SHADER-CORE20` | Shader registry and renderer | The registry has the registered shader IDs, schemas and contracts. Blender preview graphs apply vertex-control tint, normal strength, wetness color/roughness, and exact dielectric/metallic F0 using separate Principled lobes; Cycles bake tests verify the F0 node outputs. Extension-level animation bindings, Core 20 `@1.0.0` reserved/no-effect `COLOR_1` contracts, additive `@2.0.0` mask contracts, and model/material round-trip tests are present. Not every shader has an independently bake-tested renderer, Skin/Fur/Fabric remain approximations, and independent renderer interoperability is unverified. Add focused renderer bakes and validate with an independent implementation before claiming full conformance. See also the registry republication above. |
+| `SPEC_GAP-SHADER-CORE20` | Shader registry and renderer | The registry has the registered shader IDs, schemas and contracts. Blender preview graphs apply vertex-control tint, normal strength, wetness color/roughness, and exact dielectric/metallic F0 using separate Principled lobes; Cycles bake tests verify the F0 node outputs. Extension-level animation bindings, Core 20 `@1.0.0` reserved/no-effect `COLOR_1` contracts, separately versioned `@2.0.0` mask contracts, and model/material round-trip tests are present. Not every shader has an independently bake-tested renderer, Skin/Fur/Fabric remain approximations, and independent renderer interoperability is unverified. Add focused renderer bakes and validate with an independent implementation before claiming full conformance. See the shader development-change control above. |
 | `SPEC_GAP-INTERACTIVE-BINDING` | Interactive display identity, UV and appearance | `ADM_interactive_surfaces_v1@1.0.0` defines unique surface IDs, node/primitive/UV references, hit coordinates and optional aspect metadata. `adm.surface.interactive@1.0.0` defines runtime color/alpha, lit/unlit, off state and portable fallback. Blender and both manifest validators exercise the data; independent runtime rendering remains unverified. |
 | `SPEC_GAP-HUMANOID-SOCKETS` | Equipment attachment semantics | `ADM_humanoid_sockets_v1@1.0.0` defines 20 stable humanoid mount names, role ancestry, model-space frame axes, asset-authored positions and `mount.root` composition. The reference validator and Blender export/import tests cover the contract. Independent engine interoperability and equipment-fit guarantees remain unverified. |
+
+## Capability status
+
+- **Implemented:** a specific behavior has a runnable reference test and recorded fixture evidence.
+  This does not imply full feature coverage or independent interoperability.
+- **Partial:** the repository implements or tests part of a capability, but its catalog lists
+  required fixture data or expected results that are still missing.
+- **Proposed:** the data is non-normative and not accepted as an ADM 1.0 profile until a documented
+  development change adopts it.
+
+The [reference-test catalog](fixtures/reference-catalog.json) applies these statuses per test
+category. It records only real fixture files and runnable tests; entries under `requiredFixtureData`
+and `requiredExpectationFields` describe work that has not been supplied.
 
 ## Excluded proposals (not part of ADM 1.0)
 
 The quadruped profile proposal and its machine-readable records are retained under `proposals/`.
-They are not entries in the ADM 1.0 profile registry and MUST NOT be used for ADM 1.0 semantic
-binding. Any later adoption requires a versioned amendment or later standard release.
+They are not entries in the current ADM 1.0 profile registry and MUST NOT be used for semantic
+binding. Adoption requires a reviewed change to the specification, registry, validator and fixtures.
 
 | Proposal | ADM 1.0 disposition | Work required for possible future adoption |
 |---|---|---|

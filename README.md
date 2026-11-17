@@ -7,11 +7,11 @@ The add-on uses a Sollumz-inspired create/convert workflow, with an ADM sidebar,
 types, skeleton role mapping, materials, animation libraries and validation reports. This is an
 independent project, not affiliated with Sollumz.
 
-**Status:** working reference implementation against the final ADM 1.0 specification; independent conformance certification is not implied.
+**Status:** working reference implementation against **ADM 1.0 – Development / Experimental**. The normative requirements are exact for the current revision, but breaking changes are allowed until a separate stable-release decision. The add-on is not independently certified.
 Legacy ADM, ADS and `.ads_anim` files are intentionally incompatible with the ADM 1.0 chunk container.
-The shader registry was reissued on 2026-11-15; earlier development schemas with the same
-identities are superseded and are not supported. See the
-[registry publication record](adm-standard/SPEC_GAPS.md#shader-registry-republication).
+Historical development files may be incompatible and are not automatically migrated. The
+[development-change record](adm-standard/SPEC_GAPS.md#shader-development-change-control) explains
+how CI detects and reviews shader contract changes.
 
 ## Install
 
@@ -41,7 +41,7 @@ See the [add-on guide](adm_blender/README.md) for authoring, import/export and a
 | Path | Contents |
 | --- | --- |
 | [adm_blender](adm_blender/) | Blender extension and independent Python parsing/validation core |
-| [adm-standard](adm-standard/) | Final ADM 1.0 specification, fixtures and reference container tools |
+| [adm-standard](adm-standard/) | Current ADM 1.0 development specification, fixtures and reference tools |
 | [adm_blender/tests](adm_blender/tests/) | Container, semantic and Blender round-trip tests |
 
 Supported authoring includes meshes, skins, morph targets, semantic skeleton profiles, facial bindings,
@@ -64,7 +64,7 @@ roles or animation compatibility.
   independent renderer certification remain outside the add-on.
 - `ADM_vertex_control_v1` transports `COLOR_0`/`COLOR_1`, palette references, and material control
   values. `COLOR_0` drives the Blender preview and its four parameters can be animated. For all Core 20
-  `1.0.0` profiles, `COLOR_1` remains reserved and has no shading effect. The compatible `2.0.0`
+  `1.0.0` profiles, `COLOR_1` remains reserved and has no shading effect. The separately versioned `2.0.0`
   profiles activate the documented channel masks; Blender provides shader-aware painting and preview.
   The F0 graph has Blender bake coverage, but independent-renderer conformance is not claimed.
   See the `SPEC_GAP-SHADER-CORE20` entry before relying on renderer interoperability.
@@ -74,9 +74,15 @@ roles or animation compatibility.
   separate. Physics, damage and other gameplay behavior are outside this asset format.
 - `humanoid.vrm1` is the normative semantic skeleton profile. Quadruped profiles (`animal.*.v1`)
   are proposals outside ADM 1.0; see [SPEC_GAPS.md](adm-standard/SPEC_GAPS.md).
+- The reference-test catalog at [reference-catalog.json](adm-standard/fixtures/reference-catalog.json)
+  records coverage and missing fixtures for static models, materials, humanoids, animation, vehicles,
+  weapons, interactive surfaces and terrain. No independent implementation has verified the full
+  catalog, so the reference implementation does not prove interoperability.
 
-See the [final specification](adm-standard/ADM-1.0-SPEC.md) and [implementation limits](adm_blender/README.md#adm-10-container-and-fallback)
-before making interoperability or conformance claims.
+The ADM edition, file-format header, extension contracts, shader contracts and Blender add-on use
+independent version identifiers. See the [development version policy](adm-standard/ADM-1.0-SPEC.md#28-development-version-policy-extension-registry-and-governance)
+and [implementation limits](adm_blender/README.md#adm-10-container-and-fallback) before making
+interoperability or conformance claims.
 
 ## Development and tests
 

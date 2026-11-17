@@ -1,6 +1,6 @@
 # `ADM_vertex_control_v1`
 
-Version 1.2.0, incorporated by the final ADM 1.0 specification.
+Version 1.2.0, incorporated by the current ADM 1.0 Development / Experimental specification.
 
 Version 1.1.0 allows tint palettes 1–5 texels high (1.0.0 required exactly one row). Only the first
 row is read, so every valid 1.0.0 file keeps its meaning; a 1.0.0 reader rejects taller palettes.

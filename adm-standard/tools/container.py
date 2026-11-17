@@ -278,9 +278,21 @@ def verify(path, verify_payload=True, *, max_file_bytes=LIMIT_FILE):
         header = _read_at(stream, 0, HEADER.size, file_size)
         magic, major, minor, header_size, flags, declared_size, manifest_offset, manifest_size, \
             directory_offset, chunk_count, entry_size, reserved = HEADER.unpack(header)
-        if magic not in (b"ADM0", b"AMA0") or (
-                major, minor, header_size, flags, reserved, manifest_offset, entry_size
-        ) != (1, 0, 64, 0, 0, 64, ENTRY.size):
+        if magic not in (b"ADM0", b"AMA0"):
+            raise AdmError("ADM_ERR_HEADER")
+        if (major, minor) != (1, 0):
+            raise AdmError(
+                f"ADM_ERR_UNSUPPORTED_VERSION: container version {major}.{minor} is unsupported; "
+                "this reader supports 1.0 (ADM 1.0 Development / Experimental). "
+                "Older development versions are not migrated."
+            )
+        if header_size != 64:
+            raise AdmError(
+                f"ADM_ERR_UNSUPPORTED_LAYOUT: header size {header_size} is unsupported; "
+                "ADM 1.0 Development / Experimental requires 64 bytes. "
+                "Older development layouts are not migrated."
+            )
+        if (flags, reserved, manifest_offset, entry_size) != (0, 0, 64, ENTRY.size):
             raise AdmError("ADM_ERR_HEADER")
         if (declared_size != file_size or not 2 <= manifest_size <= LIMIT_MANIFEST
                 or chunk_count > MAX_CHUNKS or directory_offset != align(64 + manifest_size)
@@ -455,9 +467,21 @@ class RangeReader:
                 raise AdmError("ADM_ERR_TRUNCATED_HEADER")
             magic, major, minor, header_size, flags, declared_size, manifest_offset, manifest_size, \
                 directory_offset, chunk_count, entry_size, reserved = HEADER.unpack(header_bytes)
-            if (magic not in (b"ADM0", b"AMA0")
-                    or (major, minor, header_size, flags, reserved, manifest_offset, entry_size)
-                    != (1, 0, 64, 0, 0, 64, ENTRY.size)
+            if magic not in (b"ADM0", b"AMA0"):
+                raise AdmError("ADM_ERR_HEADER")
+            if (major, minor) != (1, 0):
+                raise AdmError(
+                    f"ADM_ERR_UNSUPPORTED_VERSION: container version {major}.{minor} is unsupported; "
+                    "this reader supports 1.0 (ADM 1.0 Development / Experimental). "
+                    "Older development versions are not migrated."
+                )
+            if header_size != 64:
+                raise AdmError(
+                    f"ADM_ERR_UNSUPPORTED_LAYOUT: header size {header_size} is unsupported; "
+                    "ADM 1.0 Development / Experimental requires 64 bytes. "
+                    "Older development layouts are not migrated."
+                )
+            if ((flags, reserved, manifest_offset, entry_size) != (0, 0, 64, ENTRY.size)
                     or declared_size != self.file_size
                     or not 2 <= manifest_size <= LIMIT_MANIFEST
                     or chunk_count > MAX_CHUNKS

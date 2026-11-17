@@ -1,8 +1,8 @@
 """ADM Skeleton Profile Registry (data-driven, bpy-free).
 
-Each profile is a plain dictionary consumed by the Blender add-on, validator and tests. The frozen
-ADM 1.0 registry contains only normative and exact-only profiles; provisional authoring proposals are
-published separately from the standard.
+Each profile is a plain dictionary consumed by the Blender add-on, validator and tests. The current
+ADM 1.0 registry contains normative and exact-only profiles; provisional authoring proposals are
+published separately from the standard and may be adopted through a documented development change.
 
 Status values
 -------------
