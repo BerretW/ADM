@@ -25,7 +25,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.16 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.22 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -1206,7 +1206,12 @@ class ModelExporter:
         data = write_container(K.ADM_MAGIC, doc, bin_bytes)
         report = validate_adm(data) if self.opts.validate else None
         if report is not None and not report.ok:
-            raise ExportError("exported model failed ADM validation", report)
+            details = "; ".join(f"{issue.code} [{issue.path}]: {issue.message}" for issue in report.errors[:3])
+            guidance = ""
+            if any(issue.code == "HUMANOID_SOCKET_FRAME" for issue in report.errors):
+                guidance = (" Select the armature in Object Mode, open ADM > ADM Skeleton & Animation > "
+                            "Sockets, click 'Align Socket Frames', then export again.")
+            raise ExportError(f"exported model failed ADM validation: {details}.{guidance}", report)
         self.doc = doc
         return data, report
 

@@ -715,13 +715,40 @@ class ADMWindowProps(PropertyGroup):
     collider_shape: EnumProperty(name="Shape", items=COLLIDER_SHAPES, default="BOX")
 
 
+class ADMHumanoidWizardState(PropertyGroup):
+    model_root: PointerProperty(name="Model Root", type=bpy.types.Object)
+    armature: PointerProperty(name="Armature", type=bpy.types.Object, poll=_armature_poll)
+    mode: EnumProperty(name="Input Mode", items=[
+        ("AUTO", "Use Detected Mode", "Use the mode detected from the current model"),
+        ("RIGGED", "Rigged", "Use and map an existing complete rig"),
+        ("UNRIGGED", "Unrigged", "Create a template rig for manual placement"),
+        ("PARTIAL", "Partially Rigged", "Complete and map an existing rig"),
+    ], default="AUTO")
+    detected_mode: StringProperty()
+    step: IntProperty(default=0, min=0, max=12)
+    test_pose: EnumProperty(name="Test Pose", items=[
+        ("RAISE_ARMS", "Raise Arms", ""),
+        ("BEND_ELBOWS", "Bend Elbows", ""),
+        ("ROTATE_WRISTS", "Rotate Wrists", ""),
+        ("FINGER_CURL", "Finger Curl", ""),
+        ("BEND_KNEES", "Bend Knees", ""),
+        ("HIP_ROTATION", "Hip Rotation", ""),
+        ("SPINE_BEND", "Spine Bend", ""),
+        ("HEAD_ROTATION", "Head Rotation", ""),
+        ("SHOULDER_MOVEMENT", "Shoulder Movement", ""),
+        ("FULL_BODY", "Full Body Pose", ""),
+    ], default="RAISE_ARMS")
+    analysis_report: StringProperty()
+    status: StringProperty()
+
+
 CLASSES = (
     ADMFaceBinding, ADMExpressionBinding, ADMExpression, ADMLodLevel,
     ADMPhysicalMaterial, ADMModelComponent, ADMHitbox, ADMObjectProps,
     ADMBoneProps, ADMIKChain, ADMSkeletonProps,
     ADMShaderParamDef, ADMShaderDef, ADMShaderParamValue, ADMTintPaletteEntry, ADMLayerRecord, ADMMaterialProps,
     ADMAnimEvent, ADMAnimClip, ADMAnimLibrary, ADMSceneProps,
-    ADMReportItem, ADMRoleName, ADMWindowProps,
+    ADMReportItem, ADMRoleName, ADMWindowProps, ADMHumanoidWizardState,
 )
 
 
@@ -734,11 +761,13 @@ def register():
     bpy.types.Armature.adm = PointerProperty(type=ADMSkeletonProps)
     bpy.types.Material.adm = PointerProperty(type=ADMMaterialProps)
     bpy.types.Scene.adm_anim = PointerProperty(type=ADMSceneProps)
+    bpy.types.Scene.adm_humanoid_wizard = PointerProperty(type=ADMHumanoidWizardState)
     bpy.types.WindowManager.adm = PointerProperty(type=ADMWindowProps)
 
 
 def unregister():
     del bpy.types.WindowManager.adm
+    del bpy.types.Scene.adm_humanoid_wizard
     del bpy.types.Scene.adm_anim
     del bpy.types.Material.adm
     del bpy.types.Armature.adm

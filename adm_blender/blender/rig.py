@@ -14,7 +14,7 @@ from ..core import ik as IK
 from ..core import skeleton as SK
 from ..core import skeleton_profiles as SP
 from . import convert as cv
-from .export_adm import find_model_root
+from .export_adm import RestPose, find_model_root
 from .rolemap import auto_map
 
 FIX_NORMALIZE_CORRECTIONS = "NORMALIZE_CORRECTIONS"
@@ -155,7 +155,9 @@ def correction_issues(arm):
         return []
     return [SK.RigIssue(SK.WARNING, "CORRECTION_NOT_NORMALIZED",
                         f"{len(bad)} mapped bone(s) lack normalized reference corrections; SEMANTIC clips then "
-                        f"depend on bone roll and only round-trip between identical rigs",
+                        "depend on bone roll and only round-trip between identical rigs. "
+                        "Select the armature and click 'Normalize Corrections' in "
+                        "ADM > ADM Skeleton & Animation, then validate again",
                         role=bad[0].adm.role, bone=bad[0].name, fix=FIX_NORMALIZE_CORRECTIONS)]
 
 
@@ -572,41 +574,58 @@ def ensure_preview_target(context, arm, chain):
 # --------------------------------------------------------------------------------------------------
 # sockets
 # --------------------------------------------------------------------------------------------------
-def create_profile_sockets(context, arm):
+def create_profile_sockets(context, arm, socket_names=None):
     """Create attachment empties for the profile's socket templates.
 
     The socket frame is axis-aligned with the ADM reference pose (identity rotation in model space) at
     the role joint origin, so it is portable between rigs whose bone rolls differ. These are authoring
     placeholders: body proportions vary, so move each marker to the actual mount point before export.
     """
-    from .export_adm import find_model_root as _root  # noqa: F401 (keeps import local for clarity)
     rb = role_bone_map(arm)
     existing = {o.adm.attachment_name for o in bpy.data.objects if o.adm.adm_type == "ATTACHMENT"}
     existing |= {b.adm.attachment_name for b in arm.data.bones if b.adm.attachment_name}
     created, skipped = [], []
     mm = model_matrix(arm)
     model_to_world = arm.matrix_world @ mm.inverted_safe()
-    for t in SP.socket_templates(arm.data.adm.profile_id.strip()):
-        role = t["role"] if t["role"] in rb else next((r for r in t.get("fallback", []) if r in rb), None)
-        if role is None:
-            skipped.append(f"{t['name']} (role {t['role']} not mapped)")
-            continue
-        if t["name"] in existing:
-            skipped.append(f"{t['name']} (exists)")
-            continue
-        bone = arm.data.bones[rb[role]]
-        obj = bpy.data.objects.new("ATT_" + t["name"], None)
-        obj.empty_display_type = "ARROWS"
-        obj.empty_display_size = 0.1
-        obj.adm.adm_type = "ATTACHMENT"
-        obj.adm.attachment_name = t["name"]
-        (context.collection or context.scene.collection).objects.link(obj)
-        head_world = arm.matrix_world @ bone.head_local
-        rot_world = model_to_world.to_quaternion()
-        obj.parent = arm
-        obj.parent_type = "BONE"
-        obj.parent_bone = bone.name
-        context.view_layer.update()
-        obj.matrix_world = Matrix.LocRotScale(head_world, rot_world, Vector((1.0, 1.0, 1.0)))
-        created.append(t["name"])
+    with RestPose(context):
+        for t in SP.socket_templates(arm.data.adm.profile_id.strip()):
+            if socket_names is not None and t["name"] not in socket_names:
+                continue
+            role = t["role"] if t["role"] in rb else next((r for r in t.get("fallback", []) if r in rb), None)
+            if role is None:
+                skipped.append(f"{t['name']} (role {t['role']} not mapped)")
+                continue
+            if t["name"] in existing:
+                skipped.append(f"{t['name']} (exists)")
+                continue
+            bone = arm.data.bones[rb[role]]
+            obj = bpy.data.objects.new("ATT_" + t["name"], None)
+            obj.empty_display_type = "ARROWS"
+            obj.empty_display_size = 0.1
+            obj.adm.adm_type = "ATTACHMENT"
+            obj.adm.attachment_name = t["name"]
+            (context.collection or context.scene.collection).objects.link(obj)
+            obj.parent = arm
+            obj.parent_type = "BONE"
+            obj.parent_bone = bone.name
+            context.view_layer.update()
+            obj.matrix_world = model_to_world @ Matrix.Translation(mm @ bone.head_local)
+            created.append(t["name"])
     return created, skipped
+
+
+def align_humanoid_socket_frames(context, arm):
+    """Align standard socket axes in rest/model space while preserving authored positions."""
+    model_to_world = arm.matrix_world @ model_matrix(arm).inverted_safe()
+    world_to_model = model_to_world.inverted()
+    aligned = []
+    with RestPose(context):
+        for obj in context.scene.objects:
+            if (obj.adm.adm_type != "ATTACHMENT" or obj.parent != arm
+                    or obj.adm.attachment_name not in SP.HUMANOID_SOCKET_NAMES):
+                continue
+            position = (world_to_model @ obj.matrix_world).translation
+            obj.matrix_world = model_to_world @ Matrix.Translation(position)
+            aligned.append(obj.adm.attachment_name)
+        context.view_layer.update()
+    return aligned

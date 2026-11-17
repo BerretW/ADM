@@ -115,6 +115,9 @@ def node_transform_fields(local_blender, force_trs=False):
     if not force_trs and not is_trs_decomposable(m):
         return {"matrix": matrix_to_list(m)}
     loc, rot, sca = m.decompose()
+    if force_trs and max(abs(value - 1.0) for value in sca) <= 1e-5:
+        # Relative rest-bone matrices accumulate float32 inversion noise.
+        sca = Vector((1.0, 1.0, 1.0))
     out = {}
     if loc.length > 1e-9:
         out["translation"] = [f32(loc.x), f32(loc.y), f32(loc.z)]

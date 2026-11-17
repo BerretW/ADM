@@ -293,6 +293,23 @@ class ADM_OT_create_profile_sockets(_ArmOp, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ADM_OT_align_socket_frames(_ArmOp, bpy.types.Operator):
+    """Reset standard humanoid socket rotation and scale in the rest pose, preserving mount positions"""
+    bl_idname = "adm.align_socket_frames"
+    bl_label = "Align Socket Frames"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        arm = active_armature(context)
+        if context.mode != "OBJECT" or arm.data.adm.profile_id != SP.HUMANOID:
+            self.report({"ERROR"}, "Select a humanoid.vrm1 armature in Object Mode.")
+            return {"CANCELLED"}
+        aligned = R.align_humanoid_socket_frames(context, arm)
+        self.report({"INFO"} if aligned else {"WARNING"},
+                    f"Aligned {len(aligned)} standard socket frame(s); rest-pose mount positions preserved.")
+        return {"FINISHED"}
+
+
 class ADM_OT_skin_fix(_ArmOp, bpy.types.Operator):
     """Limit every skinned vertex to 4 influences and normalize weights (exact export result, no surprises)"""
     bl_idname = "adm.skin_fix"
@@ -366,6 +383,6 @@ class ADM_OT_anim_compat_test(_ArmOp, bpy.types.Operator, ImportHelper):
 CLASSES = (
     ADM_OT_detect_profile, ADM_OT_validate_rig, ADM_OT_rig_fix, ADM_OT_select_issue, ADM_OT_set_bone_role,
     ADM_OT_normalize_corrections, ADM_OT_clear_corrections, ADM_OT_ik_from_profile, ADM_OT_ik_from_constraints,
-    ADM_OT_ik_add_target, ADM_OT_ik_preview, ADM_OT_ik_reset, ADM_OT_create_profile_sockets, ADM_OT_skin_fix,
+    ADM_OT_ik_add_target,     ADM_OT_ik_preview, ADM_OT_ik_reset, ADM_OT_create_profile_sockets, ADM_OT_align_socket_frames, ADM_OT_skin_fix,
     ADM_OT_anim_compat_test,
 )

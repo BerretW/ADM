@@ -116,6 +116,10 @@ def check_library_compat(context, arm, doc, allow_provisional=True):
                                               role=role, bone=bone_name))
     rig_roles = {r for _b, r in assignments(arm)}
     level, reasons = SK.library_compatibility(lib, pid, rig_roles, exact, issues, library_channel_roles(doc))
+    if any(issue.code == "REFERENCE_CORRECTION" for issue in issues):
+        reasons.append("To fix reference corrections, select the target armature, open "
+                       "ADM > ADM Skeleton & Animation, click 'Normalize Corrections', "
+                       "then retry the compatibility test or import")
     if level == SK.INCOMPATIBLE and exact is False:
         rig = compute_rig_id(context, arm)
         reasons.append(f"library {lib['rigId'][:12]}… vs rig {rig[:12]}… (EXACT clips require the identical rig)")
@@ -267,7 +271,8 @@ class AnimImporter:
         if level == SK.INCOMPATIBLE:
             msg = "INCOMPATIBLE: " + "; ".join(reasons)
             if self.opts.strict:
-                raise ImportError_(msg + ". Disable 'Strict' to import anyway.")
+                raise ImportError_(msg + ". Fix the reported issues before importing. Disabling 'Strict' "
+                                   "bypasses validation and may produce incorrect animation.")
             self.warn(msg)
         elif level == SK.PROVISIONAL_SEMANTIC:
             self.warn("PROVISIONAL: " + "; ".join(reasons))

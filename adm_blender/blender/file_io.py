@@ -613,7 +613,7 @@ class ADM_OT_import_bvh_animation(bpy.types.Operator, ImportHelper):
     files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
     directory: StringProperty(subtype="DIR_PATH", options={"HIDDEN", "SKIP_SAVE"})
     target_armature: StringProperty(
-        name="Target Rig", search=_bvh_target_search, search_options={"SORT"},
+        name="Target Rig", search=_bvh_target_search,
         description="Armature in the current view layer that receives the animation")
     axis_forward: EnumProperty(name="Forward", default="-Z", update=_update_bvh_preview, items=[
         (axis, axis, "") for axis in ("X", "Y", "Z", "-X", "-Y", "-Z")])

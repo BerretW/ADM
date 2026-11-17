@@ -191,11 +191,12 @@ def main(tmp):
     adm_blender.register()
     from adm_blender.blender import convert as cv
     from adm_blender.blender import rig as R
-    from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
+    from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter, RestPose
     from adm_blender.blender.export_anim import AnimExporter
     from adm_blender.blender.import_adm import ImportError_, ImportOptions, ModelImporter
     from adm_blender.blender.import_anim import AnimImportOptions, check_library_compat, import_library
     from adm_blender.blender.operators import ensure_role_names
+    from adm_blender.blender.humanoid_wizard import _auto_weight_mesh, _generate_skeleton
     from adm_blender.core import ik as IK
     from adm_blender.core.mathutil import IDENTITY, mat_mul, node_local_matrix
     from adm_blender.core import skeleton as SK
@@ -222,6 +223,206 @@ def main(tmp):
     sc = bpy.context.scene
     wm = bpy.context.window_manager.adm
 
+    print("== numbered Mixamo namespace")
+    mixamo_arm, _ = build_humanoid("Numbered_Mixamo", prefix="mixamorig1:", helper=False)
+    mixamo_names = {"UpperLeg": "UpLeg", "LowerLeg": "Leg", "UpperArm": "Arm",
+                    "LowerArm": "ForeArm", "Toes": "ToeBase"}
+    for bone in mixamo_arm.data.bones:
+        for side in ("Left", "Right"):
+            for old, new in mixamo_names.items():
+                if bone.name == "mixamorig1:" + side + old:
+                    bone.name = "mixamorig1:" + side + new
+    wizard = sc.adm_humanoid_wizard
+    wizard.armature = mixamo_arm
+    check(bpy.ops.adm.hw_auto_configure() == {"FINISHED"},
+          "wizard configures a freshly imported numbered Mixamo rig")
+    check(not any(issue.code == "ROLE_MISSING" for issue in R.analyze(mixamo_arm)),
+          "numbered Mixamo rig has every required humanoid role after auto-configure")
+    check(all(mixamo_arm.data.bones["mixamorig1:" + side + name].adm.role == side.lower() + role
+              for side in ("Left", "Right")
+              for name, role in (("UpLeg", "UpperLeg"), ("Leg", "LowerLeg"), ("Foot", "Foot"),
+                                 ("Arm", "UpperArm"), ("ForeArm", "LowerArm"), ("Hand", "Hand"))),
+          "screenshot Mixamo limb names map without renaming imported bones")
+    wizard.armature = None
+    mixamo_data = mixamo_arm.data
+    bpy.data.objects.remove(mixamo_arm, do_unlink=True)
+    bpy.data.armatures.remove(mixamo_data)
+
+    # ------------------------------------------------------------------ humanoid wizard template
+    print("== humanoid wizard template")
+    bpy.ops.mesh.primitive_cube_add(size=0.4)
+    template_mesh = bpy.context.active_object
+    template_mesh.name = "Wizard_UnriggedMesh"
+    check(bpy.ops.adm.create_model_root(name="Wizard_Root") == {"FINISHED"},
+          "wizard test has an ADM model root")
+    wizard = sc.adm_humanoid_wizard
+    wizard.mode = "AUTO"
+    wizard.model_root = bpy.data.objects["Wizard_Root"]
+    wizard.armature = None
+    select(template_mesh)
+    check(bpy.ops.adm.hw_analyze() == {"FINISHED"}, "wizard analyzes an unrigged mesh")
+    check(wizard.detected_mode == "UNRIGGED", f"wizard classifies mesh as {wizard.detected_mode}")
+    check(bpy.ops.adm.hw_generate_skeleton() == {"FINISHED"}, "wizard creates manual-placement skeleton")
+    template_arm = wizard.armature
+    expected_roles = set(SP.roles(SP.HUMANOID))
+    template_roles = {bone.adm.role for bone in template_arm.data.bones if bone.adm.role}
+    check(template_roles == expected_roles, f"template creates all {len(expected_roles)} humanoid roles")
+    check(all((bone.parent.name if bone.parent else None) == SP.roles(SP.HUMANOID)[bone.adm.role]["parent"]
+              for bone in template_arm.data.bones), "template preserves profile parent hierarchy")
+    select(template_arm)
+    bpy.ops.object.mode_set(mode="EDIT")
+    for eye_name in ("leftEye", "rightEye"):
+        template_arm.data.edit_bones.remove(template_arm.data.edit_bones[eye_name])
+    bpy.ops.object.mode_set(mode="OBJECT")
+    stale_roles = {
+        "leftUpperLeg": "leftFrontUpperLeg",
+        "leftLowerLeg": "leftFrontLowerLeg",
+        "leftFoot": "leftFrontFoot",
+        "rightUpperLeg": "rightFrontUpperLeg",
+    }
+    for bone_name, role in stale_roles.items():
+        template_arm.data.bones[bone_name].adm.role = role
+    template_arm.data.adm.profile = "animal.canine.v1"
+    check(bpy.ops.adm.hw_auto_configure(repair_invalid=False) == {"CANCELLED"}
+          and template_arm.data.adm.profile_id == "animal.canine.v1"
+          and template_arm.data.bones["leftUpperLeg"].adm.role == "leftFrontUpperLeg",
+          "humanoid auto-configure preserves stale roles when repair is declined")
+    check(bpy.ops.adm.hw_auto_configure(repair_invalid=True) == {"FINISHED"},
+          "humanoid auto-configure repairs roles from another profile")
+    check(template_arm.data.adm.profile_id == SP.HUMANOID
+          and all(template_arm.data.bones[name].adm.role == expected
+                  for name, expected in (("leftUpperLeg", "leftUpperLeg"),
+                                         ("leftLowerLeg", "leftLowerLeg"),
+                                         ("leftFoot", "leftFoot"),
+                                         ("rightUpperLeg", "rightUpperLeg")))
+          and not any(issue.code == "ROLE_UNKNOWN" for issue in R.analyze(template_arm)),
+          "repaired Mixamo-style role mappings validate as humanoid")
+    eye_bones = [bone for bone in template_arm.data.bones if bone.adm.role in {"leftEye", "rightEye"}]
+    check(len(eye_bones) == 2 and all(bone.parent == template_arm.data.bones["head"]
+                                      and not bone.use_deform for bone in eye_bones)
+          and (eye_bones[0].head_local - eye_bones[1].head_local).length > 0.001,
+          "auto-configure adds estimated non-deforming eye bones parented to head")
+    check(bpy.ops.adm.hw_auto_configure(repair_invalid=True) == {"FINISHED"}
+          and len([bone for bone in template_arm.data.bones
+                   if bone.adm.role in {"leftEye", "rightEye"}]) == 2,
+          "auto-configure does not duplicate existing eye roles")
+    check(not template_mesh.vertex_groups and not any(m.type == "ARMATURE" for m in template_mesh.modifiers),
+          "skeleton generation does not bind or modify mesh weights")
+    preserve_group = template_mesh.vertex_groups.new(name="PreserveExistingWeight")
+    preserve_group.add([0], 0.75, "REPLACE")
+    check(bpy.ops.adm.hw_skinning() == {"FINISHED"}, "skinning suggestions skip existing weight data")
+    check(template_mesh.vertex_groups.get("PreserveExistingWeight") is not None
+          and abs(preserve_group.weight(0) - 0.75) < 1e-6
+          and not any(mod.type == "ARMATURE" for mod in template_mesh.modifiers),
+          "skinning suggestion preserves existing groups and weights")
+    hips_group = template_mesh.vertex_groups.new(name="hips")
+    hips_group.add([0], 0.25, "REPLACE")
+    world_before_adopt = template_mesh.matrix_world.copy()
+    check(bpy.ops.adm.hw_skinning(existing_action="ADOPT") == {"FINISHED"},
+          "wizard adopts existing weights without recomputing them")
+    check(any(mod.type == "ARMATURE" and mod.object == template_arm for mod in template_mesh.modifiers)
+          and template_mesh.parent == template_arm,
+          "adopting weights binds mesh to the selected armature")
+    check(template_mesh.vertex_groups.get("PreserveExistingWeight") is not None
+          and template_mesh.vertex_groups.get("hips") is not None
+          and abs(hips_group.weight(0) - 0.25) < 1e-6
+          and max(abs(template_mesh.matrix_world[row][column] - world_before_adopt[row][column])
+                  for row in range(4) for column in range(4)) < 1e-8,
+          "adoption preserves vertex-group weights and world transform")
+    bpy.ops.mesh.primitive_cube_add(size=0.4, location=(0.0, 1.0, 0.0))
+    reweight_mesh = bpy.context.active_object
+    reweight_mesh.name = "Wizard_ReweightMesh"
+    legacy_group = reweight_mesh.vertex_groups.new(name="LegacyWeights")
+    legacy_group.add(list(range(len(reweight_mesh.data.vertices))), 0.6, "REPLACE")
+    reweight_world = reweight_mesh.matrix_world.copy()
+    deform_state = {bone.name: bone.use_deform for bone in template_arm.data.bones}
+    for bone in template_arm.data.bones:
+        bone.use_deform = False
+    try:
+        _auto_weight_mesh(bpy.context, reweight_mesh, template_arm, replace_existing=True)
+        no_deform_rejected = False
+    except ValueError:
+        no_deform_rejected = True
+    check(no_deform_rejected and reweight_mesh.vertex_groups.get("LegacyWeights") is not None
+          and abs(reweight_mesh.vertex_groups["LegacyWeights"].weight(0) - 0.6) < 1e-6,
+          "reweighting refuses rigs without deform bones before deleting existing groups")
+    for bone in template_arm.data.bones:
+        bone.use_deform = bone.name == "hips"
+    try:
+        _auto_weight_mesh(bpy.context, reweight_mesh, template_arm, replace_existing=True)
+        reweight_succeeded = True
+    except Exception:
+        reweight_succeeded = False
+    finally:
+        for bone in template_arm.data.bones:
+            bone.use_deform = deform_state[bone.name]
+    restored_on_failure = (reweight_mesh.vertex_groups.get("LegacyWeights") is not None
+                           and abs(reweight_mesh.vertex_groups["LegacyWeights"].weight(0) - 0.6) < 1e-6
+                           and not any(mod.type == "ARMATURE" for mod in reweight_mesh.modifiers)
+                           and max(abs(reweight_mesh.matrix_world[row][column] - reweight_world[row][column])
+                                   for row in range(4) for column in range(4)) < 1e-8)
+    replaced_on_success = (reweight_mesh.vertex_groups.get("LegacyWeights") is None
+                           and reweight_mesh.vertex_groups.get("hips") is not None
+                           and any(mod.type == "ARMATURE" and mod.object == template_arm
+                                   for mod in reweight_mesh.modifiers))
+    check((replaced_on_success if reweight_succeeded else restored_on_failure),
+          "delete-and-recompute " + ("replaces old groups on success" if reweight_succeeded
+                                     else "restores old groups on failure"))
+    reweight_data = reweight_mesh.data
+    bpy.data.objects.remove(reweight_mesh, do_unlink=True)
+    if reweight_data.users == 0:
+        bpy.data.meshes.remove(reweight_data)
+    select(template_arm, active=template_arm)
+    template_errors = [issue for issue in R.analyze(template_arm) if issue.severity == "ERROR"]
+    check(not template_errors, f"template passes rig validation: {[(issue.code, issue.message) for issue in template_errors]}")
+    check(bpy.ops.adm.hw_confirm_placement() == {"FINISHED"}, "wizard confirms a valid manual placement")
+    check(bpy.ops.adm.hw_generate_hitboxes() == {"FINISHED"}, "wizard generates bone hitboxes")
+    hitbox_count = len(wizard.model_root.adm.hitboxes)
+    check(hitbox_count >= 15, f"wizard creates standard anatomical hitbox areas ({hitbox_count})")
+    check(bpy.ops.adm.hw_generate_hitboxes() == {"FINISHED"}
+          and len(wizard.model_root.adm.hitboxes) == hitbox_count,
+          "hitbox generation preserves existing records on repeat")
+    check(bpy.ops.adm.hw_create_sockets() == {"FINISHED"}, "wizard creates standard humanoid sockets")
+    generated_socket_names = {obj.adm.attachment_name for obj in bpy.data.objects
+                              if obj.adm.adm_type == "ATTACHMENT"}
+    check(SP.HUMANOID_SOCKET_NAMES <= generated_socket_names,
+          "wizard creates all 20 standardized humanoid socket names")
+    socket_count = len(generated_socket_names)
+    check(bpy.ops.adm.hw_create_sockets() == {"FINISHED"}
+          and len({obj.adm.attachment_name for obj in bpy.data.objects
+                   if obj.adm.adm_type == "ATTACHMENT"}) == socket_count,
+          "socket generation preserves existing markers on repeat")
+    _hitbox_data, hitbox_report = ModelExporter(
+        bpy.context, wizard.model_root, ExportOptions()).export()
+    check(hitbox_report.ok, f"generated hitboxes validate for ADM export: {[e.message for e in hitbox_report.errors]}")
+    check(len(hitbox_report.doc.get("hitboxes", [])) == hitbox_count,
+          "generated hitbox records survive ADM export")
+    check(SP.HUMANOID_SOCKET_NAMES <= {item["name"] for item in hitbox_report.doc.get("attachments", [])},
+          "generated humanoid sockets survive ADM export")
+    rest_before = template_arm.data.bones["rightUpperArm"].matrix_local.copy()
+    wizard.test_pose = "RAISE_ARMS"
+    check(bpy.ops.adm.hw_apply_test_pose() == {"FINISHED"}, "wizard applies a non-destructive rig test pose")
+    check(abs(template_arm.pose.bones["rightUpperArm"].rotation_euler.y) > 0.1,
+          "test pose moves the mapped pose bone")
+    rest_after = template_arm.data.bones["rightUpperArm"].matrix_local
+    check(max(abs(rest_after[row][column] - rest_before[row][column])
+              for row in range(4) for column in range(4)) < 1e-8,
+          "test pose leaves rest transforms unchanged")
+    check(bpy.ops.adm.hw_reset_test_pose() == {"FINISHED"}, "wizard restores the saved test pose")
+    check(abs(template_arm.pose.bones["rightUpperArm"].rotation_euler.y) < 1e-8,
+          "test pose reset restores prior bone transforms")
+    try:
+        _generate_skeleton(bpy.context, wizard)
+        duplicate_rejected = False
+    except ValueError:
+        duplicate_rejected = True
+    check(duplicate_rejected and len([obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]) == 1,
+          "repeat generation does not duplicate an existing rig")
+    bpy.ops.wm.read_homefile(use_empty=True)
+    ensure_role_names()
+    sc = bpy.context.scene
+    wm = bpy.context.window_manager.adm
+
     # ------------------------------------------------------------------ detection + validation
     print("== humanoid detection & validation")
     armA, rolesA = build_humanoid("HeroA")
@@ -242,6 +443,9 @@ def main(tmp):
     report = {i.code for i in wm.rig_report}
     check("EXTRA_BONES" in report, "extra helper bone reported as INFO (allowed)")
     check("CORRECTION_NOT_NORMALIZED" in report, "missing normalized corrections reported")
+    check(any(i.code == "CORRECTION_NOT_NORMALIZED" and "Normalize Corrections" in i.message
+              and "ADM Skeleton & Animation" in i.message for i in wm.rig_report),
+          "rig correction warning explains how to repair the rig")
     check({"SKIN_INFLUENCES", "SKIN_NOT_NORMALIZED"} <= report, f"skin issues reported {sorted(report)}")
     check("VALID" in wm.rig_report_title and "INVALID" not in wm.rig_report_title, wm.rig_report_title)
 
@@ -408,8 +612,54 @@ def main(tmp):
 
     print("== profile sockets")
     select(armA)
+    rootA.scale = (2.0, 2.0, 2.0)
+    posed_arm = armA.pose.bones["LeftUpperArm"]
+    posed_arm.rotation_mode = "XYZ"
+    posed_arm.rotation_euler = (0.25, 0.1, -0.3)
+    bpy.context.view_layer.update()
     check(bpy.ops.adm.create_profile_sockets() == {"FINISHED"}, "create_profile_sockets")
     socks = {o.adm.attachment_name: o for o in bpy.data.objects if o.adm.adm_type == "ATTACHMENT"}
+    check(armA.data.pose_position == "POSE" and abs(posed_arm.rotation_euler.x - 0.25) < 1e-6,
+          "creating sockets restores the active pose")
+    with RestPose(bpy.context):
+        error = max(abs(value - (1.0 if row == column else 0.0))
+                    for obj in socks.values()
+                    for row, values in enumerate((rootA.matrix_world.inverted() @ obj.matrix_world).to_3x3())
+                    for column, value in enumerate(values))
+    check(error < 1e-5, f"sockets created during a pose have unit model-space rest frames ({error:.2e})")
+    with RestPose(bpy.context):
+        socket = socks["hand.left.support"]
+        socket.matrix_world = (socket.matrix_world @ Matrix.Rotation(0.3, 4, "X")
+                               @ Matrix.Diagonal((1.2, 0.9, 1.0, 1.0)))
+        bpy.context.view_layer.update()
+        socket_position = socket.matrix_world.translation.copy()
+        legacy = socks["hand.left"]
+        legacy_world = legacy.matrix_world.copy()
+        legacy.matrix_world = legacy.matrix_world @ Matrix.Rotation(0.2, 4, "Z")
+        bpy.context.view_layer.update()
+        legacy_rotated = legacy.matrix_world.copy()
+    try:
+        ModelExporter(bpy.context, rootA, ExportOptions()).export()
+        check(False, "export rejects invalid socket frames")
+    except ExportError as exc:
+        check("HUMANOID_SOCKET_FRAME" in str(exc) and "Align Socket Frames" in str(exc),
+              "export error identifies invalid socket frames and gives the repair instruction")
+    check(bpy.ops.adm.align_socket_frames() == {"FINISHED"}, "align socket frames operator")
+    with RestPose(bpy.context):
+        frame = rootA.matrix_world.inverted() @ socket.matrix_world
+        check((socket.matrix_world.translation - socket_position).length < 1e-5
+              and max(abs(frame[r][c] - (1.0 if r == c else 0.0))
+                      for r in range(3) for c in range(3)) < 1e-5,
+              "socket frame repair preserves the authored rest position and aligns axes/scale")
+        check(max(abs(legacy.matrix_world[r][c] - legacy_rotated[r][c])
+                  for r in range(4) for c in range(4)) < 1e-5,
+              "standard socket repair leaves legacy/custom frames unchanged")
+        legacy.matrix_world = legacy_world
+    check(armA.data.pose_position == "POSE" and abs(posed_arm.rotation_euler.x - 0.25) < 1e-6,
+          "socket frame repair restores the active pose")
+    posed_arm.rotation_euler = (0.0, 0.0, 0.0)
+    rootA.scale = (1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
     for t in SP.socket_templates("humanoid.vrm1"):
         o = socks.get(t["name"])
         ok = o is not None and o.parent == armA and o.parent_type == "BONE" and o.parent_bone == rb[t["role"]]
@@ -433,6 +683,13 @@ def main(tmp):
 
     # ------------------------------------------------------------------ export -> import
     print("== skeleton export")
+    noise = Matrix.Diagonal((1.000003, 1.0000007, 1.0, 1.0))
+    check("scale" not in cv.node_transform_fields(noise, force_trs=True),
+          "bone transform serialization removes float32 near-unit scale noise")
+    check("scale" in cv.node_transform_fields(noise)
+          and "scale" in cv.node_transform_fields(
+              Matrix.Diagonal((1.001, 1.0, 1.0, 1.0)), force_trs=True),
+          "scale cleanup preserves object transforms and meaningful bone scale")
     exp = ModelExporter(bpy.context, rootA, ExportOptions())
     data, rep = exp.export()
     check(rep.ok, f"model valid {[str(e) for e in rep.errors[:4]]}")
@@ -616,6 +873,30 @@ def main(tmp):
     lvl, reasons, _w = check_library_compat(bpy.context, armB, rep.doc)
     check(lvl == SK.SEMANTIC, f"compat level {lvl} {reasons}")
     select(armB)
+    hips_bone = next(bone for bone in armB.data.bones if bone.adm.role == "hips")
+    for missing in (True, False):
+        hips_bone.adm.use_reference_correction = not missing
+        if not missing:
+            hips_bone.adm.reference_correction = (
+                R.normalized_correction(armB, hips_bone) @ Quaternion((1.0, 0.0, 0.0), 0.4))
+        before = (hips_bone.adm.use_reference_correction, tuple(hips_bone.adm.reference_correction))
+        lvl, reasons, _w = check_library_compat(bpy.context, armB, rep.doc)
+        check(lvl == SK.INCOMPATIBLE
+              and sum("Normalize Corrections" in reason and "ADM Skeleton & Animation" in reason
+                      for reason in reasons) == 1,
+              f"{'missing' if missing else 'stale'} correction error includes one repair instruction")
+        try:
+            import_library(bpy.context, lib_path, AnimImportOptions(armature=armB))
+            check(False, "strict import refuses invalid reference corrections")
+        except ImportError_ as exc:
+            check("Normalize Corrections" in str(exc) and "bypasses validation" in str(exc),
+                  "strict import error includes the repair and explains the bypass risk")
+        check(before == (hips_bone.adm.use_reference_correction,
+                         tuple(hips_bone.adm.reference_correction)),
+              "compatibility checks do not silently change reference corrections")
+        check(bpy.ops.adm.normalize_corrections() == {"FINISHED"}
+              and check_library_compat(bpy.context, armB, rep.doc)[0] == SK.SEMANTIC,
+              "following the correction repair instruction restores semantic compatibility")
     check(bpy.ops.adm.anim_compat_test("EXEC_DEFAULT", filepath=lib_path) == {"FINISHED"} and
           ": SEMANTIC" in wm.compat_title and any(i.code == "CLIP" and i.path == "swing" for i in wm.compat_report),
           f"anim_compat_test: {wm.compat_title}")

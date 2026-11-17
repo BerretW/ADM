@@ -456,6 +456,8 @@ def draw_sockets(layout, context, arm):
     row = layout.row(align=True)
     row.operator("adm.create_profile_sockets", icon="EMPTY_ARROWS")
     row.operator("adm.create_attachment", icon="ADD", text="Custom")
+    if pid == SP.HUMANOID:
+        layout.operator("adm.align_socket_frames", icon="ORIENTATION_GLOBAL")
 
 
 def draw_skinning(layout, context, arm):

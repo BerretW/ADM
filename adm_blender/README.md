@@ -171,6 +171,8 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
   - `animal.generic_quadruped.v1`, `animal.canine.v1`, `animal.feline.v1`, `animal.equine.v1`: **PROVISIONAL authoring proposals outside ADM 1.0**, not certifiable.
   - custom.
 - **Detection:** *Detect Skeleton* auto-maps bones to roles (Mixamo, VRM, Unreal, Blender naming).
+  Mixamo names support both `mixamorig:` and numbered namespaces such as `mixamorig1:`.
+  After importing a rig, run role mapping before validation; you don't need to rename its bones.
 - **Role editor:** fix mappings by hand, one bone per role. Duplicates are rejected.
 - **Missing required roles:** listed per role.
 - **Validate ADM Rig:** each issue shows the code, role, bone and reason. Safe fixes are offered only when the result is unambiguous:
@@ -180,6 +182,12 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
   - clear unknown roles;
   - normalize IK poles;
   - limit and normalize skin weights.
+  Rig validation does not replace **Validate Model**, which also checks the serialized IK,
+  socket frames, materials, and other model data. The wizard's final step includes
+  **Validate Complete Model** for this full export check without writing a file.
+- **Reference corrections:** if animation compatibility reports `REFERENCE_CORRECTION`, select the
+  target armature and click **Normalize Corrections** in this panel, then retry the test or import.
+  The diagnostic includes these steps. Disabling **Strict** bypasses validation; it doesn't repair the rig.
 - **IK chains (ADM-IK-1, two-bone):**
   - create chains from profile templates and edit them;
   - preview the pose with Blender IK constraints, then remove the preview;
@@ -192,6 +200,10 @@ The N-panel *ADM › ADM Skeleton & Animation* is shown for an active armature. 
   move them to the actual mount points before export. The standard frame is +X right, +Y up, -Z
   forward; export/import preserves the authored transform. Older generic anchors (`hand.left`,
   `hand.right`, `head`, `spine.back`) remain supported but do not claim the capability.
+  Socket creation uses the rest pose even while you preview animation. If export reports
+  `HUMANOID_SOCKET_FRAME`, select the armature in Object Mode and click **Align Socket Frames**
+  in **Sockets**, then export again. This resets standard socket rotation and scale in model space
+  without moving their rest-pose mount positions or changing custom/legacy sockets.
 - **Skinning check:** unweighted vertices, weights that don't sum to 1, and non-skin bone groups.
 - **Animation libraries:**
   - import a library and run a compatibility test against the rig (`EXACT`, `SEMANTIC`, `PROVISIONAL_SEMANTIC`, `INCOMPATIBLE`);

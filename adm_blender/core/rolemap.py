@@ -46,7 +46,7 @@ def _normalise(name):
     n = name.strip()
     n = re.sub(r"(?<=[a-z])(?=[A-Z])", "_", n)  # camelCase -> camel_case
     n = n.lower()
-    n = n.replace("mixamorig:", "")
+    n = re.sub(r"^mixamorig\d*:", "", n)
     tokens = [t for t in re.split(r"[^a-z0-9]+", n) if t]
     side = None
     out = []

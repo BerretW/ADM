@@ -235,6 +235,27 @@ class HumanoidRigTests(unittest.TestCase):
         self.assertEqual(mapping["mixamorig:LeftForeArm"], "leftLowerArm")
         self.assertEqual(mapping["mixamorig:Spine2"], "upperChest")
 
+    def test_numbered_mixamo_namespace(self):
+        expected = {"Hips": "hips", "Spine": "spine", "Spine1": "chest",
+                    "Spine2": "upperChest", "Neck": "neck", "Head": "head"}
+        for side in ("Left", "Right"):
+            for name, role in (("Shoulder", "Shoulder"), ("Arm", "UpperArm"),
+                               ("ForeArm", "LowerArm"), ("Hand", "Hand"),
+                               ("UpLeg", "UpperLeg"), ("Leg", "LowerLeg"),
+                               ("Foot", "Foot"), ("ToeBase", "Toes"),
+                               ("HandIndex1", "IndexProximal"), ("HandThumb3", "ThumbDistal")):
+                expected[side + name] = side.lower() + role
+        for prefix in ("mixamorig:", "mixamorig1:", "mixamorig12:", "Mixamorig1:"):
+            with self.subTest(prefix=prefix):
+                names = [prefix + name for name in expected]
+                names += [prefix + "HeadTop_End", prefix + "LeftToe_End"]
+                mapping = auto_map(names)
+                self.assertEqual(mapping, {prefix + name: role for name, role in expected.items()})
+                geo = {name: {"parent": None, "head": (0, i * 0.1, 0)}
+                       for i, name in enumerate(names)}
+                pid, _mapping, reason = SK.detect_profile(geo, auto_map)
+                self.assertEqual(pid, "humanoid.vrm1", reason)
+
 
 class QuadrupedTests(unittest.TestCase):
     def test_generic_quadruped_auto_map_and_validate(self):
