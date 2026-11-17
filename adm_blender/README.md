@@ -72,6 +72,16 @@ extension. Animation exports record source FPS and clip frame ranges through the
 the scene-rate change. Import rejects skeleton files missing required display data rather than
 guessing bone tails or roll.
 
+**Mixamo FBX:** use *File › Import › Mixamo Animation (.fbx)* or the button in **Animation Libraries**.
+Choose the target armature (it must use `humanoid.vrm1`), then create a library or append to one for that
+rig, and enter the required library/clip names and descriptions. The importer requires exactly one FBX
+armature and one action, maps Mixamo bone names, normalizes both rigs, and retargets through ADM's
+`SEMANTIC` animation pipeline. If the source faces +Z, it is rotated 180 degrees to match ADM's -Z
+humanoid forward direction. Hips translation is extracted by default; the dialog can switch to
+in-place or ignored root motion. Animation frame rate and frame range are preserved by the ADM timing
+extension. Imported FBX objects are removed after success by default; enable **Keep Imported FBX Objects**
+to retain the source rig and meshes for inspection.
+
 ### Vertex color layers and tint swatches
 
 **ADM > Object > Vertex Colors** (also in the material's **ADM Vertex Control** box) manages

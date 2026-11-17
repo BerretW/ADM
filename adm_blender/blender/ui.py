@@ -827,6 +827,7 @@ class ADM_PT_animation(_Side, bpy.types.Panel):
         row = lay.row()
         row.template_list("ADM_UL_libraries", "", s, "libraries", s, "active_library", rows=2)
         _list_buttons(row, "scene", "libraries", "active_library")
+        lay.operator("import_anim.mixamo_fbx", text="Import Mixamo Animation", icon="IMPORT")
         lib = _active_library(context)
         if lib is None:
             lay.label(text="Add a library to author .adm_anim clips", icon="INFO")

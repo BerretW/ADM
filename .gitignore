@@ -19,6 +19,7 @@ build/
 .vscode/
 .env
 .env.*
+*.fbx
 !.env.example
 *.log
 *.blend[0-9]

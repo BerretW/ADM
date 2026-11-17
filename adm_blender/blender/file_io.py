@@ -217,6 +217,53 @@ def _model_root_items(self, context):
                      "BLANK1", 0)]
 
 
+def _mixamo_armature_items(self, context):
+    objects = sorted((o for o in context.view_layer.objects if o.type == "ARMATURE"), key=lambda o: o.name)
+    return [(o.name, o.name, "", "ARMATURE_DATA", i + 1) for i, o in enumerate(objects)] or [
+        ("__NONE__", "(no armatures in this scene)", "", "BLANK1", 0)]
+
+
+def _mixamo_library_items(self, context):
+    target = bpy.data.objects.get(self.target_armature)
+    items = []
+    for i, lib in enumerate(context.scene.adm_anim.libraries):
+        if lib.target == "RIG" and (target is None or lib.armature == target):
+            items.append((str(i), f"{lib.title or lib.lib_id} ({lib.lib_id})",
+                          "Append the imported clip to this animation library", "ACTION", i + 1))
+    return items or [("__NONE__", "(no libraries for this rig)", "", "BLANK1", 0)]
+
+
+def _fbx_data_ids():
+    names = ("actions", "armatures", "cameras", "collections", "curves", "images", "lights",
+             "materials", "meshes")
+    return {name: set(getattr(bpy.data, name)) for name in names}
+
+
+def _remove_fbx_import(new_objects, new_data):
+    for obj in list(new_objects):
+        if obj.name in bpy.data.objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    for name in ("actions", "meshes", "armatures", "curves", "cameras", "lights", "materials", "images"):
+        collection = getattr(bpy.data, name)
+        for datablock in list(new_data.get(name, ())):
+            if datablock.name not in collection:
+                continue
+            if getattr(datablock, "use_fake_user", False):
+                datablock.use_fake_user = False
+            if datablock.users == 0:
+                collection.remove(datablock)
+    remaining = list(new_data.get("collections", ()))
+    while remaining:
+        removable = [collection for collection in remaining
+                     if (collection.name in bpy.data.collections and not collection.objects
+                         and not collection.children)]
+        if not removable:
+            break
+        for collection in removable:
+            bpy.data.collections.remove(collection)
+            remaining.remove(collection)
+
+
 class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
     """Import an ADM animation library (.adm_anim) onto a rig or model root"""
     bl_idname = "import_anim.adm_anim"
@@ -276,6 +323,193 @@ class ADM_OT_import_anim(bpy.types.Operator, ImportHelper):
             self.report({"WARNING"}, w)
         show_report(context, os.path.basename(self.filepath), None, (), imp.warnings)
         self.report({"INFO"}, f"imported {len(lib.clips)} clip(s) from {lib.lib_id}")
+        return {"FINISHED"}
+
+
+class ADM_OT_import_mixamo_animation(bpy.types.Operator, ImportHelper):
+    """Import a Mixamo FBX action and retarget it onto a humanoid ADM rig"""
+    bl_idname = "import_anim.mixamo_fbx"
+    bl_label = "Import Mixamo Animation"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filename_ext = ".fbx"
+    filter_glob: StringProperty(default="*.fbx", options={"HIDDEN"})
+    target_armature: EnumProperty(name="Target Rig", items=_mixamo_armature_items)
+    library_mode: EnumProperty(name="Library", default="NEW", items=[
+        ("NEW", "Create New", "Create a new animation library"),
+        ("EXISTING", "Append to Existing", "Add the clip to a library for the chosen rig"),
+    ])
+    existing_library: EnumProperty(name="Destination", items=_mixamo_library_items)
+    library_id: StringProperty(name="Library ID", default="mixamo@animations")
+    library_title: StringProperty(name="Library Title", default="Mixamo Animations")
+    library_description: StringProperty(name="Library Description")
+    clip_id: StringProperty(name="Clip ID", default="mixamo_clip")
+    clip_title: StringProperty(name="Clip Title", default="Mixamo Animation")
+    clip_description: StringProperty(name="Clip Description")
+    root_motion: EnumProperty(name="Root Motion", default="EXTRACT", items=[
+        ("EXTRACT", "Extract Hips Translation", "Preserve the animated hips translation"),
+        ("IN_PLACE", "In Place", "Do not export hips translation"),
+        ("IGNORE", "Ignore", "Ignore extracted root motion on import"),
+    ])
+    keep_source: BoolProperty(
+        name="Keep Imported FBX Objects", default=False,
+        description="Keep the imported Mixamo armature and meshes in the scene after retargeting")
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT"
+
+    def invoke(self, context, event):
+        arm = active_armature(context)
+        if arm is not None and arm.name in context.view_layer.objects:
+            self.target_armature = arm.name
+        return super().invoke(context, event)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "target_armature")
+        layout.prop(self, "library_mode")
+        if self.library_mode == "NEW":
+            col = layout.column()
+            col.use_property_split = True
+            col.prop(self, "library_id")
+            col.prop(self, "library_title")
+            col.prop(self, "library_description")
+        else:
+            layout.prop(self, "existing_library")
+        col = layout.column()
+        col.use_property_split = True
+        col.prop(self, "clip_id")
+        col.prop(self, "clip_title")
+        col.prop(self, "clip_description")
+        layout.prop(self, "root_motion")
+        layout.prop(self, "keep_source")
+
+    def execute(self, context):
+        target = bpy.data.objects.get(self.target_armature)
+        if target is None or target.type != "ARMATURE" or target.name not in context.view_layer.objects:
+            self.report({"ERROR"}, "Choose an armature in the current scene as the target rig")
+            return {"CANCELLED"}
+        if target.data.adm.profile_id.strip() != "humanoid.vrm1":
+            self.report({"ERROR"}, "The target rig must use the humanoid.vrm1 profile")
+            return {"CANCELLED"}
+        if not self.filepath or not os.path.isfile(self.filepath) or not self.filepath.lower().endswith(".fbx"):
+            self.report({"ERROR"}, "Choose an existing .fbx file")
+            return {"CANCELLED"}
+        if not hasattr(bpy.ops.import_scene, "fbx"):
+            self.report({"ERROR"}, "Blender's FBX importer is unavailable")
+            return {"CANCELLED"}
+
+        library_index = None
+        if self.library_mode == "EXISTING":
+            if self.existing_library == "__NONE__":
+                self.report({"ERROR"}, "Choose an existing animation library for the target rig")
+                return {"CANCELLED"}
+            try:
+                library_index = int(self.existing_library)
+            except ValueError:
+                self.report({"ERROR"}, "The selected animation library is invalid")
+                return {"CANCELLED"}
+
+        objects_before = set(bpy.data.objects)
+        data_before = _fbx_data_ids()
+        selected_before = set(context.selected_objects)
+        active_before = context.view_layer.objects.active
+        scene = context.scene
+        scene_state = (scene.render.fps, scene.render.fps_base, scene.frame_current,
+                       scene.frame_start, scene.frame_end)
+        source_objects = set()
+        source_data = {}
+        source_armature = None
+        source_action = None
+        importer = None
+        result_library = None
+        result_clip = None
+        export_warnings = ()
+        succeeded = False
+        try:
+            imported = bpy.ops.import_scene.fbx(
+                filepath=self.filepath,
+                use_anim=True,
+                global_scale=1.0,
+                automatic_bone_orientation=False,
+                use_custom_props=False,
+                axis_forward="-Z",
+                axis_up="Y",
+            )
+            source_objects = set(bpy.data.objects) - objects_before
+            source_data = {name: set(getattr(bpy.data, name)) - values
+                           for name, values in data_before.items()}
+            if "FINISHED" not in imported:
+                raise RuntimeError("Blender cancelled the FBX import")
+
+            armatures = [obj for obj in source_objects if obj.type == "ARMATURE"]
+            if len(armatures) != 1:
+                raise ValueError(f"FBX must contain exactly one armature; found {len(armatures)}")
+            source_armature = armatures[0]
+            new_actions = source_data.get("actions", set())
+            if len(new_actions) != 1:
+                raise ValueError(f"FBX must contain exactly one animation action; found {len(new_actions)}")
+            imported_action = next(iter(new_actions))
+            assigned_action = (source_armature.animation_data.action
+                               if source_armature.animation_data else None)
+            if assigned_action is None:
+                assigned_action = imported_action
+                from .export_anim import pick_slot
+                animation_data = source_armature.animation_data_create()
+                animation_data.action = assigned_action
+                slot = pick_slot(assigned_action, "OBJECT", (source_armature.name,))
+                if slot is not None:
+                    animation_data.action_slot = slot
+            if assigned_action != imported_action:
+                raise ValueError("the imported armature is not assigned the FBX animation action")
+            source_action = assigned_action
+
+            from .mixamo_import import retarget_mixamo_action
+            importer, result_library, result_clip, export_warnings = retarget_mixamo_action(
+                context, source_armature, source_action, target,
+                library_index=library_index,
+                library_id=self.library_id,
+                library_title=self.library_title,
+                library_description=self.library_description,
+                clip_id=self.clip_id,
+                clip_title=self.clip_title,
+                clip_description=self.clip_description,
+                root_motion=self.root_motion,
+            )
+            succeeded = True
+        except (ExportError, ImportError_, OSError, RuntimeError, ValueError) as exc:
+            self.report({"ERROR"}, str(exc))
+        finally:
+            if not succeeded and not source_objects:
+                source_objects = set(bpy.data.objects) - objects_before
+                source_data = {name: set(getattr(bpy.data, name)) - values
+                               for name, values in data_before.items()}
+            if not succeeded or not self.keep_source:
+                _remove_fbx_import(source_objects, source_data)
+            if succeeded:
+                for obj in context.view_layer.objects:
+                    obj.select_set(False)
+                target.select_set(True)
+                context.view_layer.objects.active = target
+            else:
+                scene.render.fps, scene.render.fps_base = scene_state[:2]
+                scene.frame_start, scene.frame_end = scene_state[3:5]
+                scene.frame_set(scene_state[2])
+                for obj in context.view_layer.objects:
+                    obj.select_set(obj in selected_before)
+                if active_before is not None and active_before.name in context.view_layer.objects:
+                    context.view_layer.objects.active = active_before
+
+        if not succeeded:
+            return {"CANCELLED"}
+        warnings = list(export_warnings) + list(importer.warnings)
+        for warning in warnings:
+            self.report({"WARNING"}, warning)
+        show_report(context, os.path.basename(self.filepath), None, (), warnings)
+        self.report({"INFO"}, f"imported {result_clip.clip_id} into {result_library.lib_id} "
+                              f"(frames {result_clip.action.frame_range[0]:g}-"
+                              f"{result_clip.action.frame_range[1]:g})")
         return {"FINISHED"}
 
 
@@ -352,6 +586,7 @@ class ADM_FH_anim(bpy.types.FileHandler):
 def menu_import(self, context):
     self.layout.operator(ADM_OT_import.bl_idname, text="ADM Model (.adm)")
     self.layout.operator(ADM_OT_import_anim.bl_idname, text="ADM Animation (.adm_anim)")
+    self.layout.operator(ADM_OT_import_mixamo_animation.bl_idname, text="Mixamo Animation (.fbx)")
 
 
 def menu_export(self, context):
@@ -359,7 +594,8 @@ def menu_export(self, context):
     self.layout.operator(ADM_OT_export_anim.bl_idname, text="ADM Animation (.adm_anim)")
 
 
-CLASSES = (ADM_OT_import, ADM_OT_export, ADM_OT_import_anim, ADM_OT_export_anim, ADM_FH_model, ADM_FH_anim)
+CLASSES = (ADM_OT_import, ADM_OT_export, ADM_OT_import_anim, ADM_OT_import_mixamo_animation,
+           ADM_OT_export_anim, ADM_FH_model, ADM_FH_anim)
 
 
 def register():

@@ -123,7 +123,8 @@ try {
         "test_skeleton_blender.py",
         "test_material_slots.py",
         "test_texture_formats.py",
-        "test_component_animation_blender.py"
+        "test_component_animation_blender.py",
+        "test_mixamo_animation_blender.py"
     )
     foreach ($test in $blenderTests) {
         $testPath = ".\adm_blender\tests\$test"
