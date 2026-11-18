@@ -557,9 +557,7 @@ class ADM_PT_tools(_Side, bpy.types.Panel):
         col.operator("adm.convert_materials", icon="MATERIAL")
         box = lay.box()
         box.label(text="Files", icon="FILE")
-        row = box.row(align=True)
-        row.operator("import_scene.adm", text="Import", icon="IMPORT")
-        row.operator("export_scene.adm", text="Export", icon="EXPORT")
+        box.operator("export_scene.adm", text="Export", icon="EXPORT")
         row = box.row(align=True)
         row.operator("import_anim.adm_anim", text="Import Anim", icon="IMPORT")
         row.operator("export_anim.adm_anim", text="Export Anim", icon="EXPORT")
@@ -1562,15 +1560,21 @@ CLASSES = (
 
 
 def set_sidebar_category(name):
-    children = [c for c in SIDEBAR_PANELS if getattr(c, "bl_parent_id", None)]
-    parents = [c for c in SIDEBAR_PANELS if not getattr(c, "bl_parent_id", None)]
+    from .humanoid_wizard import SIDEBAR_PANELS as CHARACTER_PANELS
+
+    panels = (*SIDEBAR_PANELS, *CHARACTER_PANELS)
+    children = [c for c in panels if getattr(c, "bl_parent_id", None)]
+    parents = [c for c in panels if not getattr(c, "bl_parent_id", None)]
     for cls in children + parents:
         try:
             bpy.utils.unregister_class(cls)
         except RuntimeError:
             pass
     for cls in parents + children:
-        cls.bl_category = name or "ADM"
+        category = name or "ADM"
+        if cls in CHARACTER_PANELS and category == "ADM":
+            category = "ADM Character"
+        cls.bl_category = category
         bpy.utils.register_class(cls)
 
 

@@ -189,6 +189,16 @@ def corrected_world_delta(arm, bone_name):
 # --------------------------------------------------------------------------------------------------
 def main(tmp):
     adm_blender.register()
+    from adm_blender.blender import humanoid_wizard, ui
+
+    check(humanoid_wizard._depsgraph_freshness_update in bpy.app.handlers.depsgraph_update_post,
+          "wizard freshness tracker is registered")
+    ui.set_sidebar_category("ADM Test")
+    check(all(panel.bl_category == "ADM Test" for panel in humanoid_wizard.SIDEBAR_PANELS),
+          "custom sidebar category includes character panels")
+    ui.set_sidebar_category("ADM")
+    check(all(panel.bl_category == "ADM Character" for panel in humanoid_wizard.SIDEBAR_PANELS),
+          "character panels use their dedicated default tab")
     from adm_blender.blender import convert as cv
     from adm_blender.blender import rig as R
     from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter, RestPose
@@ -196,7 +206,11 @@ def main(tmp):
     from adm_blender.blender.import_adm import ImportError_, ImportOptions, ModelImporter
     from adm_blender.blender.import_anim import AnimImportOptions, check_library_compat, import_library
     from adm_blender.blender.operators import ensure_role_names
-    from adm_blender.blender.humanoid_wizard import _auto_weight_mesh, _generate_skeleton
+    from adm_blender.blender.humanoid_wizard import (
+        STEP_STATUS_BLOCKED, STEP_STATUS_COMPLETE, STEP_STATUS_IN_PROGRESS, STEP_STATUS_WARNING,
+        _auto_weight_mesh, _complete_step, _generate_skeleton, _refresh_stale_results,
+        export_readiness, step_statuses,
+    )
     from adm_blender.core import ik as IK
     from adm_blender.core.mathutil import IDENTITY, mat_mul, node_local_matrix
     from adm_blender.core import skeleton as SK
@@ -259,11 +273,28 @@ def main(tmp):
     wizard.mode = "AUTO"
     wizard.model_root = bpy.data.objects["Wizard_Root"]
     wizard.armature = None
+    wizard.step_results = "{}"
+    wizard.stale_steps = "[]"
     select(template_mesh)
+    check(bpy.ops.adm.hw_navigate(step=12) == {"FINISHED"}
+          and bpy.ops.adm.hw_navigate(step=0) == {"FINISHED"} and wizard.step == 0,
+          "wizard allows free forward and backward navigation")
+    initial_statuses = step_statuses(bpy.context, wizard)
+    check(initial_statuses[0] == STEP_STATUS_IN_PROGRESS
+          and initial_statuses[1] == "Not started"
+          and initial_statuses[12] == STEP_STATUS_BLOCKED,
+          f"wizard exposes in-progress, not-started, and blocked phase states: {initial_statuses}")
+    readiness = export_readiness(bpy.context, wizard)
+    check(bool(readiness["blockers"]) and bool(readiness["recommendations"]),
+          "export readiness separates blockers from recommendations")
     check(bpy.ops.adm.hw_analyze() == {"FINISHED"}, "wizard analyzes an unrigged mesh")
+    check(step_statuses(bpy.context, wizard)[0] == STEP_STATUS_COMPLETE,
+          "analyze phase is recorded complete")
     check(wizard.detected_mode == "UNRIGGED", f"wizard classifies mesh as {wizard.detected_mode}")
     check(bpy.ops.adm.hw_generate_skeleton() == {"FINISHED"}, "wizard creates manual-placement skeleton")
     template_arm = wizard.armature
+    check(step_statuses(bpy.context, wizard)[1] == STEP_STATUS_COMPLETE,
+          "skeleton phase is recorded complete")
     expected_roles = set(SP.roles(SP.HUMANOID))
     template_roles = {bone.adm.role for bone in template_arm.data.bones if bone.adm.role}
     check(template_roles == expected_roles, f"template creates all {len(expected_roles)} humanoid roles")
@@ -298,14 +329,12 @@ def main(tmp):
           and not any(issue.code == "ROLE_UNKNOWN" for issue in R.analyze(template_arm)),
           "repaired Mixamo-style role mappings validate as humanoid")
     eye_bones = [bone for bone in template_arm.data.bones if bone.adm.role in {"leftEye", "rightEye"}]
-    check(len(eye_bones) == 2 and all(bone.parent == template_arm.data.bones["head"]
-                                      and not bone.use_deform for bone in eye_bones)
-          and (eye_bones[0].head_local - eye_bones[1].head_local).length > 0.001,
-          "auto-configure adds estimated non-deforming eye bones parented to head")
+    check(not eye_bones and "add and position them manually" in wizard.status,
+          "auto-configure leaves missing eye placement to the user")
     check(bpy.ops.adm.hw_auto_configure(repair_invalid=True) == {"FINISHED"}
           and len([bone for bone in template_arm.data.bones
-                   if bone.adm.role in {"leftEye", "rightEye"}]) == 2,
-          "auto-configure does not duplicate existing eye roles")
+                   if bone.adm.role in {"leftEye", "rightEye"}]) == 0,
+          "repeated auto-configure still does not create missing eye bones")
     check(not template_mesh.vertex_groups and not any(m.type == "ARMATURE" for m in template_mesh.modifiers),
           "skeleton generation does not bind or modify mesh weights")
     preserve_group = template_mesh.vertex_groups.new(name="PreserveExistingWeight")
@@ -329,6 +358,41 @@ def main(tmp):
           and max(abs(template_mesh.matrix_world[row][column] - world_before_adopt[row][column])
                   for row in range(4) for column in range(4)) < 1e-8,
           "adoption preserves vertex-group weights and world transform")
+    wizard.step = 3
+    _complete_step(bpy.context, wizard, 3)
+    check(step_statuses(bpy.context, wizard)[3] == STEP_STATUS_COMPLETE,
+          "fresh skinning result is shown complete")
+    hips_group.add([0], 0.5, "REPLACE")
+    _refresh_stale_results(sc, wizard)
+    check(step_statuses(bpy.context, wizard)[3] == STEP_STATUS_WARNING,
+          "editing vertex weights marks a completed skinning result stale")
+    hips_group.add([0], 0.25, "REPLACE")
+    _refresh_stale_results(sc, wizard)
+    check(step_statuses(bpy.context, wizard)[3] == STEP_STATUS_COMPLETE,
+          "restoring the recorded weights clears the stale warning")
+    _complete_step(bpy.context, wizard, 3)
+    original_vertex = template_mesh.data.vertices[0].co.copy()
+    template_mesh.data.vertices[0].co.x += 0.01
+    _refresh_stale_results(sc, wizard)
+    check(step_statuses(bpy.context, wizard)[3] == STEP_STATUS_WARNING,
+          "editing model geometry marks a completed result stale")
+    template_mesh.data.vertices[0].co = original_vertex
+    _refresh_stale_results(sc, wizard)
+    wizard.step = 2
+    _complete_step(bpy.context, wizard, 2)
+    select(template_arm, active=template_arm)
+    bpy.ops.object.mode_set(mode="EDIT")
+    head_bone = template_arm.data.edit_bones["head"]
+    original_tail = head_bone.tail.copy()
+    head_bone.tail.x += 0.01
+    bpy.ops.object.mode_set(mode="OBJECT")
+    _refresh_stale_results(sc, wizard)
+    check(step_statuses(bpy.context, wizard)[2] == STEP_STATUS_WARNING,
+          "editing armature rest bones marks a completed placement result stale")
+    bpy.ops.object.mode_set(mode="EDIT")
+    template_arm.data.edit_bones["head"].tail = original_tail
+    bpy.ops.object.mode_set(mode="OBJECT")
+    _refresh_stale_results(sc, wizard)
     bpy.ops.mesh.primitive_cube_add(size=0.4, location=(0.0, 1.0, 0.0))
     reweight_mesh = bpy.context.active_object
     reweight_mesh.name = "Wizard_ReweightMesh"

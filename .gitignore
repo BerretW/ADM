@@ -20,6 +20,10 @@ build/
 .env
 .env.*
 *.fbx
+*.blend
+*.rights.json
+# Private inputs for the optional external-asset test catalog
+/adm_blender/tests/external_data/
 !.env.example
 *.log
 *.blend[0-9]

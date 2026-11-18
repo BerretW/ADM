@@ -555,6 +555,9 @@ blender -b --factory-startup --python tests/test_texture_formats.py
 
 From the workspace root: `python -m unittest adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_gputex` runs without Blender (`test_gputex` needs NumPy).
 
+For optional private FBX, BLEND, ADM, and ADM_ANIM smoke tests, see the
+[external asset catalog instructions](tests/EXTERNAL_ASSETS.md).
+
 **Standalone validator (without Blender):** `python -m adm_blender.core.validate file.adm`
 
 ## License

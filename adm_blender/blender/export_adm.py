@@ -6,9 +6,13 @@ additional scenes. Without a model root the whole view layer (or the selection) 
 """
 
 import hashlib
+import json
 import math
 import os
+import shutil
+import time
 from collections import defaultdict
+from pathlib import Path
 
 import bpy
 import numpy as np
@@ -20,12 +24,13 @@ from ..core import skeleton_profiles as SP
 from ..core.buffers import BinBuilder
 from ..core.container import AdmFormatError, parse_json_strict, write_container
 from ..core.mathutil import reference_correction_from_nodes
+from ..core.qa_metrics import record_success
 from ..core.rigid import rig_id_from_document
-from ..core.validate import PARAM_NAME_RE, validate_adm
+from ..core.validate import PARAM_NAME_RE, validate_adm, validate_adm_resolved
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.22 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.24 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -39,9 +44,10 @@ def rig_issue_blocks_semantic(pid, code):
 
 
 class ExportError(Exception):
-    def __init__(self, message, report=None):
+    def __init__(self, message, report=None, published=False):
         super().__init__(message)
         self.report = report
+        self.published = published
 
 
 class ExportOptions:
@@ -198,6 +204,8 @@ class ModelExporter:
         self.mat.shader_defs = {(d.shader_id.strip(), d.version.strip()): d
                                 for d in context.scene.adm_anim.shaders}
         self.allowed = self._allowed_objects()
+        self._pending_rig_ids = []
+        self._committed_rig_ids = []
 
     def warn(self, msg):
         if msg not in self.warnings:
@@ -1126,9 +1134,40 @@ class ModelExporter:
     # ---------------------------------------------------------------------------------------------
     def export(self):
         try:
-            return self._export()
+            self._pending_rig_ids = []
+            result = self._export()
+            self._commit_rig_ids()
+            return result
         except (ShaderExportError, TextureExportError, AdmFormatError) as exc:
             raise ExportError(str(exc)) from exc
+
+    def _commit_rig_ids(self):
+        self._committed_rig_ids = []
+        try:
+            for arm, rig_id in self._pending_rig_ids:
+                previous = arm.data.adm.rig_id
+                self._committed_rig_ids.append((arm, previous))
+                arm.data.adm.rig_id = rig_id
+        except BaseException as exc:
+            try:
+                self.rollback_rig_ids()
+            except BaseException as rollback_exc:
+                raise ExportError(
+                    f"rigId commit failed ({type(exc).__name__}: {exc}); "
+                    f"rollback failed ({rollback_exc})"
+                ) from exc
+            raise
+
+    def rollback_rig_ids(self):
+        failures = []
+        for arm, previous in reversed(self._committed_rig_ids):
+            try:
+                arm.data.adm.rig_id = previous
+            except BaseException as exc:
+                failures.append(f"{arm.name}: {type(exc).__name__}: {exc}")
+        if failures:
+            raise ExportError("could not restore source-scene rigId values: " + "; ".join(failures))
+        self._committed_rig_ids.clear()
 
     def _export(self):
         if self.opts.vertex_controls:
@@ -1202,7 +1241,7 @@ class ModelExporter:
             prof = profiles[pi]
             rid = rig_id_from_document(doc, bin_bytes, prof["skin"], prof["roles"])
             prof["rigId"] = rid
-            arm.data.adm.rig_id = rid
+            self._pending_rig_ids.append((arm, rid))
         data = write_container(K.ADM_MAGIC, doc, bin_bytes)
         report = validate_adm(data) if self.opts.validate else None
         if report is not None and not report.ok:
@@ -1235,29 +1274,382 @@ class ModelExporter:
 
 
 def export_model(context, filepath, root=None, options=None):
-    exp = ModelExporter(context, root, options)
-    exp.mat.external_root = os.path.dirname(os.path.abspath(filepath))
-    data, report = exp.export()
-    if exp.mat.external_files:
-        from ..core.external_images import resolve_image_uri
-        root_dir = exp.mat.external_root
+    started_at = time.perf_counter()
+    absolute_path = os.path.abspath(filepath)
+    root_dir = os.path.dirname(absolute_path)
+    with _ExportDirectoryLock(root_dir):
+        _recover_export_transaction(root_dir)
+        exp = ModelExporter(context, root, options)
+        exp.mat.external_root = root_dir
         try:
-            for uri, blob in exp.mat.external_files.items():
-                target = resolve_image_uri(root_dir, uri)
-                target.parent.mkdir(parents=True, exist_ok=True)
+            data, report = exp.export()
+            _publish_export_transaction_locked(root_dir, absolute_path, exp.mat.external_files, data)
+        except BaseException as exc:
+            if not getattr(exc, "published", False):
                 try:
-                    with open(target, "xb") as fh:
-                        fh.write(blob)
-                except FileExistsError:
-                    if target.read_bytes() != blob:
-                        raise ExportError(f"external texture target already exists with different content: {uri}")
-        except (OSError, ValueError) as exc:
-            if isinstance(exc, ExportError):
-                raise
-            raise ExportError(f"could not write external textures: {exc}") from exc
-    with open(filepath, "wb") as fh:
-        fh.write(data)
+                    exp.rollback_rig_ids()
+                except BaseException as rollback_exc:
+                    raise ExportError(
+                        f"export failed ({type(exc).__name__}: {exc}); "
+                        f"rigId rollback failed ({rollback_exc})"
+                    ) from exc
+            raise
+    record_success("model_export", started_at)
     return exp, report
+
+
+_EXPORT_TXN_DIR = ".adm-export-transaction"
+_EXPORT_LOCK_FILE = ".adm-export.lock"
+
+
+class _ExportDirectoryLock:
+    def __init__(self, root):
+        self.path = os.path.join(root, _EXPORT_LOCK_FILE)
+        self.stream = None
+
+    def __enter__(self):
+        self.stream = open(self.path, "a+b")
+        if os.fstat(self.stream.fileno()).st_size == 0:
+            self.stream.write(b"\0")
+            self.stream.flush()
+            os.fsync(self.stream.fileno())
+        self.stream.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(self.stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, IOError) as exc:
+            self.stream.close()
+            self.stream = None
+            raise ExportError(f"another ADM export is active for {os.path.dirname(self.path)}") from exc
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.stream is not None:
+            try:
+                self.stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(self.stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
+            finally:
+                self.stream.close()
+        return False
+
+
+def _write_synced(path, data):
+    parent = os.path.dirname(path)
+    os.makedirs(parent, exist_ok=True)
+    with open(path, "wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    _sync_directory(parent)
+
+
+def _sync_directory(path):
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_transaction_journal(transaction_dir, journal):
+    journal_path = os.path.join(transaction_dir, "journal.json")
+    temporary_path = os.path.join(transaction_dir, "journal.new")
+    payload = (json.dumps(journal, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    _write_synced(temporary_path, payload)
+    if os.name == "nt":
+        _replace_windows_write_through(temporary_path, journal_path)
+    else:
+        os.replace(temporary_path, journal_path)
+    _sync_directory(transaction_dir)
+
+
+def _hash_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _replace_export_file(source, target):
+    if os.name != "nt":
+        os.replace(source, target)
+        return
+    _replace_windows_write_through(source, target)
+
+
+def _replace_windows_write_through(source, target):
+    import ctypes
+    from ctypes import wintypes
+
+    move_file = ctypes.windll.kernel32.MoveFileExW
+    move_file.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD)
+    move_file.restype = wintypes.BOOL
+    flags = 0x1 | 0x8  # replace existing; do not return until the move is flushed
+    if not move_file(source, target, flags):
+        raise ctypes.WinError()
+
+
+def _safe_transaction_path(base, relative):
+    if not isinstance(relative, str) or not relative or os.path.isabs(relative):
+        raise ExportError(f"invalid path in export recovery journal: {relative!r}")
+    parts = relative.replace("\\", "/").split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ExportError(f"invalid path in export recovery journal: {relative!r}")
+    base_path = os.path.abspath(base)
+    path = os.path.abspath(os.path.join(base_path, *parts))
+    try:
+        if os.path.commonpath((base_path, path)) != base_path:
+            raise ExportError(f"path escapes export recovery directory: {relative!r}")
+        resolved_base = os.path.realpath(base_path)
+        resolved_path = os.path.realpath(path)
+        if os.path.commonpath((resolved_base, resolved_path)) != resolved_base:
+            raise ExportError(f"resolved path escapes export recovery directory: {relative!r}")
+    except ValueError as exc:
+        raise ExportError(f"path escapes export recovery directory: {relative!r}") from exc
+    current = base_path
+    for part in parts:
+        current = os.path.join(current, part)
+        if os.path.islink(current):
+            raise ExportError(f"symlink in export recovery path: {relative!r}")
+    return path
+
+
+def _relative_transaction_path(root, path):
+    relative = os.path.relpath(path, root)
+    if relative == os.pardir or relative.startswith(os.pardir + os.sep) or os.path.isabs(relative):
+        raise ExportError(f"export target escapes output directory: {path}")
+    return relative.replace(os.sep, "/")
+
+
+def _rollback_export_transaction(root, transaction_dir, journal):
+    for entry in reversed(journal["files"]):
+        if not entry["publish"]:
+            continue
+        target = _safe_transaction_path(root, entry["target"])
+        if os.path.islink(target):
+            raise ExportError(f"refusing to overwrite symlink during export recovery: {entry['target']}")
+        exists = os.path.isfile(target)
+        current_hash = _hash_file(target) if exists else None
+        old_hash = entry["old_hash"]
+        new_hash = entry["new_hash"]
+        backup_relative = entry["backup"]
+        if backup_relative is not None:
+            backup = _safe_transaction_path(transaction_dir, backup_relative)
+            if not os.path.isfile(backup) or _hash_file(backup) != old_hash:
+                raise ExportError(f"missing or corrupt backup during export recovery: {entry['target']}")
+            if current_hash == old_hash:
+                continue
+            if current_hash not in (None, new_hash):
+                raise ExportError(f"target changed during export recovery: {entry['target']}")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            restore_path = os.path.join(os.path.dirname(target), ".adm-restore-" + os.path.basename(target))
+            _write_synced(restore_path, Path(backup).read_bytes())
+            _replace_export_file(restore_path, target)
+            _sync_directory(os.path.dirname(target))
+        else:
+            if not exists:
+                continue
+            if current_hash != new_hash:
+                raise ExportError(f"unexpected target content during export recovery: {entry['target']}")
+            os.unlink(target)
+            _sync_directory(os.path.dirname(target))
+    journal["state"] = "rolled_back"
+    _write_transaction_journal(transaction_dir, journal)
+
+
+def _recover_export_transaction(root):
+    transaction_dir = os.path.join(root, _EXPORT_TXN_DIR)
+    if not os.path.lexists(transaction_dir):
+        return
+    expected_transaction_dir = os.path.join(os.path.realpath(root), _EXPORT_TXN_DIR)
+    if (os.path.islink(transaction_dir)
+            or os.path.realpath(transaction_dir) != expected_transaction_dir):
+        raise ExportError(
+            f"export recovery failed; refusing symlinked transaction directory and preserving "
+            f"recovery data at {transaction_dir}"
+        )
+    journal_path = os.path.join(transaction_dir, "journal.json")
+    if os.path.lexists(journal_path):
+        expected_journal_path = os.path.join(expected_transaction_dir, "journal.json")
+        if (os.path.islink(journal_path)
+                or os.path.realpath(journal_path) != expected_journal_path):
+            raise ExportError(
+                f"export recovery failed; refusing symlinked journal and preserving recovery data "
+                f"at {transaction_dir}"
+            )
+        if not os.path.isfile(journal_path):
+            raise ExportError(
+                f"export recovery failed; journal is not a regular file, preserving recovery data "
+                f"at {transaction_dir}"
+            )
+    if not os.path.isfile(journal_path):
+        try:
+            shutil.rmtree(transaction_dir)
+        except OSError as exc:
+            raise ExportError(f"could not clean incomplete export staging directory {transaction_dir}: {exc}") from exc
+        return
+    try:
+        with open(journal_path, "r", encoding="utf-8") as stream:
+            journal = json.load(stream)
+        if journal.get("version") != 1 or journal.get("state") not in ("prepared", "committed", "rolled_back"):
+            raise ExportError("unsupported or invalid export recovery journal")
+        if not isinstance(journal.get("files"), list):
+            raise ExportError("invalid file list in export recovery journal")
+        if journal["state"] == "prepared":
+            _rollback_export_transaction(root, transaction_dir, journal)
+        shutil.rmtree(transaction_dir)
+        _sync_directory(root)
+    except Exception as exc:
+        raise ExportError(
+            f"export recovery failed; preserve {transaction_dir} for recovery: {exc}"
+        ) from exc
+
+
+def _publish_export_transaction(root, model_path, external_files, data):
+    with _ExportDirectoryLock(root):
+        _recover_export_transaction(root)
+        _publish_export_transaction_locked(root, model_path, external_files, data)
+
+
+def _publish_export_transaction_locked(root, model_path, external_files, data):
+    from ..core.external_images import resolve_image_uri
+
+    transaction_dir = os.path.join(root, _EXPORT_TXN_DIR)
+    files = []
+    model_path = os.path.abspath(model_path)
+    for uri, blob in sorted(external_files.items()):
+        target = os.fspath(resolve_image_uri(root, uri))
+        files.append((target, bytes(blob), True))
+    files.append((model_path, bytes(data), False))
+
+    normalized_targets = {}
+    for target, blob, is_texture in files:
+        key = os.path.normcase(os.path.abspath(target))
+        if key in normalized_targets:
+            raise ExportError(f"ADM output and external texture target collide: {target}")
+        normalized_targets[key] = True
+        if os.path.islink(target):
+            raise ExportError(f"refusing to replace symlink export target: {target}")
+        if os.path.lexists(target) and not os.path.isfile(target):
+            raise ExportError(f"export target is not a regular file: {target}")
+        if is_texture and os.path.isfile(target) and _hash_file(target) != hashlib.sha256(blob).hexdigest():
+            raise ExportError(f"external texture target already exists with different content: {target}")
+
+    os.mkdir(transaction_dir)
+    _sync_directory(root)
+    try:
+        backup_root = os.path.join(transaction_dir, "backups")
+        journal_files = []
+        staged_model_path = None
+        for index, (target, blob, is_texture) in enumerate(files):
+            relative_target = _relative_transaction_path(root, target)
+            staged_relative = "staged/" + relative_target
+            staged_path = _safe_transaction_path(transaction_dir, staged_relative)
+            _write_synced(staged_path, blob)
+            new_hash = hashlib.sha256(blob).hexdigest()
+            if _hash_file(staged_path) != new_hash:
+                raise ExportError(f"staged export bytes failed verification: {relative_target}")
+            if not is_texture:
+                staged_model_path = staged_path
+            old_exists = os.path.isfile(target)
+            old_hash = _hash_file(target) if old_exists else None
+            same_texture = is_texture and old_exists and old_hash == new_hash
+            backup_relative = None
+            if old_exists and not same_texture:
+                backup_relative = f"backups/{index}.bin"
+                backup_path = _safe_transaction_path(transaction_dir, backup_relative)
+                _write_synced(backup_path, Path(target).read_bytes())
+                if _hash_file(backup_path) != old_hash:
+                    raise ExportError(f"backup verification failed: {relative_target}")
+            journal_files.append({
+                "target": relative_target,
+                "staged": staged_relative,
+                "backup": backup_relative,
+                "old_hash": old_hash if backup_relative is not None else (new_hash if same_texture else None),
+                "new_hash": new_hash,
+                "publish": not same_texture,
+            })
+
+        validation = validate_adm_resolved(bytes(data), staged_model_path)
+        if not validation.ok:
+            details = "; ".join(f"{issue.code} [{issue.path}]: {issue.message}"
+                                for issue in validation.errors[:3])
+            raise ExportError(f"staged export failed resolved ADM validation: {details}")
+
+        for entry in journal_files:
+            target = _safe_transaction_path(root, entry["target"])
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            _sync_directory(os.path.dirname(target))
+        journal = {"version": 1, "state": "prepared", "files": journal_files}
+        _write_transaction_journal(transaction_dir, journal)
+        try:
+            for entry in journal_files:
+                if not entry["publish"]:
+                    continue
+                target = _safe_transaction_path(root, entry["target"])
+                staged = _safe_transaction_path(transaction_dir, entry["staged"])
+                _replace_export_file(staged, target)
+                _sync_directory(os.path.dirname(target))
+            journal["state"] = "committed"
+            _write_transaction_journal(transaction_dir, journal)
+        except Exception as exc:
+            try:
+                _rollback_export_transaction(root, transaction_dir, journal)
+            except Exception as rollback_exc:
+                raise ExportError(
+                    f"export publication failed ({exc}); rollback failed ({rollback_exc}); "
+                    f"recovery data preserved at {transaction_dir}"
+                ) from exc
+            try:
+                shutil.rmtree(transaction_dir)
+                _sync_directory(root)
+            except Exception as cleanup_exc:
+                raise ExportError(
+                    f"export publication failed ({exc}); outputs were rolled back, but recovery "
+                    f"cleanup failed ({cleanup_exc}); inspect {transaction_dir}"
+                ) from exc
+            raise ExportError(f"export publication failed; previous outputs restored: {exc}") from exc
+
+        try:
+            shutil.rmtree(transaction_dir)
+            _sync_directory(root)
+        except OSError as exc:
+            raise ExportError(
+                f"export published, but transaction cleanup failed; recovery required at "
+                f"{transaction_dir}: {exc}", published=True
+            ) from exc
+    except ExportError:
+        if os.path.isdir(transaction_dir) and not os.path.isfile(os.path.join(transaction_dir, "journal.json")):
+            try:
+                shutil.rmtree(transaction_dir)
+            except OSError as cleanup_exc:
+                raise ExportError(
+                    f"export staging failed and staging cleanup failed; remove or recover "
+                    f"{transaction_dir}: {cleanup_exc}"
+                )
+        raise
+    except Exception as exc:
+        if os.path.isdir(transaction_dir) and not os.path.isfile(os.path.join(transaction_dir, "journal.json")):
+            try:
+                shutil.rmtree(transaction_dir)
+            except OSError as cleanup_exc:
+                raise ExportError(
+                    f"export staging failed ({exc}) and staging cleanup failed; preserve "
+                    f"{transaction_dir}: {cleanup_exc}"
+                ) from exc
+        raise ExportError(f"export staging failed: {exc}") from exc
 
 
 def rest_fingerprint(arm):

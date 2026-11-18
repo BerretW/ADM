@@ -7,6 +7,13 @@ from bpy.types import PropertyGroup
 
 from ..core import constants as K
 
+
+def _update_humanoid_scope(self, context):
+    if context and context.scene:
+        from .humanoid_wizard import _refresh_stale_results
+        _refresh_stale_results(context.scene, self)
+
+
 ADM_TYPES = [
     ("NONE", "None", "Regular object exported as a plain node", "OBJECT_DATA", 0),
     ("MODEL", "Model Root", "Root of one .adm model (like a Sollumz Drawable); not exported as a node", "OUTLINER_OB_EMPTY", 1),
@@ -716,8 +723,9 @@ class ADMWindowProps(PropertyGroup):
 
 
 class ADMHumanoidWizardState(PropertyGroup):
-    model_root: PointerProperty(name="Model Root", type=bpy.types.Object)
-    armature: PointerProperty(name="Armature", type=bpy.types.Object, poll=_armature_poll)
+    model_root: PointerProperty(name="Model Root", type=bpy.types.Object, update=_update_humanoid_scope)
+    armature: PointerProperty(name="Armature", type=bpy.types.Object, poll=_armature_poll,
+                              update=_update_humanoid_scope)
     mode: EnumProperty(name="Input Mode", items=[
         ("AUTO", "Use Detected Mode", "Use the mode detected from the current model"),
         ("RIGGED", "Rigged", "Use and map an existing complete rig"),
@@ -740,6 +748,8 @@ class ADMHumanoidWizardState(PropertyGroup):
     ], default="RAISE_ARMS")
     analysis_report: StringProperty()
     status: StringProperty()
+    step_results: StringProperty(default="{}")
+    stale_steps: StringProperty(default="[]")
 
 
 CLASSES = (
@@ -763,9 +773,13 @@ def register():
     bpy.types.Scene.adm_anim = PointerProperty(type=ADMSceneProps)
     bpy.types.Scene.adm_humanoid_wizard = PointerProperty(type=ADMHumanoidWizardState)
     bpy.types.WindowManager.adm = PointerProperty(type=ADMWindowProps)
+    from . import humanoid_wizard
+    humanoid_wizard.register_freshness_handler()
 
 
 def unregister():
+    from . import humanoid_wizard
+    humanoid_wizard.unregister_freshness_handler()
     del bpy.types.WindowManager.adm
     del bpy.types.Scene.adm_humanoid_wizard
     del bpy.types.Scene.adm_anim

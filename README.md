@@ -28,8 +28,15 @@ build.bat
 ```
 
 The script runs the Python, ADM conformance, and Blender integration tests, bumps the patch
-version only after they pass, builds a versioned ZIP into `dist`, and writes a build report there.
-Use `build.bat -CheckOnly` to run the tests and create a report without changing the version or
+version only after they pass, builds a versioned ZIP into `dist`, and writes text, JSON, and
+Markdown reports there. The QA reports include each test step's result and duration, the Blender
+and add-on versions, and the Git commit. They include successful model import/export timings but do
+not provide a machine-readable list of changed or lost ADM property values. The optional
+external-asset catalog keeps user files local, requires a rights sidecar before processing, and
+reports absent or unapproved formats as skipped tests. See the
+[external-asset test guide](adm_blender/tests/EXTERNAL_ASSETS.md).
+
+Use `build.bat -CheckOnly` to run the tests and create reports without changing the version or
 building a ZIP. Set `BLENDER_EXE` to override the Blender executable path; otherwise the script
 uses Blender from `PATH` or the default Blender 5.2 installation. The build excludes tests and
 Python caches. Install the generated ZIP from `dist`.

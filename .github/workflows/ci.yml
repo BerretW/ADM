@@ -28,8 +28,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install NumPy for the GPU texture codec test
         run: python -m pip install numpy
-      - name: Test container, semantics and shader math
-        run: python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_gputex adm_blender.tests.test_shader_math -v
+      - name: Test container, semantics, shader math and asset catalog
+        run: python -m unittest adm_blender.tests.test_container adm_blender.tests.test_draft4 adm_blender.tests.test_skeleton_profiles adm_blender.tests.test_gputex adm_blender.tests.test_shader_math adm_blender.tests.test_external_asset_catalog adm_blender.tests.test_qa_metrics -v
       - name: Test terrain partitioning
         run: python -m unittest adm_blender.tests.test_terrain_partition -v
       - name: Test independent reference validator
@@ -103,8 +103,15 @@ jobs:
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_component_animation_blender.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_lod_generator.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_fixtures.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_import_transaction_blender.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_export_transaction.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_shader_harness.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_material_slots.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_texture_formats.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_skeleton_blender.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_mixamo_animation_blender.py
+          blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/test_bvh_blender.py
+          blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python adm_blender/tests/test_external_assets_blender.py
+          blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python adm_blender/tests/test_external_catalog_blender.py
           blender --background --factory-startup --python-exit-code 1 --python adm_blender/tests/build_material_test_scene.py -- "$RUNNER_TEMP/ADM_Color1_V2_Material_Test_Scene.blend"
           test -s "$RUNNER_TEMP/ADM_Color1_V2_Material_Test_Scene.blend"

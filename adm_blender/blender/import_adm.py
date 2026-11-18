@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from collections import defaultdict
 
 import bpy
@@ -14,6 +15,7 @@ from mathutils import Matrix, Quaternion, Vector
 from ..core import constants as K
 from ..core.buffers import read_accessor_np, read_view
 from ..core.external_images import resolve_image_uri
+from ..core.qa_metrics import record_success
 from ..core.validate import validate_adm
 from . import convert as cv
 from .colliders import new_collider_object
@@ -44,6 +46,72 @@ def _safe(name, fallback):
     return name if name else fallback
 
 
+def _datablocks():
+    return {
+        item
+        for prop in bpy.data.bl_rna.properties
+        if prop.type == "COLLECTION"
+        for item in getattr(bpy.data, prop.identifier)
+        if isinstance(item, bpy.types.ID)
+    }
+
+
+class _ImportTransaction:
+    def __init__(self, context):
+        self.context = context
+        self.scene = context.scene
+        self.view_layer = context.view_layer
+        self.active = self.view_layer.objects.active
+        self.selected = tuple(obj for obj in self.view_layer.objects
+                              if obj.select_get(view_layer=self.view_layer))
+        self.mode = self.active.mode if self.active else "OBJECT"
+        self.ids = _datablocks()
+        self.shader_count = len(self.scene.adm_anim.shaders)
+
+    def object_mode(self):
+        with self.context.temp_override(scene=self.scene, view_layer=self.view_layer):
+            if self.context.object is not None and self.context.object.mode != "OBJECT":
+                if bpy.ops.object.mode_set(mode="OBJECT") != {"FINISHED"}:
+                    raise RuntimeError("could not leave the current object mode")
+
+    def prepare(self):
+        self.object_mode()
+        for obj in self.view_layer.objects:
+            obj.select_set(False, view_layer=self.view_layer)
+
+    def restore_context(self):
+        self.object_mode()
+        for obj in self.view_layer.objects:
+            obj.select_set(obj in self.selected, view_layer=self.view_layer)
+        self.view_layer.objects.active = self.active
+        if self.mode != "OBJECT":
+            with self.context.temp_override(scene=self.scene, view_layer=self.view_layer):
+                if bpy.ops.object.mode_set(mode=self.mode) != {"FINISHED"}:
+                    raise RuntimeError(f"could not restore {self.mode} mode")
+
+    def rollback(self):
+        errors = []
+
+        def attempt(label, operation):
+            try:
+                operation()
+            except BaseException as exc:
+                errors.append(f"{label}: {type(exc).__name__}: {exc}")
+
+        def remove_shaders():
+            shaders = self.scene.adm_anim.shaders
+            for index in range(len(shaders) - 1, self.shader_count - 1, -1):
+                shaders.remove(index)
+
+        attempt("leaving import mode", self.object_mode)
+        attempt("removing imported shader definitions", remove_shaders)
+        # Include unlinked and partially constructed IDs, not just the model's object hierarchy.
+        attempt("removing imported datablocks",
+                lambda: bpy.data.batch_remove(ids=_datablocks() - self.ids))
+        attempt("restoring context", self.restore_context)
+        return errors
+
+
 class ModelImporter:
     def __init__(self, context, filepath, options=None):
         self.context = context
@@ -60,6 +128,19 @@ class ModelImporter:
 
     # ---------------------------------------------------------------------------------------------
     def run(self):
+        started_at = time.perf_counter()
+        try:
+            root = self._run_transaction()
+        except ImportError_:
+            raise
+        except Exception as exc:
+            raise ImportError_(
+                f"import failed: {type(exc).__name__}: {exc}", getattr(self, "report", None)
+            ) from exc
+        record_success("model_import", started_at)
+        return root
+
+    def _run_transaction(self):
         with open(self.filepath, "rb") as fh:
             data = fh.read()
         report = validate_adm(data)
@@ -67,6 +148,21 @@ class ModelImporter:
         if not report.ok:
             raise ImportError_("file is not a valid ADM 1.0 model", report)
         self.doc, self.bin = report.doc, report.bin
+        transaction = _ImportTransaction(self.context)
+        try:
+            transaction.prepare()
+            root = self._run_validated()
+            transaction.restore_context()
+        except BaseException as exc:
+            errors = transaction.rollback()
+            if errors:
+                raise ImportError_(
+                    f"import failed ({type(exc).__name__}: {exc}); "
+                    f"rollback failed: {'; '.join(errors)}", report) from exc
+            raise
+        return root
+
+    def _run_validated(self):
         d = self.doc
         self.interactive_by_node = defaultdict(dict)
         interactive = (d.get("extensions") or {}).get(K.INTERACTIVE_SURFACES_EXT, {})
@@ -109,7 +205,7 @@ class ModelImporter:
         try:
             self.load_images()
         finally:
-            shutil.rmtree(self._tmpdir, ignore_errors=True)
+            shutil.rmtree(self._tmpdir)
         resolve_image = lambda ref: self.resolve_texture(ref)[0]  # noqa: E731
         import_shader_definitions(self.context.scene, d, resolve_image)
         self.materials = []
@@ -189,7 +285,7 @@ class ModelImporter:
                 with open(path, "wb") as fh:
                     fh.write(blob)
             try:
-                img = bpy.data.images.load(os.fspath(path), check_existing=True)
+                img = bpy.data.images.load(os.fspath(path), check_existing=False)
                 if "uri" not in im:
                     img.pack()
                 else:

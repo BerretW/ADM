@@ -1,8 +1,12 @@
 """Guided orchestration of the existing ADM humanoid authoring tools."""
 
+import array
+import hashlib
 import json
+import time
 
 import bpy
+from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, EnumProperty, IntProperty
 from mathutils import Matrix, Vector
 
@@ -18,6 +22,12 @@ STEPS = (
     "Hitboxes & Colliders", "Sockets", "Materials", "Face & Morphs", "LOD",
     "Animation Compatibility", "Validate & Export",
 )
+STEP_STATUS_NOT_STARTED = "Not started"
+STEP_STATUS_IN_PROGRESS = "In progress"
+STEP_STATUS_COMPLETE = "Complete"
+STEP_STATUS_WARNING = "Warning"
+STEP_STATUS_BLOCKED = "Blocked"
+FRESHNESS_DEBOUNCE_SECONDS = 0.35
 POSE_BACKUP_KEY = "adm_hw_pose_backup"
 TEST_POSES = {
     "RAISE_ARMS": {"leftUpperArm": ("Y", 1.0), "rightUpperArm": ("Y", -1.0)},
@@ -29,6 +39,313 @@ TEST_POSES = {
     "HEAD_ROTATION": {"head": ("Z", 0.35)},
     "SHOULDER_MOVEMENT": {"leftShoulder": ("Y", 0.25), "rightShoulder": ("Y", -0.25)},
 }
+_pending_freshness_scenes = {}
+_freshness_last_event = 0.0
+_freshness_timer_registered = False
+
+
+def _step_results(state):
+    try:
+        value = json.loads(state.step_results or "{}")
+        return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _walk_model_objects(scene, state):
+    root = state.model_root
+    objects = []
+    if root is not None:
+        stack = [root]
+        seen = set()
+        while stack:
+            obj = stack.pop()
+            if obj.name in seen:
+                continue
+            seen.add(obj.name)
+            objects.append(obj)
+            stack.extend(obj.children)
+    elif state.armature is not None:
+        arm = state.armature
+        objects.append(arm)
+        objects.extend(obj for obj in scene.objects if obj.type == "MESH" and any(
+            mod.type == "ARMATURE" and mod.object == arm for mod in obj.modifiers))
+    else:
+        objects.extend(scene.objects)
+    arm = state.armature
+    if arm is not None and arm not in objects:
+        objects.append(arm)
+    for obj in tuple(objects):
+        if obj.type == "MESH":
+            objects.extend(mod.object for mod in obj.modifiers
+                           if mod.type == "ARMATURE" and mod.object is not None and mod.object not in objects)
+    return sorted(set(objects), key=lambda obj: obj.name)
+
+
+def _digest_json(digest, value):
+    digest.update(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    digest.update(b"\0")
+
+
+def _model_fingerprint(scene, state):
+    digest = hashlib.sha256()
+    root = state.model_root
+    _digest_json(digest, (root.name if root else "", state.armature.name if state.armature else ""))
+    objects = _walk_model_objects(scene, state)
+    for obj in objects:
+        adm = obj.adm
+        _digest_json(digest, (
+            obj.name, obj.type, obj.parent.name if obj.parent else "",
+            tuple(float(v) for row in obj.matrix_world for v in row),
+            obj.parent_type, obj.parent_bone, adm.adm_type, adm.export_exclude,
+            adm.attachment_name, adm.component_role, adm.component_profile,
+            adm.interactive_surface_id, adm.interactive_tex_coord, adm.interactive_aspect_ratio,
+            adm.collider_shape, tuple(adm.collider_size), adm.collider_radius, adm.collider_height,
+            adm.collider_trigger, adm.physical_material, adm.model_profiles_json,
+        ))
+        if obj.type == "MESH":
+            mesh = obj.data
+            coords = array.array("f", [0.0]) * (len(mesh.vertices) * 3)
+            if coords:
+                mesh.vertices.foreach_get("co", coords)
+                digest.update(coords.tobytes())
+            _digest_json(digest, [tuple(poly.vertices) for poly in mesh.polygons])
+            _digest_json(digest, [(group.name, group.lock_weight) for group in obj.vertex_groups])
+            for vertex in mesh.vertices:
+                _digest_json(digest, (vertex.index, sorted(
+                    (obj.vertex_groups[item.group].name, float(item.weight)) for item in vertex.groups)))
+            if mesh.shape_keys:
+                _digest_json(digest, [
+                    (block.name, float(block.value), float(block.slider_min), float(block.slider_max))
+                    for block in mesh.shape_keys.key_blocks
+                ])
+                for block in mesh.shape_keys.key_blocks:
+                    shape_coords = array.array("f", [0.0]) * (len(block.data) * 3)
+                    if shape_coords:
+                        block.data.foreach_get("co", shape_coords)
+                        digest.update(shape_coords.tobytes())
+            _digest_json(digest, [slot.material.name if slot.material else "" for slot in obj.material_slots])
+            _digest_json(digest, [
+                (modifier.name, modifier.type,
+                 modifier.object.name if modifier.type == "ARMATURE" and modifier.object else "",
+                 bool(getattr(modifier, "use_vertex_groups", False)),
+                 bool(getattr(modifier, "use_bone_envelopes", False)))
+                for modifier in obj.modifiers
+            ])
+            for slot in obj.material_slots:
+                material = slot.material
+                if material is None:
+                    continue
+                props = material.adm
+                _digest_json(digest, (
+                    material.name, props.shader, props.shader_version, props.custom_shader,
+                    props.animation_id, props.alpha_mode, props.alpha_cutoff, props.layer_factor,
+                    [(param.name, param.use, param.value_f, tuple(param.value_vec), param.value_bool,
+                      param.texture_channel, param.texture_invert,
+                      param.image.name if param.image else "", param.tex_coord)
+                     for param in props.params],
+                ))
+        elif obj.type == "ARMATURE":
+            _digest_json(digest, [
+                (bone.name, bone.parent.name if bone.parent else "", bone.adm.role, bool(bone.use_deform),
+                 bool(bone.adm.use_reference_correction), tuple(bone.adm.reference_correction),
+                 tuple(float(v) for v in bone.head_local), tuple(float(v) for v in bone.tail_local))
+                for bone in obj.data.bones
+            ])
+            sk = obj.data.adm
+            _digest_json(digest, (
+                sk.profile_id, sk.export_profile, sk.target_height, sk.use_target_height,
+                [(chain.chain_id, chain.root, chain.mid, chain.end, tuple(chain.pole), chain.weight)
+                 for chain in sk.ik_chains],
+            ))
+        if obj == root:
+            _digest_json(digest, [
+                (item.name, item.bone, item.role, item.collider.name if item.collider else "")
+                for item in obj.adm.hitboxes
+            ])
+            _digest_json(digest, [
+                (item.name, item.role, item.object.name if item.object else "", item.bone, item.socket)
+                for item in obj.adm.model_components
+            ])
+            _digest_json(digest, [
+                (item.channel, item.object.name if item.object else "", item.target, item.scale)
+                for item in obj.adm.face_bindings
+            ])
+            _digest_json(digest, [
+                (item.name, item.priority, item.group,
+                 [(binding.object.name if binding.object else "", binding.target, binding.weight)
+                  for binding in item.bindings])
+                for item in obj.adm.expressions
+            ])
+            _digest_json(digest, [
+                (item.object.name if item.object else "", item.min_distance)
+                for item in obj.adm.lod_levels
+            ])
+    return digest.hexdigest()
+
+
+def _refresh_stale_results(scene, state):
+    results = _step_results(state)
+    if not results:
+        return
+    current = _model_fingerprint(scene, state)
+    stale = sorted(int(step) for step, result in results.items()
+                   if result.get("fingerprint") != current)
+    encoded = json.dumps(stale, separators=(",", ":"))
+    if state.stale_steps != encoded:
+        state.stale_steps = encoded
+
+
+@persistent
+def _depsgraph_freshness_update(scene, depsgraph):
+    state = getattr(scene, "adm_humanoid_wizard", None)
+    if state is None or not _step_results(state):
+        return
+    relevant = set()
+    for obj in _walk_model_objects(scene, state):
+        relevant.add(obj.as_pointer())
+        if obj.data:
+            relevant.add(obj.data.as_pointer())
+            if obj.type == "MESH" and obj.data.shape_keys:
+                relevant.add(obj.data.shape_keys.as_pointer())
+        for slot in obj.material_slots:
+            if slot.material:
+                relevant.add(slot.material.as_pointer())
+                if slot.material.node_tree:
+                    relevant.add(slot.material.node_tree.as_pointer())
+    for update in depsgraph.updates:
+        try:
+            if update.id.as_pointer() in relevant:
+                _queue_freshness_refresh(scene)
+                return
+        except ReferenceError:
+            continue
+
+
+def _queue_freshness_refresh(scene):
+    global _freshness_last_event, _freshness_timer_registered
+    _pending_freshness_scenes[scene.as_pointer()] = scene
+    _freshness_last_event = time.monotonic()
+    if not _freshness_timer_registered:
+        bpy.app.timers.register(_flush_freshness_refresh, first_interval=FRESHNESS_DEBOUNCE_SECONDS)
+        _freshness_timer_registered = True
+
+
+def _flush_freshness_refresh():
+    global _freshness_timer_registered
+    screen = bpy.context.screen
+    if screen and getattr(screen, "is_animation_playing", False):
+        return 0.5
+    remaining = FRESHNESS_DEBOUNCE_SECONDS - (time.monotonic() - _freshness_last_event)
+    if remaining > 0:
+        return remaining
+    scenes = list(_pending_freshness_scenes.values())
+    _pending_freshness_scenes.clear()
+    _freshness_timer_registered = False
+    for scene in scenes:
+        try:
+            state = scene.adm_humanoid_wizard
+            _refresh_stale_results(scene, state)
+        except ReferenceError:
+            continue
+    return None
+
+
+def register_freshness_handler():
+    handlers = bpy.app.handlers.depsgraph_update_post
+    if _depsgraph_freshness_update not in handlers:
+        handlers.append(_depsgraph_freshness_update)
+
+
+def unregister_freshness_handler():
+    global _freshness_timer_registered
+    handlers = bpy.app.handlers.depsgraph_update_post
+    if _depsgraph_freshness_update in handlers:
+        handlers.remove(_depsgraph_freshness_update)
+    if bpy.app.timers.is_registered(_flush_freshness_refresh):
+        bpy.app.timers.unregister(_flush_freshness_refresh)
+    _pending_freshness_scenes.clear()
+    _freshness_timer_registered = False
+
+
+def _step_blockers(context, state, step):
+    root, objects, arm = _scope(context, state)
+    meshes = _mesh_objects(objects)
+    if step == 0 and not objects:
+        return ["Select or assign a model to analyze."]
+    if step == 1 and arm is None and not meshes:
+        return ["Select or assign a mesh before creating a humanoid skeleton."]
+    if step in {2, 3, 4, 5} and arm is None:
+        return ["Select or create an armature first."]
+    if step == 6 and (root is None or arm is None):
+        return ["Assign a Model Root and humanoid armature before generating hitboxes."]
+    if step == 7 and (arm is None or arm.data.adm.profile_id != SP.HUMANOID):
+        return ["Map an armature to humanoid.vrm1 before creating humanoid sockets."]
+    if step == 12:
+        return export_readiness(context, state)["blockers"]
+    return []
+
+
+def export_readiness(context, state):
+    root, objects, arm = _scope(context, state)
+    blockers, recommendations = [], []
+    if root is None:
+        blockers.append("Assign an ADM Model Root before exporting from this wizard.")
+    if arm is None:
+        blockers.append("Select or map a humanoid armature.")
+    else:
+        if arm.data.adm.profile_id != SP.HUMANOID:
+            blockers.append("The selected armature is not mapped to humanoid.vrm1.")
+        errors = [issue for issue in R.analyze(arm) if issue.severity == "ERROR"]
+        blockers.extend(f"{issue.code}: {issue.message}" for issue in errors[:5])
+    meshes = _mesh_objects(objects)
+    if not meshes:
+        recommendations.append("Add or assign the model meshes intended for export.")
+    elif arm is not None and not any(
+            any(mod.type == "ARMATURE" and mod.object == arm for mod in mesh.modifiers)
+            for mesh in meshes):
+        recommendations.append("No mesh is bound to the selected armature; review skinning if deformation is intended.")
+    stale = set(json.loads(state.stale_steps or "[]"))
+    for index in sorted(stale.intersection({1, 2, 3})):
+        blockers.append(f"{STEPS[index]} results are stale; review and complete that step again.")
+    completed = set(int(step) for step in _step_results(state))
+    remaining = [STEPS[index] for index in range(1, 12) if index not in completed]
+    if remaining:
+        recommendations.append("Remaining workflow: " + ", ".join(remaining[:4])
+                               + (f" and {len(remaining) - 4} more" if len(remaining) > 4 else ""))
+    recommendations.append("Run complete ADM validation; this readiness check is not an export guarantee.")
+    return {"blockers": blockers, "recommendations": recommendations}
+
+
+def step_statuses(context, state):
+    results = _step_results(state)
+    stale = set(json.loads(state.stale_steps or "[]"))
+    statuses = []
+    for index in range(len(STEPS)):
+        blockers = _step_blockers(context, state, index)
+        result = results.get(str(index))
+        if blockers:
+            status = STEP_STATUS_BLOCKED
+        elif index in stale or (result and result.get("warning")):
+            status = STEP_STATUS_WARNING
+        elif result:
+            status = STEP_STATUS_COMPLETE
+        elif index == state.step:
+            status = STEP_STATUS_IN_PROGRESS
+        else:
+            status = STEP_STATUS_NOT_STARTED
+        statuses.append(status)
+    return statuses
+
+
+def _complete_step(context, state, step, warning=False):
+    results = _step_results(state)
+    results[str(step)] = {
+        "fingerprint": _model_fingerprint(context.scene, state),
+        "warning": bool(warning),
+    }
+    state.step_results = json.dumps(results, sort_keys=True, separators=(",", ":"))
+    _refresh_stale_results(context.scene, state)
 
 
 def _test_pose_changes(arm, pose):
@@ -123,6 +440,11 @@ def _invalid_humanoid_roles(arm):
             if bone.adm.role.strip() and bone.adm.role.strip() not in valid]
 
 
+def _missing_eye_roles(arm):
+    mapped = {bone.adm.role.strip() for bone in arm.data.bones if bone.adm.role.strip()}
+    return [role for role in ("leftEye", "rightEye") if role not in mapped]
+
+
 def _set_humanoid_profile(arm, repair_invalid):
     invalid = _invalid_humanoid_roles(arm)
     if invalid and not repair_invalid:
@@ -133,81 +455,6 @@ def _set_humanoid_profile(arm, repair_invalid):
     arm.data.adm.export_profile = True
     mapped = R.auto_map_profile(arm, overwrite=False, profile_id=SP.HUMANOID)
     return len(invalid), mapped
-
-
-def _add_missing_eye_bones(context, arm):
-    role_bones = {bone.adm.role: bone for bone in arm.data.bones if bone.adm.role}
-    missing = [role for role in ("leftEye", "rightEye") if role not in role_bones]
-    if not missing:
-        return [], None
-    head = role_bones.get("head")
-    if head is None:
-        return [], "the head role is not mapped"
-
-    hips = role_bones.get("hips")
-    up = head.head_local - hips.head_local if hips else head.tail_local - head.head_local
-    if up.length <= 1e-8:
-        up = Vector((0.0, 0.0, 1.0))
-    else:
-        up.normalize()
-
-    left = role_bones.get("leftUpperArm") or role_bones.get("leftShoulder")
-    right = role_bones.get("rightUpperArm") or role_bones.get("rightShoulder")
-    if left is not None and right is not None:
-        side = right.head_local - left.head_local
-        side -= up * side.dot(up)
-    else:
-        side = Vector((1.0, 0.0, 0.0)) - up * up.x
-    if side.length <= 1e-8:
-        side = Vector((1.0, 0.0, 0.0))
-        side -= up * side.dot(up)
-    side.normalize()
-    forward = up.cross(side).normalized()
-
-    head_length = max(head.length, 0.01)
-    shoulder_width = ((right.head_local - left.head_local).length
-                      if left is not None and right is not None else head_length * 0.7)
-    center = head.head_local.lerp(head.tail_local, 0.6) + forward * max(head_length * 0.15, 0.01)
-    eye_spacing = max(shoulder_width * 0.08, head_length * 0.12)
-    eye_length = max(head_length * 0.12, 0.01)
-    positions = {
-        "leftEye": center - side * eye_spacing * 0.5,
-        "rightEye": center + side * eye_spacing * 0.5,
-    }
-
-    previous_active = context.view_layer.objects.active
-    previous_selection = list(context.selected_objects)
-    previous_mode = arm.mode
-    if previous_mode != "OBJECT":
-        if previous_active != arm:
-            return [], "switch the armature to Object Mode first"
-        bpy.ops.object.mode_set(mode="OBJECT")
-    created = {}
-    try:
-        make_active(context, arm)
-        bpy.ops.object.mode_set(mode="EDIT")
-        for role in missing:
-            eye = arm.data.edit_bones.new("ADM_" + role)
-            eye.head = positions[role]
-            eye.tail = positions[role] + forward * eye_length
-            eye.parent = arm.data.edit_bones.get(head.name)
-            eye.use_deform = False
-            created[role] = eye.name
-        bpy.ops.object.mode_set(mode="OBJECT")
-        for role, name in created.items():
-            arm.data.bones[name].adm.role = role
-    finally:
-        if arm.mode != "OBJECT":
-            bpy.ops.object.mode_set(mode="OBJECT")
-        for obj in context.selected_objects:
-            obj.select_set(False)
-        for obj in previous_selection:
-            if obj.name in bpy.data.objects:
-                obj.select_set(True)
-        context.view_layer.objects.active = previous_active
-        if previous_active == arm and previous_mode != "OBJECT":
-            bpy.ops.object.mode_set(mode=previous_mode)
-    return list(created), None
 
 
 def _analysis(context, state):
@@ -472,7 +719,9 @@ class ADM_OT_hw_analyze(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        _analysis(context, context.scene.adm_humanoid_wizard)
+        state = context.scene.adm_humanoid_wizard
+        _analysis(context, state)
+        _complete_step(context, state, 0)
         return {"FINISHED"}
 
 
@@ -489,6 +738,7 @@ class ADM_OT_hw_generate_skeleton(bpy.types.Operator):
             self.report({"ERROR"}, str(exc))
             state.status = str(exc)
             return {"CANCELLED"}
+        _complete_step(context, state, 1)
         state.step = 2
         return {"FINISHED"}
 
@@ -531,14 +781,14 @@ class ADM_OT_hw_map_skeleton(bpy.types.Operator):
             self.report({"WARNING"}, state.status)
             return {"CANCELLED"}
         cleared, mapped = configured
-        eye_roles, eye_issue = _add_missing_eye_bones(context, arm)
+        missing_eyes = _missing_eye_roles(arm)
         state.status = (f"Cleared {cleared} role(s) from other profiles and suggested {mapped} humanoid "
                         "mapping(s). Review the result before export.")
-        if eye_roles:
-            state.status += " Added estimated non-deforming eye bones; adjust placement in Edit Mode."
-        elif eye_issue:
-            state.status += f" Eye bones were not added because {eye_issue}."
-        self.report({"WARNING"} if eye_issue else {"INFO"}, state.status)
+        if missing_eyes:
+            state.status += (" Missing eye roles: " + ", ".join(missing_eyes)
+                             + ". Map existing bones or add and position them manually in Edit Mode.")
+        _complete_step(context, state, 1, warning=bool(missing_eyes))
+        self.report({"WARNING"} if missing_eyes else {"INFO"}, state.status)
         return {"FINISHED"}
 
 
@@ -786,6 +1036,7 @@ class ADM_OT_hw_skinning(bpy.types.Operator):
             if skipped:
                 state.status += " Preserved: " + ", ".join(skipped) + "."
             self.report({"WARNING"} if skipped else {"INFO"}, state.status)
+        _complete_step(context, state, 3, warning=bool(failures or skipped))
         for mesh in meshes:
             mesh.select_set(False)
         arm.select_set(True)
@@ -812,6 +1063,7 @@ class ADM_OT_hw_generate_hitboxes(bpy.types.Operator):
             return {"CANCELLED"}
         state.status = (f"Generated {len(created)} bone hitbox(es); preserved {len(skipped)} existing or "
                         f"unavailable area(s). Review placement and dimensions before export.")
+        _complete_step(context, state, 6, warning=bool(skipped))
         self.report({"WARNING"} if skipped else {"INFO"}, state.status)
         return {"FINISHED"}
 
@@ -833,6 +1085,7 @@ class ADM_OT_hw_create_sockets(bpy.types.Operator):
         created, skipped = R.create_profile_sockets(context, arm, SP.HUMANOID_SOCKET_NAMES)
         state.status = (f"Created {len(created)} standard humanoid socket(s); skipped {len(skipped)}. "
                         "Place markers at the authored mount points.")
+        _complete_step(context, state, 7, warning=bool(skipped))
         self.report({"WARNING"} if skipped else {"INFO"}, state.status)
         return {"FINISHED"}
 
@@ -876,6 +1129,7 @@ class ADM_OT_hw_confirm_placement(bpy.types.Operator):
             return {"CANCELLED"}
         state.step = 3
         state.status = "Placement confirmed. The wizard will not move the skeleton automatically."
+        _complete_step(context, state, 2)
         self.report({"INFO"}, state.status)
         return {"FINISHED"}
 
@@ -912,6 +1166,7 @@ class ADM_OT_hw_apply_test_pose(bpy.types.Operator):
             self.report({"ERROR"}, "This test pose has no mapped roles on the selected rig.")
             return {"CANCELLED"}
         state.status = f"Applied {state.test_pose.replace('_', ' ').lower()} test pose. Reset restores the prior pose."
+        _complete_step(context, state, 4)
         return {"FINISHED"}
 
 
@@ -944,22 +1199,43 @@ class ADM_OT_hw_navigate(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ADM_OT_hw_mark_step_complete(bpy.types.Operator):
+    bl_idname = "adm.hw_mark_step_complete"
+    bl_label = "Mark Step Complete"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        state = context.scene.adm_humanoid_wizard
+        step = state.step
+        blockers = _step_blockers(context, state, step)
+        if blockers:
+            self.report({"ERROR"}, "; ".join(blockers))
+            return {"CANCELLED"}
+        readiness = export_readiness(context, state) if step == 12 else None
+        _complete_step(context, state, step,
+                       warning=bool(readiness and readiness["recommendations"]))
+        state.status = f"Marked {STEPS[step]} complete."
+        return {"FINISHED"}
+
+
 class ADM_PT_character(bpy.types.Panel):
     bl_label = "Character"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "ADM"
+    bl_category = "ADM Character"
     bl_order = 1
 
     def draw(self, context):
-        self.layout.label(text="Character authoring tools", icon="ARMATURE_DATA")
+        layout = self.layout
+        layout.label(text="Character authoring tools", icon="ARMATURE_DATA")
+        layout.operator("import_scene.adm", text="Import ADM Model", icon="IMPORT")
 
 
 class ADM_PT_humanoid_wizard(bpy.types.Panel):
     bl_label = "Humanoid Wizard"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "ADM"
+    bl_category = "ADM Character"
     bl_parent_id = "ADM_PT_character"
 
     def draw(self, context):
@@ -980,11 +1256,29 @@ class ADM_PT_humanoid_wizard(bpy.types.Panel):
         if state.status:
             layout.label(text=state.status, icon="INFO")
         layout.separator()
+        statuses = step_statuses(context, state)
+        remaining = [STEPS[index] for index, status in enumerate(statuses)
+                     if status != STEP_STATUS_COMPLETE]
+        if remaining:
+            shown = ", ".join(remaining[:4])
+            if len(remaining) > 4:
+                shown += f", +{len(remaining) - 4} more"
+            layout.label(text=f"Remaining work: {shown}", icon="TIME")
+        else:
+            layout.label(text="All wizard steps are current.", icon="CHECKMARK")
+        status_icons = {
+            STEP_STATUS_NOT_STARTED: "RADIOBUT_OFF",
+            STEP_STATUS_IN_PROGRESS: "TIME",
+            STEP_STATUS_COMPLETE: "CHECKMARK",
+            STEP_STATUS_WARNING: "ERROR",
+            STEP_STATUS_BLOCKED: "CANCEL",
+        }
         for index, title in enumerate(STEPS):
             row = layout.row(align=True)
             button = row.operator("adm.hw_navigate", text=f"{index + 1}. {title}",
                                   depress=index == state.step)
             button.step = index
+            row.label(text=statuses[index], icon=status_icons[statuses[index]])
         layout.separator()
         step = state.step
         if step == 0:
@@ -1038,9 +1332,25 @@ class ADM_PT_humanoid_wizard(bpy.types.Panel):
             layout.operator("adm.anim_compat_test", icon="LINKED")
             layout.operator("import_anim.adm_anim", icon="IMPORT")
         else:
+            readiness = export_readiness(context, state)
+            if readiness["blockers"]:
+                box = layout.box()
+                box.label(text="Export blockers", icon="CANCEL")
+                for item in readiness["blockers"]:
+                    box.label(text=item, icon="ERROR")
+            if readiness["recommendations"]:
+                box = layout.box()
+                box.label(text="Recommendations", icon="INFO")
+                for item in readiness["recommendations"]:
+                    box.label(text=item, icon="DOT")
             layout.operator("adm.hw_validate", text="Validate Humanoid Rig", icon="CHECKMARK")
             layout.operator("adm.validate_model", text="Validate Complete Model", icon="CHECKMARK")
-            layout.operator("export_scene.adm", text="Export ADM", icon="EXPORT")
+            export_row = layout.row()
+            export_row.enabled = not readiness["blockers"]
+            export_row.operator("export_scene.adm", text="Export ADM", icon="EXPORT")
+        mark = layout.row()
+        mark.enabled = not _step_blockers(context, state, step)
+        mark.operator("adm.hw_mark_step_complete", text="Mark This Step Complete", icon="CHECKMARK")
 
 
 class ADM_OT_hw_auto_configure(bpy.types.Operator):
@@ -1081,6 +1391,7 @@ class ADM_OT_hw_auto_configure(bpy.types.Operator):
                 return {"CANCELLED"}
             state.step = 2
             state.status = "Template created. Place and confirm the skeleton before continuing; skinning was not run."
+            _complete_step(context, state, 1)
             self.report({"INFO"}, state.status)
             return {"FINISHED"}
         configured = _set_humanoid_profile(arm, self.repair_invalid)
@@ -1089,18 +1400,18 @@ class ADM_OT_hw_auto_configure(bpy.types.Operator):
             self.report({"WARNING"}, state.status)
             return {"CANCELLED"}
         cleared, mapped = configured
-        eye_roles, eye_issue = _add_missing_eye_bones(context, arm)
+        missing_eyes = _missing_eye_roles(arm)
         corrections = R.apply_normalized_corrections(arm)
         chains, skipped = R.add_chains_from_profile(arm, replace=False)
         state.status = (f"Cleared {cleared} role(s) from other profiles, mapped {mapped} role(s), "
                         f"normalized {corrections} reference correction(s), "
                         f"added IK chains: {', '.join(chains) or 'none'}."
                         + (f" Unmapped chain roles: {', '.join(skipped)}." if skipped else ""))
-        if eye_roles:
-            state.status += " Added estimated non-deforming eye bones; adjust placement in Edit Mode."
-        elif eye_issue:
-            state.status += f" Eye bones were not added because {eye_issue}."
-        self.report({"WARNING"} if eye_issue else {"INFO"}, state.status)
+        if missing_eyes:
+            state.status += (" Missing eye roles: " + ", ".join(missing_eyes)
+                             + ". Map existing bones or add and position them manually in Edit Mode.")
+        _complete_step(context, state, 1, warning=bool(missing_eyes or skipped))
+        self.report({"WARNING"} if missing_eyes or skipped else {"INFO"}, state.status)
         return {"FINISHED"}
 
 
@@ -1109,5 +1420,7 @@ CLASSES = (
     ADM_OT_hw_enter_edit_mode, ADM_OT_hw_skinning, ADM_OT_hw_generate_hitboxes, ADM_OT_hw_create_sockets,
     ADM_OT_hw_validate, ADM_OT_hw_confirm_placement,
     ADM_OT_hw_apply_test_pose, ADM_OT_hw_reset_test_pose, ADM_OT_hw_navigate,
-    ADM_OT_hw_auto_configure, ADM_PT_character, ADM_PT_humanoid_wizard,
+    ADM_OT_hw_mark_step_complete, ADM_OT_hw_auto_configure, ADM_PT_character, ADM_PT_humanoid_wizard,
 )
+
+SIDEBAR_PANELS = (ADM_PT_character, ADM_PT_humanoid_wizard)
