@@ -3,6 +3,7 @@
 Run:  blender -b --factory-startup --python adm_blender/tests/test_fixtures.py
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -12,6 +13,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, REPO)
 FIX = os.path.join(REPO, "adm-standard", "fixtures", "valid")
+
+from adm_blender.core.qa_property_diff import compare_adm_manifests  # noqa: E402
 
 import bpy  # noqa: E402
 import numpy as np  # noqa: E402
@@ -29,6 +32,19 @@ def check(cond, msg):
 
 def errs(rep):
     return [] if rep is None or rep.ok else [str(e) for e in rep.errors[:4]]
+
+
+def report_property_diff(source_path, roundtrip_doc):
+    from adm_blender.core.validate import validate_adm
+
+    with open(source_path, "rb") as stream:
+        source_report = validate_adm(stream.read())
+    if not source_report.ok:
+        check(False, f"source fixture validates for property comparison: {errs(source_report)}")
+        return
+    comparison = compare_adm_manifests(source_report.doc, roundtrip_doc)
+    comparison["fixture"] = os.path.basename(source_path)
+    print("ADM_PROPERTY_DIFF:" + json.dumps(comparison, sort_keys=True))
 
 
 def main(tmp):
@@ -51,9 +67,13 @@ def main(tmp):
     check(root is not None, "triangle imported")
     data, rep = ModelExporter(ctx, root, ExportOptions()).export()
     check(rep.ok, f"triangle re-export valid {errs(rep)}")
+    if rep.ok:
+        report_property_diff(os.path.join(FIX, "triangle.adm"), rep.doc)
     root = ModelImporter(ctx, os.path.join(FIX, "triangle_split.adm"), ImportOptions()).run()
     data, rep = ModelExporter(ctx, root, ExportOptions()).export()
     check(rep.ok, f"split-chunk triangle round-trip valid {errs(rep)}")
+    if rep.ok:
+        report_property_diff(os.path.join(FIX, "triangle_split.adm"), rep.doc)
 
     print("== interactive_terminal.adm")
     bpy.ops.wm.read_homefile(use_empty=True)
@@ -66,6 +86,8 @@ def main(tmp):
     surfaces = rep.doc.get("extensions", {}).get(K.INTERACTIVE_SURFACES_EXT, {}).get("surfaces", [])
     check(rep.ok and {surface["surfaceId"] for surface in surfaces} ==
           {"main_display", "security_monitor_right"}, f"interactive fixture round-trip {errs(rep)}")
+    if rep.ok:
+        report_property_diff(os.path.join(FIX, "interactive_terminal.adm"), rep.doc)
 
     print("== shader_layered.adm")
     bpy.ops.wm.read_homefile(use_empty=True)
@@ -78,6 +100,8 @@ def main(tmp):
     exp = ModelExporter(ctx, root, ExportOptions())
     data, rep = exp.export()
     check(rep.ok, f"layered re-export valid {errs(rep)}")
+    if rep.ok:
+        report_property_diff(os.path.join(FIX, "shader_layered.adm"), rep.doc)
     m0 = rep.doc["materials"][0]
     check(m0.get("shader", {}).get("id") == "adm.pbr.layered", "shader id re-exported")
     check("ADM_material_layers_v1" in rep.doc.get("extensionsUsed", []), "layers extension listed")

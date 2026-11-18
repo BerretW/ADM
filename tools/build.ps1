@@ -27,6 +27,7 @@ $qaJsonPath = Join-Path $distPath "$qaReportStem.json"
 $qaMarkdownPath = Join-Path $distPath "$qaReportStem.md"
 $report = [System.Collections.Generic.List[string]]::new()
 $testResults = [System.Collections.Generic.List[object]]::new()
+$propertyComparisons = [System.Collections.Generic.List[object]]::new()
 $startedAt = [DateTimeOffset]::Now
 $commit = $null
 $worktreeChangedFiles = @()
@@ -84,8 +85,11 @@ function Write-Report {
             $_.status -eq "FAIL" -and $_.name -match "(?i)import|export|workflow"
         })
         property_changes = [ordered]@{
-            status = "NOT_REPORTED_BY_CURRENT_TESTS"
-            changes = $null
+            status = if ($propertyComparisons.Count -gt 0) { "REPORTED" } else { "NOT_REPORTED" }
+            scope = "ADM manifest properties; accessor payload values are excluded"
+            accessor_payloads_included = $false
+            total_difference_count = [int](($propertyComparisons | Measure-Object -Property change_count -Sum).Sum)
+            comparisons = @($propertyComparisons.ToArray())
         }
         performance = [ordered]@{
             unit = "milliseconds"
@@ -96,7 +100,8 @@ function Write-Report {
             import_export_metrics = @($testResults | ForEach-Object { $_.metrics })
         }
         known_limitations = @(
-            "The current round-trip suites do not emit a machine-readable list of changed or lost ADM properties.",
+            "The property diff covers manifest metadata from four reference fixtures and excludes binary accessor payload values.",
+            "Binary geometry and animation payload differences are reported by dedicated integration assertions, not in property_changes.",
             "Only successful ADM model import/export operations executed with the QA metrics flag are timed.",
             "The external-asset catalog requires local rights attestations and does not establish legal permission."
         )
@@ -174,8 +179,30 @@ function Write-Report {
         }
     }
     $markdown.Add("")
-    $markdown.Add("## Property comparison and performance limitations")
-    $markdown.Add("- ADM property changes: not reported by the current round-trip tests.")
+    $markdown.Add("## ADM manifest property comparison")
+    $markdown.Add("")
+    $markdown.Add("The comparison excludes binary accessor payload values and their storage references. The integration suites test those separately.")
+    $markdown.Add("")
+    if ($propertyComparisons.Count -eq 0) {
+        $markdown.Add("No machine-readable property comparisons were emitted.")
+    }
+    else {
+        $markdown.Add("| Fixture | Differences | Truncated |")
+        $markdown.Add("| --- | ---: | --- |")
+        foreach ($comparison in $propertyComparisons) {
+            $markdown.Add("| $($comparison.fixture) | $($comparison.change_count) | $($comparison.truncated) |")
+        }
+        $markdown.Add("")
+        $markdown.Add("| Fixture | Property path | Change |")
+        $markdown.Add("| --- | --- | --- |")
+        foreach ($comparison in $propertyComparisons) {
+            foreach ($change in $comparison.changes) {
+                $markdown.Add("| $($comparison.fixture) | $($change.path) | $($change.change) |")
+            }
+        }
+    }
+    $markdown.Add("")
+    $markdown.Add("## Performance limitations")
     $markdown.Add("- Import/export timings cover only successful ADM model operations in the QA runner.")
     [System.IO.File]::WriteAllLines($qaMarkdownPath, $markdown.ToArray(),
         [System.Text.UTF8Encoding]::new($false))
@@ -217,7 +244,31 @@ function Invoke-Step {
     $stepMetrics = [System.Collections.Generic.List[object]]::new()
     foreach ($line in $output) {
         $text = "$line"
-        if ($text -match '^\s*ADM_QA_METRIC:\s*(\{.*\})\s*$') {
+        if ($text -match '^\s*ADM_PROPERTY_DIFF:\s*(\{.*\})\s*$') {
+            try {
+                $comparison = ConvertFrom-Json -InputObject $Matches[1]
+                if ($comparison.schema_version -ne 1 -or
+                    [string]::IsNullOrWhiteSpace($comparison.fixture) -or
+                    $comparison.change_count -lt 0 -or
+                    $null -eq $comparison.changes) {
+                    throw "invalid ADM property comparison"
+                }
+                $propertyComparisons.Add($comparison) | Out-Null
+                $caseResults.Add([pscustomobject][ordered]@{
+                    name = "ADM manifest comparison: $($comparison.fixture)"
+                    status = "PASS"
+                    reason = "$($comparison.change_count) difference(s)"
+                }) | Out-Null
+            }
+            catch {
+                $caseResults.Add([pscustomobject][ordered]@{
+                    name = "Malformed ADM property comparison"
+                    status = "FAIL"
+                    reason = $_.Exception.Message
+                }) | Out-Null
+            }
+        }
+        elseif ($text -match '^\s*ADM_QA_METRIC:\s*(\{.*\})\s*$') {
             try {
                 $metric = ConvertFrom-Json -InputObject $Matches[1]
                 if ($metric.operation -notin @("model_import", "model_export") -or
@@ -363,7 +414,8 @@ try {
             "adm_blender.tests.test_container", "adm_blender.tests.test_draft4",
             "adm_blender.tests.test_gputex", "adm_blender.tests.test_bvh",
             "adm_blender.tests.test_shader_math", "adm_blender.tests.test_terrain_partition",
-            "adm_blender.tests.test_external_asset_catalog", "adm_blender.tests.test_qa_metrics", "-v") },
+            "adm_blender.tests.test_external_asset_catalog", "adm_blender.tests.test_qa_metrics",
+            "adm_blender.tests.test_qa_property_diff", "-v") },
         @{ Name = "ADM standard tests"; Args = @(".\adm-standard\tools\run_tests.py") },
         @{ Name = "Interactive surface conformance"; Args = @(".\adm-standard\tools\test_interactive_surfaces.py") },
         @{ Name = "ADM profile tests"; Args = @(".\adm-standard\tools\test_profiles.py") },
@@ -422,6 +474,9 @@ try {
         else {
             $env:ADM_QA_METRICS = $priorQaMetrics
         }
+    }
+    if ($propertyComparisons.Count -lt 4) {
+        throw "Expected four ADM fixture property comparisons, received $($propertyComparisons.Count)."
     }
 
     if ($CheckOnly) {
