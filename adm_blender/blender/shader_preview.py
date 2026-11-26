@@ -133,6 +133,33 @@ class _Graph:
     def num(self, name):
         return self.comp(name)
 
+    def boolean(self, name):
+        prm = self.schema[name]
+        value = self._param(name)
+        return bool(value.value_bool) if value is not None else bool(prm["default"])
+
+    def enum(self, name):
+        prm = self.schema[name]
+        value = self._param(name)
+        return value.value_enum if value is not None else prm["default"]
+
+    def layer_channel(self, prefix, vector):
+        tex = self.tex(f"{prefix}_texture", vector=vector)
+        if tex is None:
+            return None
+        prm = self.schema[f"{prefix}_channel"]
+        channel = self._param(f"{prefix}_channel")
+        index = int(channel.value_f + 0.5) if channel is not None else int(prm["default"])
+        if index == 3:
+            sample = tex.outputs["Alpha"]
+        else:
+            separate = self.new("ShaderNodeSeparateColor", f"{prefix} Channel")
+            self.link(tex.outputs["Color"], separate.inputs[0])
+            sample = separate.outputs[("Red", "Green", "Blue")[index]]
+        if self.boolean(f"{prefix}_invert"):
+            return self.math("SUBTRACT", 1.0, sample)
+        return sample
+
     def vec(self, name):
         n = K.SHADER_NUMERIC_DIMS[self.schema[name]["type"]]
         return self.combine([self.comp(name, i) for i in range(min(n, 3))])
@@ -454,7 +481,7 @@ def _terrain(g):
     if g.a.shader == "TWO_LAYER":
         blend = g.math("MINIMUM", g.math("MAXIMUM", g.red(mask), 0.0), 1.0) if mask else 0.0
         w = [g.math("SUBTRACT", 1.0, blend), blend]
-    elif g.a.shader_version == K.SHADER_PROFILE_V2:
+    elif K.has_color1_profile(g.a.shader, g.a.shader_version):
         weights = list(_vertex_color(g, "COLOR_1"))
         weights = [
             g.math("MULTIPLY", weights[i], g.num(f"color1_{channel.lower()}_strength"), clamp=True)
@@ -483,7 +510,45 @@ def _terrain(g):
         w[0] = g.math("ADD", w[0], zero)
     else:
         w = [1.0, 0.0, 0.0, 0.0]
+    layer_count = K.SHADER_LAYERED_HEIGHT_COUNTS.get(
+        g.a.shader_key(), 2 if g.a.shader == "TWO_LAYER" else 4)
+    if "height_blend_enabled" in g.schema and g.boolean("height_blend_enabled"):
+        height_params = [g._param(f"layer{i}_height_texture") for i in range(layer_count)]
+        if any(param is not None and param.image is not None for param in height_params):
+            heights = []
+            active_heights = []
+            for i in range(layer_count):
+                sample = g.layer_channel(f"layer{i}_height", g.uv(
+                    height_params[i].tex_coord if height_params[i] is not None else 0))
+                if sample is None:
+                    height = 0.5
+                else:
+                    height = g.math(
+                        "MULTIPLY_ADD", sample, g.num(f"layer{i}_height_scale"),
+                        g.num(f"layer{i}_height_bias"), clamp=True)
+                heights.append(height)
+                active = g.math("GREATER_THAN", w[i], 0.0)
+                active_heights.append(g.mix("FLOAT", -1.0, height, active))
+            highest = active_heights[0]
+            for height in active_heights[1:]:
+                highest = g.math("MAXIMUM", highest, height)
+            scaled_weights = []
+            for weight, height in zip(w, heights):
+                delta = g.math("DIVIDE", g.math("SUBTRACT", height, highest),
+                               g.num("height_blend_transition"))
+                delta = g.math("MINIMUM", g.math("MAXIMUM", delta, -80.0), 0.0)
+                scaled_weights.append(g.math("MULTIPLY", weight, g.math("EXPONENT", delta)))
+            total = scaled_weights[0]
+            for weight in scaled_weights[1:]:
+                total = g.math("ADD", total, weight)
+            safe_total = g.math("MAXIMUM", total, 1e-8)
+            w = [
+                g.mix("FLOAT", base, g.math("DIVIDE", scaled, safe_total),
+                      g.num("height_blend_strength"))
+                for base, scaled in zip(w, scaled_weights)
+            ]
     albedo = alpha = metal = rough = emis = normal = None
+    layer_ao = None
     uvs = g.separate(g.combine((g.comp("uv_scale", 0), g.comp("uv_scale", 1), g.comp("uv_scale", 2))))
     scales = [uvs[0], uvs[1], uvs[2], g.comp("uv_scale", 3)]
 
@@ -496,7 +561,7 @@ def _terrain(g):
         g.link(w[i], n.node.inputs["Scale"])
         return n
 
-    for i in range(2 if g.a.shader == "TWO_LAYER" else 4):
+    for i in range(layer_count):
         if not isinstance(w[i], bpy.types.NodeSocket) and w[i] == 0.0:
             continue
         base = g.combine((g.comp(f"layer{i}_base_color", 0), g.comp(f"layer{i}_base_color", 1),
@@ -518,7 +583,17 @@ def _terrain(g):
                 metal = acc(metal, weighted)
             else:
                 rough = acc(rough, weighted)
-        emis = acc(emis, wvec(i, g.vec(f"layer{i}_emissive")))
+        emission = g.vec(f"layer{i}_emissive")
+        emissive_texture = g.tex(f"layer{i}_emissive_texture", vector=uv) \
+            if f"layer{i}_emissive_texture" in g.schema else None
+        if emissive_texture is not None:
+            emission = g.vmath("MULTIPLY", emission, emissive_texture.outputs["Color"])
+        emis = acc(emis, wvec(i, emission))
+        if f"layer{i}_ao_texture" in g.schema:
+            sample = g.layer_channel(f"layer{i}_ao", uv)
+            ao = g.mix("FLOAT", 1.0, sample, g.num(f"layer{i}_ao_strength")) \
+                if sample is not None else 1.0
+            layer_ao = acc(layer_ao, g.math("MULTIPLY", w[i], ao))
         normal_param = g._param(f"layer{i}_normal")
         normal_uv = g.vmath("SCALE", g.uv(normal_param.tex_coord)) if normal_param and normal_param.image else None
         if normal_uv is not None:
@@ -533,6 +608,9 @@ def _terrain(g):
     g.link(rough, b.inputs["Roughness"])
     g.link(emis, b.inputs["Emission Color"])
     b.inputs["Emission Strength"].default_value = 1.0
+    if layer_ao is not None:
+        g.link(g.vmath("MULTIPLY", albedo, g.combine((layer_ao, layer_ao, layer_ao))),
+               b.inputs["Base Color"])
     enc = g.vmath("MULTIPLY_ADD", g.vmath("NORMALIZE", normal), (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     nm = g.new("ShaderNodeNormalMap", "Terrain Normal")
     g.link(enc, nm.inputs["Color"])

@@ -27,6 +27,7 @@ from ..roads import Road
 from ..terrain_presets import list_presets, load_preset, preset_key, save_preset
 from .map_view import MapView
 from .material_panel import MaterialPanel, MaterialPreview, swatch
+from .height_blend_preview import HeightBlendPreview
 from .terrain_wizard import TerrainSetupWizard
 from .viewer3d import MATERIAL_MODE, TRIANGLE_BUDGET, Viewer3D, triangle_count
 
@@ -650,6 +651,7 @@ class MainWindow(QMainWindow):
 
         self.viewer = Viewer3D()
         self.surface_preview = MaterialPreview()
+        self._height_blend_preview = None
         self.tabs = QTabWidget()
         self.tabs.addTab(map_tab, "Map")
         self.tabs.addTab(self.viewer, "3D")
@@ -723,6 +725,7 @@ class MainWindow(QMainWindow):
         self.material_panel.terrain_preview_requested.connect(self._show_material_on_terrain)
         self.material_panel.surface_preview_requested.connect(
             lambda: self.tabs.setCurrentWidget(self.surface_preview))
+        self.material_panel.height_blend_preview_requested.connect(self._show_height_blend_preview)
         self.material_panel.surface_selected.connect(self.surface_preview.set_surface)
         self.surface_preview.set_surface(self._material().surfaces[self.material_panel.surface_list.currentRow()])
         self.side_tabs.currentChanged.connect(self._side_tab_changed)
@@ -1259,6 +1262,12 @@ class MainWindow(QMainWindow):
         self._field = None
         self._update_map_image()
 
+    def _show_height_blend_preview(self) -> None:
+        if self._height_blend_preview is not None:
+            self._height_blend_preview.close()
+        self._height_blend_preview = HeightBlendPreview(self._material(), self)
+        self._height_blend_preview.show()
+
     def _field_preview(self) -> texturing.FieldPreview | None:
         if self._field is not None or self.hm is None:
             return self._field
@@ -1584,6 +1593,8 @@ class MainWindow(QMainWindow):
         if self._checker is not None:
             self._checker.wait()
         self.surface_preview.shutdown()
+        if self._height_blend_preview is not None:
+            self._height_blend_preview.close()
         self.viewer.shutdown()
         super().closeEvent(event)
 

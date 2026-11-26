@@ -363,6 +363,31 @@ def _param_image_update(self, context):
         _param_owner_refresh(self)
 
 
+_ENUM_ITEM_CACHE = {}
+
+
+def _enum_value_items(self, context):
+    mat = getattr(self, "id_data", None)
+    if not isinstance(mat, bpy.types.Material):
+        return [("UNAVAILABLE", "Unavailable", "")]
+    key = mat.adm.shader_key()
+    schema = K.OFFICIAL_SHADERS.get(key)
+    if schema is None and mat.adm.shader == "CUSTOM" and context is not None and context.scene is not None:
+        from .materials import scene_shader_registry
+        schema = scene_shader_registry(context.scene).get(key)
+    parameter = next((p for p in (schema or ()) if p["name"] == self.name), None)
+    values = tuple(parameter.get("values", ())) if parameter else ()
+    if self.value_enum and self.value_enum not in values:
+        values = (self.value_enum,) + values
+    if not values:
+        return [("UNAVAILABLE", "Unavailable", "")]
+    if values not in _ENUM_ITEM_CACHE:
+        _ENUM_ITEM_CACHE[values] = [
+            (value, value.replace("_", " ").title(), value) for value in values
+        ]
+    return _ENUM_ITEM_CACHE[values]
+
+
 class ADMShaderParamValue(PropertyGroup):
     """Per-material value of a typed shader parameter.  Animate ``value_f`` / ``value_vec``."""
     name: StringProperty(name="Name")
@@ -372,6 +397,7 @@ class ADMShaderParamValue(PropertyGroup):
     value_f: FloatProperty(name="Value", update=_param_value_update)
     value_vec: FloatVectorProperty(name="Value", size=4, update=_param_value_update)
     value_bool: BoolProperty(name="Value", update=_param_value_update)
+    value_enum: EnumProperty(name="Value", items=_enum_value_items, update=_param_value_update)
     texture_channel: EnumProperty(
         name="Channel", items=[("R", "R", "Red", 0), ("G", "G", "Green", 1),
                                ("B", "B", "Blue", 2), ("A", "A", "Alpha", 3)],
@@ -388,11 +414,49 @@ def _preview_update(self, context):
         refresh_shader_preview(mat)
 
 
+def _official_shader_versions(shader):
+    shader_id = K.OFFICIAL_SHADER_IDS.get(shader)
+    if shader_id is None:
+        return []
+    return sorted({
+        version for profile_id, version in K.OFFICIAL_SHADERS
+        if profile_id == shader_id
+    })
+
+
+def _shader_version_items(self, context):
+    versions = ("1.0.0", "1.1.0", "2.0.0", "2.1.0")
+    labels = {
+        ("CORE", "1.0.0"): ("1.0.0 (legacy)", "Preserve the original PBR behavior"),
+        ("CORE", "2.0.0"): ("2.0.0 (COLOR_1)", "Enable this profile's COLOR_1 mask contract"),
+        ("CORE", K.SHADER_PROFILE_EDGE_WEAR): (
+            "2.1.0 (edge wear)", "Use geometric edge wear and per-instance dirt on PBR"),
+        ("TERRAIN_4", "1.0.0"): ("1.0.0 (legacy)", "Use texture-based four-layer blending"),
+        ("TERRAIN_4", "2.0.0"): ("2.0.0 (COLOR_1)", "Use COLOR_1 four-layer weights"),
+        ("TERRAIN_4", K.SHADER_PROFILE_LAYERED_HEIGHT_V1): (
+            "1.1.0 (height layers)", "Add per-layer AO, height blending, and parallax metadata"),
+        ("TERRAIN_4", K.SHADER_PROFILE_LAYERED_HEIGHT_V2): (
+            "2.1.0 (height layers)", "Add per-layer AO, height blending, and parallax to COLOR_1 weights"),
+        ("TWO_LAYER", "1.0.0"): ("1.0.0 (legacy)", "Use the original two-layer profile"),
+        ("TWO_LAYER", K.SHADER_PROFILE_LAYERED_HEIGHT_V1): (
+            "1.1.0 (height layers)", "Add per-layer AO, height blending, and parallax metadata"),
+        ("LAYERED", "1.0.0"): ("1.0.0 (legacy)", "Use the original layered PBR profile"),
+        ("LAYERED", "2.0.0"): ("2.0.0 (COLOR_1)", "Enable this profile's COLOR_1 mask contract"),
+        ("LAYERED", K.SHADER_PROFILE_LAYERED_HEIGHT_V2): (
+            "2.1.0 (height layers)", "Add per-layer AO, height blending, and parallax metadata"),
+    }
+    items = []
+    for version in versions:
+        label, description = labels.get(
+            (self.shader, version), (version, f"Use the {version} profile"))
+        items.append((version, label, description))
+    return items
+
+
 def _shader_update(self, context):
-    if self.shader_version == K.SHADER_PROFILE_EDGE_WEAR and self.shader != "CORE":
-        self.shader_version = "1.0.0"
-    if self.shader == "TWO_LAYER" and self.shader_version != "1.0.0":
-        self.shader_version = "1.0.0"
+    versions = _official_shader_versions(self.shader)
+    if versions and self.shader_version not in versions:
+        self.shader_version = "1.0.0" if "1.0.0" in versions else versions[0]
     required_alpha = {
         "CUTOUT": "MASK", "DECAL": "BLEND", "GLASS": "BLEND", "WATER": "BLEND",
         "FOLIAGE": "MASK",
@@ -401,25 +465,24 @@ def _shader_update(self, context):
         self.alpha_mode = required_alpha
         from .materials import apply_alpha_mode_to_material
         apply_alpha_mode_to_material(self.id_data, required_alpha)
-        from .materials import sync_official_shader_params
-        sync_official_shader_params(self.id_data)
         if self.shader == "FOLIAGE":
             self.id_data.use_backface_culling = False
-    elif self.shader not in ("CUSTOM", "LAYERED") or self.shader_version == K.SHADER_PROFILE_V2:
-        from .materials import sync_official_shader_params
-        sync_official_shader_params(self.id_data)
     if self.shader == "INTERACTIVE":
         self.shader_version = "1.0.0"
+    if self.shader != "CUSTOM":
+        from .materials import sync_official_shader_params
+        sync_official_shader_params(self.id_data)
     from .materials import refresh_shader_preview
     refresh_shader_preview(self.id_data)
 
 
 def _shader_version_update(self, context):
-    if self.shader_version == K.SHADER_PROFILE_EDGE_WEAR and self.shader != "CORE":
+    if self.shader == "INTERACTIVE" and self.shader_version != "1.0.0":
         self.shader_version = "1.0.0"
         return
-    if self.shader in ("INTERACTIVE", "TWO_LAYER") and self.shader_version != "1.0.0":
-        self.shader_version = "1.0.0"
+    versions = _official_shader_versions(self.shader)
+    if versions and self.shader_version not in versions:
+        self.shader_version = "1.0.0" if "1.0.0" in versions else versions[0]
         return
     from .materials import sync_official_shader_params, refresh_shader_preview
     if self.shader != "CUSTOM":
@@ -547,11 +610,8 @@ class ADMMaterialProps(PropertyGroup):
     occlusion_strength: FloatProperty(name="Occlusion Strength", default=1.0, min=0.0, max=1.0)
     shader: EnumProperty(name="Shader", items=SHADER_KINDS, default="CORE", update=_shader_update,
                          description="ADM shader of this material; switching rebuilds the viewport preview")
-    shader_version: EnumProperty(name="Profile Version", items=[
-        ("1.0.0", "1.0.0 (legacy)", "Preserve the original profile behavior"),
-        ("2.0.0", "2.0.0 (COLOR_1)", "Enable this profile's COLOR_1 mask contract"),
-        ("2.1.0", "2.1.0 (edge wear)", "Use geometric edge wear and per-instance dirt on PBR"),
-    ], default="1.0.0", update=_shader_version_update)
+    shader_version: EnumProperty(name="Profile Version", items=_shader_version_items,
+                                 update=_shader_version_update)
     custom_shader: StringProperty(name="Custom Shader", description="id@version of a scene shader definition",
                                   update=_custom_shader_update)
     animation_id: StringProperty(name="Animation ID",

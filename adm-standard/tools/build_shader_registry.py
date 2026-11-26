@@ -12,18 +12,21 @@ contracts = {
     K.SHADER_LAYERED: "../ADM-1.0-SPEC.md#84-standard-optional-layered-shader-adm-shader-layered-1",
     (K.SHADER_CORE[0], K.SHADER_PROFILE_EDGE_WEAR): "ADM_shader_vertex_masks_v2_1.md",
 }
+contracts.update({key: "ADM_layered_height_profiles_v1.md" for key in K.SHADER_LAYERED_HEIGHT_COUNTS})
 for key in K.OFFICIAL_SHADERS:
     if key not in contracts:
         contracts[key] = "ADM_shader_vertex_masks_v2.md" if key[1] == K.SHADER_PROFILE_V2 \
             else f"{key[0]}.v1.md"
 
-data = {
-    "shaders": [
-        {"id": sid, "version": version, "parameters": K.OFFICIAL_SHADERS[(sid, version)],
-         "contract": contracts[(sid, version)]}
-        for sid, version in K.OFFICIAL_SHADERS
-    ],
-}
+shaders = []
+for sid, version in K.OFFICIAL_SHADERS:
+    key = (sid, version)
+    entry = {"id": sid, "version": version, "parameters": K.OFFICIAL_SHADERS[key],
+             "contract": contracts[key]}
+    if key in K.SHADER_PROFILE_CAPABILITIES:
+        entry["capability"] = K.SHADER_PROFILE_CAPABILITIES[key]
+    shaders.append(entry)
+data = {"shaders": shaders}
 path = root / "adm-standard" / "shaders" / "registry.json"
 rendered = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 if "--check" in sys.argv:

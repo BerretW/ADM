@@ -16,7 +16,7 @@ from .material import TerrainMaterial
 from .pipeline import BuildParams
 
 PROJECT_FORMAT = "apparatus-world-tile-project"
-PROJECT_VERSION = 4
+PROJECT_VERSION = 5
 PROJECT_EXTENSION = ".awtp"
 PROJECT_FILTER = "Apparatus World Tile project (*.awtp)"
 
@@ -50,7 +50,8 @@ class Project:
         export["out_dir"] = _relative(self.export.out_dir, base)
         return {
             "format": PROJECT_FORMAT,
-            "format_version": PROJECT_VERSION if any(b.noise != 0.0 for b in self.material.biomes) else 3,
+            "format_version": (5 if self.material.has_advanced_shader_features() else
+                               4 if any(b.noise != 0.0 for b in self.material.biomes) else 3),
             "generator": f"appartus_world_tile {__version__}",
             "build": params,
             "material": self.material.to_dict(base),

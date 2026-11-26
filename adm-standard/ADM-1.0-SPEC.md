@@ -20,7 +20,11 @@ The terms **MUST**, **MUST NOT**, **SHOULD**, **MAY** express requirements. Fiel
 
 **Self-contained model by default:** `.adm` is self-contained for its geometry, skeleton, morph targets, materials and images. It may contain multiple mesh primitives and nodes. Models of a building, animal or car can be complete in one file. The generic model/asset layer does NOT require references to other `.adm` files. Animations are explicitly in separate `.adm_anim` libraries and may be shared by models. Loading libraries is an application responsibility.
 
-**Mandatory reader capabilities:** `ADM-CONTAINER-1` validates/streams the chunk container and `ADM-CORE-1` validates model semantics; `ADM-ANIM-1` parses/evaluates animation libraries; `ADM-HUMANOID-1` supports standardized humanoid retarget; `ADM-IK-1` supports two-segment IK; `ADM-FACE-ARKIT52-1` supports the facial channel profile; `ADM-SHADER-CORE-1` supports standard PBR shader binding and portable PBR parameter animation; `ADM-SHADER-LAYERED-1` supports deterministic multilayer material evaluation; `ADM-TEX-KTX2-1` and `ADM-TEX-DDS-1` decode the GPU texture container subsets of §8.6. Readers MUST advertise the profile(s) they implement, not claim support for data that they silently drop. Writers need not generate every optional model feature, but generated data MUST conform.
+**Mandatory reader capabilities:** `ADM-CONTAINER-1` validates/streams the chunk container and `ADM-CORE-1` validates model semantics; `ADM-ANIM-1` parses/evaluates animation libraries; `ADM-HUMANOID-1` supports standardized humanoid retarget; `ADM-IK-1` supports two-segment IK; `ADM-FACE-ARKIT52-1` supports the facial channel profile; `ADM-SHADER-CORE-1` supports standard PBR shader binding and portable PBR parameter animation; `ADM-SHADER-LAYERED-1` supports deterministic multilayer material evaluation; `ADM-TEX-KTX2-1` and `ADM-TEX-DDS-1` decode the GPU texture subsets of §8.6, while the separately versioned `ADM-TEX-KTX2-2` and `ADM-TEX-DDS-2` decode the additional formats of §8.7. Readers MUST advertise the profile(s) they implement, not claim support for data that they silently drop. Writers need not generate every optional model feature, but generated data MUST conform.
+
+`ADM-SHADER-LAYERED-HEIGHT-1` is an optional renderer capability defined by
+[`ADM_layered_height_profiles_v1.md`](shaders/ADM_layered_height_profiles_v1.md). It covers the
+exact layered AO and height profiles in that contract; it is not implied by `ADM-SHADER-LAYERED-1`.
 
 **Optional interactive display capability:** `ADM-INTERACTIVE-SURFACES-1` implements the exact
 `adm.surface.interactive@1.0.0` visual contract and the versioned surface binding extension
@@ -210,6 +214,11 @@ compatibility baseline.
 
 A shader is identified by an exact pair `(shader.id, shader.version)`, serialized as `"shader":{"id":"adm.pbr.metallic_roughness","version":"1.0.0"}`. `id` is a nonempty ASCII dot-qualified identifier (regex `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+`, length 3..160 bytes), compared byte-for-byte. The `adm.` prefix is reserved for the official registry; external publishers SHOULD use reverse-DNS prefixes they control (for example `org.example.hologram`). `version` MUST be an exact SemVer 2.0.0 version without build metadata or ranges; a reader MUST NOT silently substitute another version. During development, a contract may change only with a matching development-change record and changelog entry. Increment the shader contract's major version when its meaning changes incompatibly; consumers that do not support the exact pair use the specified PBR fallback and report that status. The development process does not require keeping superseded shader definitions available. `shader` defaults to the core PBR shader. A material's `animationId`, when present, MUST match `[a-z][a-z0-9_]*` and be unique across all `materials` in one model. It is a portable animation binding key, NOT an array index or user-visible material title. Animatable shader materials MUST provide `animationId`.
 
+An official registry entry MAY include a `capability` identifier matching
+`[A-Z0-9][A-Z0-9-]*`. This metadata names the reader capability required to claim full support for
+that exact profile; it is not serialized on materials and does not remove the ordinary PBR fallback.
+Capability identifiers and their semantics are defined by the referenced profile contract.
+
 `shaderDefinitions`, optional on the `.adm` top-level, is an array of **embedded descriptive schemas** (no executable code). Each entry MUST have `{ "id":string, "version":string, "parameters":[...] }` and MAY have `"description"` and `"author"` strings. No two entries may have the same `(id,version)`. Its parameter entries MUST satisfy §8.2. An embedded definition is required for each *non-official custom shader referenced by a material*, so parsers can validate names/types and editors can expose an inspector without internet access. Official `adm.*` shader definitions MUST NOT be redefined in the file: the published registry takes precedence. An embedded custom definition describes the interface, not an interoperable rendering algorithm; custom implementations require a separately published shader contract, and otherwise conform only by rendering the PBR fallback. Missing embedded custom definition is invalid even if an application has an implementation installed.
 
 The format does not define shader lookup paths, downloads, shader binaries, shader compilers, rendering APIs, caching or resource-pack installation. The external shader registry is a public collection of versioned *specifications* defining parameter meanings and their rendering behavior. An implementation MUST either implement the exact declared shader contract or use the PBR fallback and report status `SHADER_FALLBACK`; it MUST NOT pretend that arbitrary same-named parameters give equivalent rendering. Unknown official **optional** shaders also fall back. The standard core shader is not optional. An application MUST expose a query/report interface identifying supported `(id,version)` pairs and fallback decisions.
@@ -224,7 +233,7 @@ A shader definition's `parameters` array contains unique entries:
  "description":"Linear dirt coverage fraction"}
 ```
 
-Parameter name syntax `[a-z][a-z0-9_]*` (1..64 characters). Permitted types: `F32` (finite JSON number), `VEC2` (2 finite JSON numbers), `VEC3` (3), `VEC4` (4), `BOOL` (JSON true/false), `TEXTURE` (`textureRef` as defined in §8). Only `F32`, `VEC2`, `VEC3`, `VEC4` can be animatable, and `animatable:true` on BOOL/TEXTURE is invalid. `minimum` and `maximum` are optional **only** for numeric types, either a scalar for F32 or same-length vector for VECn. Bounds MUST be finite and componentwise `minimum <= maximum`; all parameter defaults and material values MUST lie within the declared bounds. If bounds are omitted the value is any finite value of the matching type. `description` is mandatory non-whitespace UTF-8 text (at most 2048 Unicode code points). `animatable` defaults to false. `default` is required for all parameters; for `TEXTURE` it is either `null` (no texture) or valid textureRef. `shaderParameters` is a JSON object from parameter name to value. A material `extensions` object, when present, is an ordinary JSON object keyed only by registered extension IDs that are listed in the file-level `extensionsUsed`; unknown extension data is validated and ignored only according to §4. A material without any layer or custom extension MAY omit `extensions`. A material MAY omit any parameter, in which case the declared default is used. Unknown names, wrong types, nonfinite components and out-of-range values MUST be rejected. Duplicate parameter names in a definition are invalid. A reader MUST validate the parameter object even if it will render fallback.
+Parameter name syntax `[a-z][a-z0-9_]*` (1..64 characters). Permitted types: `F32` (finite JSON number), `VEC2` (2 finite JSON numbers), `VEC3` (3), `VEC4` (4), `BOOL` (JSON true/false), `TEXTURE` (`textureRef` as defined in §8), and `ENUM` (a case-sensitive string in the definition's non-empty, unique `values` array). Only `F32`, `VEC2`, `VEC3`, `VEC4` can be animatable; `ENUM`, `BOOL` and `TEXTURE` cannot. `minimum` and `maximum` are optional **only** for numeric types, either a scalar for F32 or same-length vector for VECn. Bounds MUST be finite and componentwise `minimum <= maximum`; all parameter defaults and material values MUST lie within the declared bounds. If bounds are omitted the value is any finite value of the matching numeric type. `description` is mandatory non-whitespace UTF-8 text (at most 2048 Unicode code points). `animatable` defaults to false. `default` is required for all parameters; for `TEXTURE` it is either `null` (no texture) or valid textureRef. `shaderParameters` is a JSON object from parameter name to value. A material `extensions` object, when present, is an ordinary JSON object keyed only by registered extension IDs that are listed in the file-level `extensionsUsed`; unknown extension data is validated and ignored only according to §4. A material without any layer or custom extension MAY omit `extensions`. A material MAY omit any parameter, in which case the declared default is used. Unknown names, wrong types, nonfinite components and out-of-range values MUST be rejected. Duplicate parameter names in a definition are invalid. A reader MUST validate the parameter object even if it will render fallback.
 
 Core PBR fallback fields (`baseColorFactor`, `metallicFactor`, etc. in §8) are **independent** of custom shader parameters. They MUST NOT be silently overridden by similarly named custom keys, nor are they inherently animated when a custom shader parameter changes. For intentional fallback animation, an animation channel MAY explicitly target a PBR fallback field using `target.kind="pbrParameter"` (§15 and §18.1). This makes cross-viewer behavior predictable.
 
@@ -249,7 +258,7 @@ the mandatory portable PBR fallback. They do not encode UI, camera, engine resou
 
 The official shader `adm.pbr.layered@1.0.0` is defined as a separate optional **semantic profile**, not a free-form Blender node graph. To avoid dependence on engine-specific blend algorithms, its shader binding MUST use exactly one numeric `layer_factor` parameter of type F32, finite in `[0,1]`, default `0`, animatable; the material MUST also include `extensions.ADM_material_layers_v1` containing exactly two *complete* numeric PBR layer records (`base` and `overlay`) and an optional `maskTexture` textureRef. A layer record has `baseColorFactor` (linear RGBA), `metallicFactor`, `roughnessFactor`, `emissiveFactor`, and optional `normalFactor` (tangent-frame vec3, default `[0,0,1]`, length >0). The `extensionsUsed` list MUST include `ADM_material_layers_v1`; `extensionsRequired` MUST include it if layered rendering is necessary rather than optional. If an implementation does not support layered rendering, it MUST use top-level PBR fallback; ignoring a **required** extension still makes file unsupported. This extension identifier is registered by this document; its structural definition here is normative.
 
-At a fragment, `a = clamp(layer_factor × mask,0,1)`, where `mask` is 1 if `maskTexture` absent, else the sampled **linear red channel** of the mask texture. Both layer numeric PBR properties are combined componentwise by `mix(base,overlay,a)` (`mix(x,y,a) = x(1-a)+ya`) in linear space. `normalFactor` is interpolated componentwise then normalized; zero resulting vector is invalid. This interpolated tangent normal is transformed by the same tangent basis as §8. Layered rendering is **two-layer only** in v1.0; composing additional layers, height blending, packed material graphs, per-layer textures/UVs, clearcoat and damage/paint shader semantics remain separately specified future registry entries. A producer MUST NOT claim those effects are interoperably defined by this two-layer profile.
+At a fragment, `a = clamp(layer_factor × mask,0,1)`, where `mask` is 1 if `maskTexture` absent, else the sampled **linear red channel** of the mask texture. Both layer numeric PBR properties are combined componentwise by `mix(base,overlay,a)` (`mix(x,y,a) = x(1-a)+ya`) in linear space. `normalFactor` is interpolated componentwise then normalized; zero resulting vector is invalid. This interpolated tangent normal is transformed by the same tangent basis as §8. Layered rendering is **two-layer only** in v1.0. The v1.0 profile does not define height blending, per-layer maps/UVs, clearcoat or damage/paint semantics; separate versioned profiles define any such effects without changing this contract.
 
 The `layer_factor` may be animated via a `shaderParameter` channel, causing the layer blend to vary over time without any runtime shader source code in ADM. Rendering an unsupported layered shader uses the ordinary material's base PBR fallback properties, NOT an implementation-chosen interpretation of the layers. This deliberate v1.0 restriction is preferred to an underspecified multilayer pipeline.
 
@@ -271,7 +280,7 @@ The `layer_factor` may be animated via a `shaderParameter` channel, causing the 
 
 The example is a **material fragment**, not a complete `.adm` manifest. A containing file MUST list the extension under `extensionsUsed`; it MUST list it under `extensionsRequired` only if exact layered rendering is essential. The top-level PBR values remain the intended fallback.
 
-### 8.6 GPU texture container registry (`ADM-TEX-KTX2-1`, `ADM-TEX-DDS-1`)
+### 8.6 GPU texture container registry, version 1 (`ADM-TEX-KTX2-1`, `ADM-TEX-DDS-1`)
 
 KTX2 and DDS images exist so engines that upload block-compressed data directly can skip decoding. They never replace the portable path: every texture whose source is KTX2/DDS carries a PNG/JPEG `fallbackSource` (§8), and a writer's default output SHOULD be PNG/JPEG only. The fallback and the GPU image MUST encode the same picture; lossy block compression differences are allowed.
 
@@ -289,9 +298,49 @@ KTX2 and DDS images exist so engines that upload block-compressed data directly 
 
 **DDS profile:** magic `DDS `, 124-byte header with `ddspf.dwFourCC = "DX10"` followed by the 20-byte `DDS_HEADER_DXT10` (`resourceDimension` = 3 (TEXTURE2D), `miscFlag` = 0, `arraySize` = 1); mip levels stored contiguously, level 0 first. Legacy (non-DX10) headers are outside the subset; tools MAY still read them as authoring *input*.
 
-**Outside 1.0:** Basis Universal / UASTC / ETC1S, ZSTD or zlib supercompression, BC4–BC7, ASTC, ETC2, HDR formats, cubemaps, arrays and 3D textures. Readers MUST reject such GPU images (`IMAGE_DECODE`) and use the fallback.
+**Outside the version 1 capabilities:** Basis Universal / UASTC / ETC1S, ZSTD or zlib supercompression, BC4–BC7, ASTC, ETC2, HDR formats, cubemaps, arrays and 3D textures. A reader implementing only version 1 MUST reject an unsupported GPU primary (`IMAGE_DECODE`) and use the fallback.
 
 **Reader behaviour:** a reader advertising the capability MAY use the GPU image, its stored mips, or the fallback; a reader without it MUST use the fallback and SHOULD report a non-fatal diagnostic. Validation codes: `IMAGE_DECODE` (container violates the subset), `IMAGE_FALLBACK_REQUIRED`, `IMAGE_FALLBACK_SIZE`, `IMAGE_COLORSPACE`.
+
+### 8.7 Advanced GPU texture formats, version 2
+
+`ADM-TEX-KTX2-2` and `ADM-TEX-DDS-2` are opt-in capabilities. Each adds the formats in this
+section to the matching version 1 container subset; it does not change the meaning of either
+version 1 capability. A version 2 reader MUST support all version 1 and version 2 formats listed
+for its container. A writer MUST use the version 1 capability for RGBA8, BC1, or BC3 and MUST
+advertise version 2 when it writes a version 2-only format. Every GPU source still requires a
+same-size PNG fallback. The fallback MUST preserve the source precision; an R16_UNORM source uses
+a 16-bit grayscale PNG and MUST NOT be reduced to 8 bits.
+
+| Format | KTX2 `vkFormat` | DDS DXGI | Layout | Transfer |
+|---|---:|---:|---|---|
+| R8_UNORM | 9 | 61 | 1×1, 1 byte; R = value | Linear |
+| R16_UNORM | 70 | 56 | 1×1, 2 bytes little-endian; R = value | Linear |
+| BC4_UNORM | 139 | 80 | 4×4, 8 bytes; R = value | Linear |
+| BC5_UNORM | 141 | 83 | 4×4, 16 bytes; R and G = values | Linear |
+| BC7_UNORM | 145 | 98 | 4×4, 16 bytes; RGBA | Linear |
+| BC7_SRGB | 146 | 99 | 4×4, 16 bytes; RGBA | sRGB |
+
+For R8 and R16, sampling yields `(R, 0, 0, 1)`. BC4 yields `(R, 0, 0, 1)` and BC5 yields
+`(R, G, 0, 1)`. An implementation that expands a scalar or two-channel image for a portable
+fallback MUST use those values and MUST NOT fabricate alpha as data. For normal-role BC5, the
+channels are tangent-space X and Y in linear UNORM. Reconstruct
+`z = sqrt(max(0, 1 - x*x - y*y))` after remapping X and Y from `[0,1]` to `[-1,1]`, then
+
+R8, R16, BC4, and BC5 are linear data formats and MUST NOT be used as sRGB sources. BC7_SRGB
+MUST be used for base-color and emission color roles; BC7_UNORM MUST be used for data roles.
+R16 mip generation MUST average normalized 16-bit linear samples and quantize back to 16 bits.
+Scalar data mips MUST be filtered in linear space. Normal mips MUST average decoded vectors,
+renormalize each result, and encode the normalized vector; filtering encoded channels directly
+does not conform. Readers MUST validate dimensions, exact per-level byte counts, mip count,
+alignment, color model, transfer function, and payload bounds before exposing a texture. A
+version 1 reader MUST select the portable fallback for every version 2-only format.
+
+For KTX2, `typeSize` MUST be 2 for R16_UNORM and 1 for every other format in this section. The
+KTX2 level index, DFD channel model, and transfer function MUST match the selected `vkFormat`;
+R8/R16 use the RGBSDA data model, BC4 uses the BC4 model, BC5 uses BC5, and BC7 uses BC7. DDS
+uses the corresponding DXGI identifier in the DX10 header. No version 2 format permits
+supercompression, arrays, cubemaps, or 3D images.
 
 ## 9. Morph targets / blend shapes (CORE, required support)
 
@@ -722,7 +771,9 @@ Recommended source citation references:
 
 `ADM_joint_display_v1` is a separately versioned optional extension under this policy. Its
 node-local display data is required only by files that declare it in `extensionsRequired`; it does
-not revise core fields.
+not revise core fields. `ADM_material_height_v1` defines optional surface-height sampling and
+parallax without changing geometry; its material contract and fallback are specified in
+[`extensions/ADM_material_height_v1.md`](extensions/ADM_material_height_v1.md).
 
 
 

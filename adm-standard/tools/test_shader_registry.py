@@ -28,6 +28,11 @@ assert len(entries) == len({(entry["id"], entry["version"]) for entry in entries
 assert all(re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", entry["id"]) for entry in entries)
 assert {(entry["id"], entry["version"]) for entry in entries} == set(K.OFFICIAL_SHADERS)
 assert { (entry["id"], entry["version"]): entry["parameters"] for entry in entries } == K.OFFICIAL_SHADERS
+entry_by_key = {(entry["id"], entry["version"]): entry for entry in entries}
+assert {key: entry_by_key[key]["capability"] for key in K.SHADER_PROFILE_CAPABILITIES} == \
+    K.SHADER_PROFILE_CAPABILITIES
+assert all("capability" not in entry for key, entry in entry_by_key.items()
+           if key not in K.SHADER_PROFILE_CAPABILITIES)
 assert set(K.OFFICIAL_SHADER_KINDS) == set(K.OFFICIAL_SHADERS)
 assert set(K.OFFICIAL_SHADER_KEYS.values()) == {
     key for key in K.OFFICIAL_SHADER_KINDS if key[1] == "1.0.0"
@@ -39,6 +44,36 @@ edge_wear_params = {parameter["name"] for parameter in K.OFFICIAL_SHADERS[edge_w
 assert "color1_g_strength" not in edge_wear_params
 assert "color1_b_strength" not in edge_wear_params
 assert {"color1_g_color", "color1_b_color"} <= edge_wear_params
+
+layered_height_profiles = {
+    ("adm.terrain.four_layer", "1.1.0"): 4,
+    ("adm.terrain.four_layer", "2.1.0"): 4,
+    ("adm.surface.two_layer", "1.1.0"): 2,
+    ("adm.pbr.layered", "2.1.0"): 4,
+}
+for key, layer_count in layered_height_profiles.items():
+    parameters = {parameter["name"]: parameter for parameter in K.OFFICIAL_SHADERS[key]}
+    assert {"height_blend_enabled", "height_blend_transition", "height_blend_strength",
+            "parallax_mode", "parallax_min_steps", "parallax_max_steps"} <= set(parameters)
+    assert parameters["height_blend_enabled"]["default"] is False
+    assert parameters["height_blend_transition"]["default"] == 0.2
+    assert parameters["height_blend_strength"]["default"] == 1.0
+    mode = parameters["parallax_mode"]
+    assert mode["type"] == "ENUM"
+    assert mode["values"] == ["NONE", "PARALLAX", "PARALLAX_OCCLUSION"]
+    assert param_value_error(mode, "PARALLAX_OCCLUSION") is None
+    assert param_value_error(mode, "DISPLACEMENT")
+    for index in range(layer_count):
+        prefix = f"layer{index}_"
+        assert {prefix + suffix for suffix in (
+            "ao_texture", "ao_channel", "ao_invert", "ao_strength",
+            "height_texture", "height_channel", "height_invert", "height_scale",
+            "height_bias", "parallax_scale",
+        )} <= set(parameters)
+    old_key = (key[0], "1.0.0" if key[1] == "1.1.0" else "2.0.0")
+    old_parameters = {parameter["name"] for parameter in K.OFFICIAL_SHADERS[old_key]}
+    assert "height_blend_enabled" not in old_parameters
+
 for entry in entries:
     relative_path = entry["contract"].split("#", 1)[0]
     contract = (root / "adm-standard" / "shaders" / relative_path).resolve()

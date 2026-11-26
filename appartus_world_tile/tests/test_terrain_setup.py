@@ -68,6 +68,26 @@ class TerrainSetupTest(unittest.TestCase):
         with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["version"], 2)
 
+    def test_advanced_shader_settings_round_trip_in_preset_version_three(self):
+        material = TerrainMaterial()
+        texture = os.path.join(self.tmp.name, "height.png")
+        Image.fromarray(np.full((4, 4), 128, np.uint8), "L").save(texture)
+        surface = material.surface("grass")
+        surface.height_map.path = texture
+        surface.height_scale = 0.35
+        surface.ao_strength = 0.6
+        material.height_blend_enabled = True
+        material.parallax_mode = "PARALLAX"
+        folder = save_preset(os.path.join(self.tmp.name, "presets"), "Layered", material)
+        with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["version"], 3)
+        loaded = load_preset(os.path.dirname(folder), "layered")
+        self.assertTrue(loaded.height_blend_enabled)
+        self.assertEqual(loaded.parallax_mode, "PARALLAX")
+        self.assertEqual(loaded.surface("grass").height_scale, 0.35)
+        self.assertEqual(loaded.surface("grass").ao_strength, 0.6)
+        self.assertTrue(loaded.surface("grass").height_map.path.startswith(os.path.join(folder, "textures")))
+
     def test_preset_rejects_texture_paths_outside_its_directory(self):
         root = os.path.join(self.tmp.name, "presets")
         folder = save_preset(root, "safe", TerrainMaterial())

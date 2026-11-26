@@ -11,15 +11,21 @@ try:
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QMessageBox
     from awt.gui.main_window import MainWindow
+    from awt.gui.height_blend_preview import compose_preview
+    from awt.gui.height_blend_preview import HeightBlendPreview
+    from awt.gui.material_panel import MaterialPanel
     from awt.gui.terrain_wizard import TerrainSetupWizard
 except ImportError:
     QApplication = None
     TerrainSetupWizard = None
     MainWindow = None
+    MaterialPanel = None
+    compose_preview = None
+    HeightBlendPreview = None
 
 import numpy as np
 
-from awt.material import Band, TerrainMaterial
+from awt.material import Band, MapSlot, Surface, TerrainMaterial
 from awt.heightmap import Heightmap
 from awt.project import load_project
 
@@ -56,6 +62,72 @@ class TerrainWizardTest(unittest.TestCase):
             window._open_project_file(path)
             window.material_panel.biome_list.setCurrentRow(0)
             self.assertEqual(window.material_panel.biome_editor.noise.value(), 65)
+
+    def test_advanced_material_controls_update_surface_and_shader_settings(self):
+        panel = MaterialPanel()
+        self.addCleanup(panel.close)
+        surface = panel.material().surface("grass")
+
+        panel.surface_editor.ao.factor.setValue(0.65)
+        panel.surface_editor.height.factor.setValue(0.4)
+        panel.surface_editor.height_bias.setValue(-0.1)
+        panel.surface_editor.parallax_scale.setValue(0.025)
+        panel._surface_edited()
+
+        panel.height_blend.setChecked(True)
+        panel.height_blend_transition.setValue(0.15)
+        panel.parallax_mode.setCurrentIndex(panel.parallax_mode.findData("PARALLAX_OCCLUSION"))
+        panel.parallax_min_steps.setValue(12)
+        panel.parallax_max_steps.setValue(48)
+
+        self.assertAlmostEqual(surface.ao_strength, 0.65)
+        self.assertAlmostEqual(surface.height_scale, 0.4)
+        self.assertAlmostEqual(surface.height_bias, -0.1)
+        self.assertAlmostEqual(surface.parallax_scale, 0.025)
+        self.assertTrue(panel.material().height_blend_enabled)
+        self.assertAlmostEqual(panel.material().height_blend_transition, 0.15)
+        self.assertEqual(panel.material().parallax_mode, "PARALLAX_OCCLUSION")
+        self.assertEqual(panel.material().parallax_min_steps, 12)
+        self.assertEqual(panel.material().parallax_max_steps, 48)
+        panel.terrain_shader_version.setCurrentIndex(
+            panel.terrain_shader_version.findData("2.1.0"))
+        self.assertEqual(panel.material().terrain_shader_version, "2.1.0")
+        panel.material().validate()
+
+    def test_multi_surface_preview_uses_height_weights_and_preserves_zero_layers(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            low_path = os.path.join(directory, "low.png")
+            high_path = os.path.join(directory, "high.png")
+            Image.new("L", (8, 8), 20).save(low_path)
+            Image.new("L", (8, 8), 230).save(high_path)
+            low = Surface("soil", color=[120, 80, 40], repeat_m=15,
+                          height_map=MapSlot(low_path))
+            high = Surface("rock", color=[180, 180, 180], repeat_m=15,
+                           height_map=MapSlot(high_path))
+
+            classic_rgb, classic_weights = compose_preview([low, high], [50, 50], size=16)
+            blended_rgb, blended_weights = compose_preview(
+                [low, high], [50, 50], size=16, height_blend=True, transition=0.2, strength=1.0)
+            self.assertGreater(float(blended_weights[1].mean()), float(classic_weights[1].mean()))
+            self.assertGreater(float(blended_rgb[..., 0].mean()), float(classic_rgb[..., 0].mean()))
+            np.testing.assert_allclose(blended_weights.sum(axis=0), 1.0)
+            _, one_hot = compose_preview([low, high], [100, 0], size=16,
+                                         height_blend=True, transition=0.01)
+            self.assertTrue((one_hot[1] == 0).all())
+
+    def test_multi_surface_preview_dialog_renders_and_switches_weight_view(self):
+        preview = HeightBlendPreview(TerrainMaterial())
+        self.addCleanup(preview.close)
+        self.app.processEvents()
+        self.assertIsNotNone(preview._actor)
+        self.assertIn("Mean final weights", preview.weight_label.text())
+        preview.height_blend.setChecked(True)
+        preview.view.setCurrentIndex(1)
+        preview.lighting.setCurrentIndex(1)
+        self.assertIsNotNone(preview._actor)
+        self.assertFalse(preview.error.text())
 
     def test_duplicate_biome_surface_can_be_fixed_in_the_wizard(self):
         material = TerrainMaterial()
@@ -346,6 +418,37 @@ class TerrainWizardTest(unittest.TestCase):
             plotter.show(auto_close=False)
             center = plotter.screenshot(return_img=True)[80:120, 80:120, :3].mean(axis=(0, 1))
             self.assertGreater(center[2], center[1] * 2, center)
+
+    def test_surface_preview_applies_material_maps_and_shows_map_views(self):
+        from PIL import Image
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        surface = window._material().surfaces[0]
+        with tempfile.TemporaryDirectory() as directory:
+            paths = {}
+            for name, color in (("albedo", (120, 160, 80)), ("normal", (128, 128, 255)),
+                                ("ao", (128, 128, 128)), ("roughness", (180, 180, 180)),
+                                ("metallic", (90, 90, 90)), ("height", (220, 220, 220)),
+                                ("emission", (20, 40, 60))):
+                path = os.path.join(directory, name + ".png")
+                Image.new("RGB", (16, 16), color).save(path)
+                paths[name] = path
+            surface.albedo = paths["albedo"]
+            surface.normal = paths["normal"]
+            surface.ao_map = MapSlot(paths["ao"], channel=1, invert=True)
+            surface.roughness_map = MapSlot(paths["roughness"], channel=0)
+            surface.metallic_map = MapSlot(paths["metallic"], channel=0)
+            surface.height_map = MapSlot(paths["height"], channel=0)
+            surface.emission = paths["emission"]
+            preview = window.surface_preview
+            preview.set_surface(surface)
+            self.assertGreaterEqual(preview._actor.prop.GetNumberOfTextures(), 4)
+            for mode in ("albedo", "normal", "ao", "roughness", "metallic", "height", "emission"):
+                with self.subTest(mode=mode):
+                    preview.map_mode.setCurrentIndex(preview.map_mode.findData(mode))
+                    self.assertIsNotNone(preview._actor.texture)
+                    self.assertNotIn("No ", preview.status.text())
 
     def test_surface_preview_repeat_uses_physical_dimensions(self):
         window = MainWindow()

@@ -9,12 +9,15 @@ import os
 import numpy as np
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-                               QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-                               QMessageBox, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+                               QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
+                               QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from ..material import (CHANNELS, IMAGE_FILTER, MAX_BIOMES, MAX_SURFACES, SURFACES_PER_BIOME, Band, Biome,
                         BiomeSurface, MapSlot, Surface, TerrainMaterial, prepare_texture)
+from ..material_set_import import apply_material_sets
+from .material_set_import import MaterialSetImportDialog
 
 THUMB = 40
 
@@ -48,10 +51,15 @@ class MaterialPreview(QWidget):
         self._actor = None
         self.mode = QComboBox()
         self.mode.addItems(("Sphere", "Plane", "Terrain relief"))
+        self.map_mode = QComboBox()
+        self.map_mode.addItem("Material", "material")
+        for label in ("Albedo", "Normal", "AO", "Roughness", "Metallic", "Height", "Emission"):
+            self.map_mode.addItem(label, label.lower())
         self.reset = QPushButton("Reset view")
         self.scale_info = QLabel()
         self.scale_info.setWordWrap(True)
-        self.status = QLabel("Albedo, tint and scalar metallic/roughness; texture maps and normals are not shown.")
+        self.status = QLabel("Preview shows albedo, tint and scalar metallic/roughness. "
+                             "AO, height, emission, normal and parallax maps are not rendered.")
         self.status.setWordWrap(True)
         self.plotter = QtInteractor(self)
         self.plotter.set_background("#15181c", top="#3b4652")
@@ -59,6 +67,7 @@ class MaterialPreview(QWidget):
         bar = QHBoxLayout()
         bar.addWidget(QLabel("Surface preview"))
         bar.addWidget(self.mode)
+        bar.addWidget(self.map_mode)
         bar.addWidget(self.reset)
         bar.addStretch(1)
         layout = QVBoxLayout(self)
@@ -68,6 +77,7 @@ class MaterialPreview(QWidget):
         layout.addWidget(self.plotter.interactor, 1)
         layout.addWidget(self.status)
         self.mode.currentIndexChanged.connect(self._shape_changed)
+        self.map_mode.currentIndexChanged.connect(self._map_changed)
         self.reset.clicked.connect(self.plotter.reset_camera)
 
     def _mesh(self):
@@ -88,34 +98,152 @@ class MaterialPreview(QWidget):
     def _shape_changed(self) -> None:
         self._redraw(reset=True)
 
+    def _map_changed(self) -> None:
+        self._redraw()
+
     def set_surface(self, surface: Surface) -> None:
         self._surface = surface
         self._redraw(reset=self._actor is None)
+
+    @staticmethod
+    def _image_array(path):
+        from PIL import Image
+
+        prepared = prepare_texture(path)
+        with Image.open(io.BytesIO(prepared.data)) as image:
+            return np.array(image.convert("RGBA"))
+
+    @classmethod
+    def _scalar_preview(cls, slot: MapSlot, size: tuple[int, int] | None, factor: float = 1.0,
+                        bias: float = 0.0):
+        from PIL import Image
+
+        if not slot.path:
+            return None
+        image = cls._image_array(slot.path)
+        if size is None:
+            size = (image.shape[1], image.shape[0])
+        channel = image[..., slot.channel].astype(np.float32) / 255.0
+        if slot.invert:
+            channel = 1.0 - channel
+        channel = np.clip(channel * factor + bias, 0.0, 1.0)
+        scalar = Image.fromarray(np.rint(channel * 255).astype(np.uint8))
+        if scalar.size != size:
+            scalar = scalar.resize(size, Image.Resampling.BILINEAR)
+        values = np.asarray(scalar)
+        return np.repeat(values[..., None], 3, axis=2)
+
+    def _pbr_maps(self, surface):
+        from PIL import Image
+
+        candidates = [surface.albedo, surface.normal, surface.ao_map.path,
+                      surface.roughness_map.path, surface.metallic_map.path, surface.emission]
+        dimensions = []
+        for path in candidates:
+            if path:
+                try:
+                    prepared = prepare_texture(path)
+                except (OSError, ValueError):
+                    continue
+                dimensions.append((prepared.width, prepared.height))
+        width, height = max(dimensions, key=lambda size: size[0] * size[1]) if dimensions else (4, 4)
+        scale = min(1.0, 1024.0 / max(width, height))
+        size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        ao = self._scalar_preview(surface.ao_map, size, surface.ao_strength, 1.0 - surface.ao_strength)
+        roughness = self._scalar_preview(surface.roughness_map, size)
+        metallic = self._scalar_preview(surface.metallic_map, size)
+        if any(value is not None for value in (ao, roughness, metallic)):
+            ao = np.full((size[1], size[0], 3), 255, np.uint8) if ao is None else ao
+            roughness = (np.full((size[1], size[0], 3), round(surface.roughness * 255), np.uint8)
+                         if roughness is None else roughness)
+            metallic = (np.full((size[1], size[0], 3), round(surface.metallic * 255), np.uint8)
+                        if metallic is None else metallic)
+            packed = np.stack((ao[..., 0], roughness[..., 0], metallic[..., 0], np.full(
+                (size[1], size[0]), 255, np.uint8)), axis=-1)
+            orm = self._pv.numpy_to_texture(packed)
+            orm.repeat = True
+        else:
+            orm = None
+        normal = self._pv.numpy_to_texture(self._image_array(surface.normal)) if surface.normal else None
+        emission = self._pv.numpy_to_texture(self._image_array(surface.emission)) if surface.emission else None
+        if normal is not None:
+            normal.repeat = True
+        if emission is not None:
+            emission.repeat = True
+            emission.SetUseSRGBColorSpace(True)
+        return orm, normal, emission
+
+    def _map_texture(self, surface, name):
+        slot = {
+            "ao": surface.ao_map,
+            "roughness": surface.roughness_map,
+            "metallic": surface.metallic_map,
+        }.get(name)
+        if name == "albedo":
+            path = surface.albedo
+            image = self._image_array(path) if path else None
+            if image is not None:
+                image = image[..., :3].astype(np.float32) * np.asarray(surface.color) / 255.0
+                image = np.clip(image, 0, 255).astype(np.uint8)
+        elif name == "normal":
+            path, image = surface.normal, self._image_array(surface.normal) if surface.normal else None
+        elif name == "height":
+            slot = surface.height_map
+            path = slot.path
+            image = self._scalar_preview(slot, None, surface.height_scale, surface.height_bias) \
+                if path else None
+        elif name == "emission":
+            path, image = surface.emission, self._image_array(surface.emission) if surface.emission else None
+        else:
+            path = slot.path if slot else ""
+            factor = surface.ao_strength if name == "ao" else (
+                surface.roughness if name == "roughness" else surface.metallic)
+            image = self._scalar_preview(slot, (1024, 1024), factor) if path else None
+        if image is None:
+            return None
+        texture = self._pv.numpy_to_texture(image)
+        texture.repeat = True
+        texture.SetUseSRGBColorSpace(True)
+        return texture
 
     def _redraw(self, reset: bool = False) -> None:
         if self._surface is None:
             return
         surface = self._surface
         texture = None
+        orm_texture = normal_texture = emission_texture = None
         error = ""
         repeat = surface.repeat_m
         self.scale_info.setText(f"Sphere: 1 m diameter | Plane and relief: 15 × 15 m | Repeat: {repeat:g} m")
         if not math.isfinite(repeat) or repeat <= 0:
             error = f"Surface '{surface.name}': texture repeat must be positive and finite."
-        if surface.albedo:
-            try:
-                from PIL import Image, ImageChops
+        map_mode = self.map_mode.currentData()
+        if map_mode == "material":
+            if surface.albedo:
+                try:
+                    from PIL import Image, ImageChops
 
-                prepared = prepare_texture(surface.albedo)
-                with Image.open(io.BytesIO(prepared.data)) as image:
-                    rgb = image.convert("RGB")
-                    rgb.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                    rgb = ImageChops.multiply(rgb, Image.new("RGB", rgb.size, tuple(surface.color)))
-                    texture = self._pv.numpy_to_texture(np.array(rgb))
-                    texture.repeat = True
-                    texture.SetUseSRGBColorSpace(True)
+                    prepared = prepare_texture(surface.albedo)
+                    with Image.open(io.BytesIO(prepared.data)) as image:
+                        rgb = image.convert("RGB")
+                        rgb.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                        rgb = ImageChops.multiply(rgb, Image.new("RGB", rgb.size, tuple(surface.color)))
+                        texture = self._pv.numpy_to_texture(np.array(rgb))
+                        texture.repeat = True
+                        texture.SetUseSRGBColorSpace(True)
+                except (OSError, ValueError) as exc:
+                    error = f"Could not load albedo: {exc}"
+            try:
+                orm_texture, normal_texture, emission_texture = self._pbr_maps(surface)
             except (OSError, ValueError) as exc:
-                error = f"Could not load albedo: {exc}"
+                error = error or f"Could not load material map: {exc}"
+        else:
+            try:
+                texture = self._map_texture(surface, map_mode)
+            except (OSError, ValueError) as exc:
+                error = f"Could not load {map_mode} map: {exc}"
+            if texture is None:
+                error = error or f"No {map_mode} map is assigned to this surface."
         if self._actor is not None:
             self.plotter.remove_actor(self._actor, reset_camera=False, render=False)
         mesh = self._mesh()
@@ -125,11 +253,21 @@ class MaterialPreview(QWidget):
             mesh.active_texture_coordinates *= scale
         self._actor = self.plotter.add_mesh(
             mesh, texture=texture, color="white" if texture else tuple(c / 255 for c in surface.color),
-            pbr=True, metallic=surface.metallic, roughness=surface.roughness, reset_camera=False, render=False)
+            pbr=map_mode == "material", metallic=surface.metallic, roughness=surface.roughness,
+            reset_camera=False, render=False)
         if texture is not None:
             self._actor.prop.SetTexture("albedoTex", texture)
+        if map_mode == "material":
+            if orm_texture is not None:
+                self._actor.prop.SetORMTexture(orm_texture)
+            if normal_texture is not None:
+                self._actor.prop.SetNormalTexture(normal_texture)
+            if emission_texture is not None:
+                self._actor.prop.SetEmissiveTexture(emission_texture)
+                self._actor.prop.SetEmissiveFactor(1.0, 1.0, 1.0)
         self.status.setText(error or "Drag to rotate, middle-drag to pan, wheel to zoom. "
-                            "Albedo, tint and scalar metallic/roughness only; maps and normals are not shown.")
+                            "Material mode applies supported maps; Height is a diagnostic view. "
+                            "Parallax/POM and layer blending are not rendered.")
         if reset:
             self.plotter.camera_position = "iso"
             self.plotter.reset_camera()
@@ -304,6 +442,7 @@ class SurfaceEditor(QGroupBox):
     changed = Signal()
     terrain_requested = Signal()
     large_preview_requested = Signal()
+    height_blend_preview_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__("Surface", parent)
@@ -320,6 +459,23 @@ class SurfaceEditor(QGroupBox):
         self.repeat_info.setStyleSheet("color: #9aa3ad")
         self.metallic = MapRow("Metallic")
         self.roughness = MapRow("Roughness")
+        self.ao = MapRow("Ambient occlusion")
+        self.height = MapRow("Height")
+        self.height.factor.setRange(0.0, 1000.0)
+        self.height.factor.setDecimals(4)
+        self.height.factor.setToolTip("Height range used when blending or parallax is enabled")
+        self.height_bias = QDoubleSpinBox()
+        self.height_bias.setRange(-1.0, 1.0)
+        self.height_bias.setDecimals(4)
+        self.height_bias.setSingleStep(0.01)
+        self.height_bias.setToolTip("Offset applied to the selected height channel")
+        self.parallax_scale = QDoubleSpinBox()
+        self.parallax_scale.setRange(0.0, 1.0)
+        self.parallax_scale.setDecimals(4)
+        self.parallax_scale.setSingleStep(0.005)
+        self.parallax_scale.setSuffix(" m")
+        self.parallax_scale.setToolTip("Maximum apparent depth for this surface")
+        self.emission = TexturePicker("Emission texture")
         self.normal = TexturePicker("Normal map")
         form = QFormLayout()
         form.addRow("Albedo", self.albedo)
@@ -333,21 +489,32 @@ class SurfaceEditor(QGroupBox):
         form.addRow("Repeat", row)
         form.addRow("Metallic", self.metallic)
         form.addRow("Roughness", self.roughness)
+        form.addRow("Ambient occlusion", self.ao)
+        form.addRow("Height", self.height)
+        form.addRow("Height offset", self.height_bias)
+        form.addRow("Parallax depth", self.parallax_scale)
+        form.addRow("Emission", self.emission)
         form.addRow("Normal", self.normal)
         self.show_terrain = QPushButton("Show blended terrain")
         self.show_terrain.setToolTip("Open the 3D terrain preview with the current biome blending")
         self.show_preview = QPushButton("Show large preview")
+        self.show_blend_preview = QPushButton("Compare surface blending")
+        self.show_blend_preview.setToolTip("Compare ordinary layer weights with height-based blending")
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         row = QHBoxLayout()
         row.addWidget(self.show_preview)
+        row.addWidget(self.show_blend_preview)
         row.addWidget(self.show_terrain)
         layout.addLayout(row)
-        for widget in (self.tint, self.albedo, self.metallic, self.roughness, self.normal):
+        for widget in (self.tint, self.albedo, self.metallic, self.roughness, self.ao, self.height,
+                       self.emission, self.normal):
             widget.changed.connect(self.changed)
-        self.repeat.valueChanged.connect(self.changed)
+        for widget in (self.repeat, self.height_bias, self.parallax_scale):
+            widget.valueChanged.connect(self.changed)
         self.show_terrain.clicked.connect(self.terrain_requested)
         self.show_preview.clicked.connect(self.large_preview_requested)
+        self.show_blend_preview.clicked.connect(self.height_blend_preview_requested)
 
     def set_surface(self, surface: Surface) -> None:
         self.setTitle(f"Surface: {surface.name}")
@@ -356,6 +523,11 @@ class SurfaceEditor(QGroupBox):
         self.repeat.setValue(surface.repeat_m)
         self.metallic.set_values(surface.metallic, surface.metallic_map)
         self.roughness.set_values(surface.roughness, surface.roughness_map)
+        self.ao.set_values(surface.ao_strength, surface.ao_map)
+        self.height.set_values(surface.height_scale, surface.height_map)
+        self.height_bias.setValue(surface.height_bias)
+        self.parallax_scale.setValue(surface.parallax_scale)
+        self.emission.set_path(surface.emission)
         self.normal.set_path(surface.normal)
 
     def apply(self, surface: Surface) -> None:
@@ -364,6 +536,11 @@ class SurfaceEditor(QGroupBox):
         surface.repeat_m = self.repeat.value()
         surface.metallic, surface.metallic_map = self.metallic.values()
         surface.roughness, surface.roughness_map = self.roughness.values()
+        surface.ao_strength, surface.ao_map = self.ao.values()
+        surface.height_scale, surface.height_map = self.height.values()
+        surface.height_bias = self.height_bias.value()
+        surface.parallax_scale = self.parallax_scale.value()
+        surface.emission = self.emission.path()
         surface.normal = self.normal.path()
 
 
@@ -597,6 +774,7 @@ class MaterialPanel(QWidget):
     changed = Signal()
     surface_selected = Signal(object)
     surface_preview_requested = Signal()
+    height_blend_preview_requested = Signal()
     fit_requested = Signal()
     terrain_preview_requested = Signal()
     terrain_setup_requested = Signal()
@@ -629,7 +807,9 @@ class MaterialPanel(QWidget):
         self.add_surface = QPushButton("Add")
         self.rename_surface = QPushButton("Rename…")
         self.remove_surface = QPushButton("Remove")
-        for i, button in enumerate((self.add_surface, self.rename_surface, self.remove_surface)):
+        self.import_surface_sets = QPushButton("Import sets…")
+        for i, button in enumerate((self.add_surface, self.rename_surface, self.remove_surface,
+                                    self.import_surface_sets)):
             grid.addWidget(button, i, 1)
         grid.addWidget(self.surface_editor, 4, 0, 1, 2)
 
@@ -651,7 +831,7 @@ class MaterialPanel(QWidget):
             grid.addWidget(button, i, 1)
         grid.addWidget(self.biome_editor, 5, 0, 1, 2)
 
-        # Blending
+        # Terrain blending and shader effects
         blending = QGroupBox("Blending")
         form = QFormLayout(blending)
         self.slope_radius = QDoubleSpinBox()
@@ -682,12 +862,49 @@ class MaterialPanel(QWidget):
         form.addRow(preset_row)
         form.addRow(self.fit)
 
+        effects = QGroupBox("Terrain shader settings")
+        effects_form = QFormLayout(effects)
+        self.terrain_shader_version = QComboBox()
+        self.terrain_shader_version.addItem("Legacy layered profile (2.0.0)", "2.0.0")
+        self.terrain_shader_version.addItem("AO, height and parallax profile (2.1.0)", "2.1.0")
+        self.terrain_shader_version.setToolTip(
+            "Choose 2.1.0 explicitly to export AO, height blending, emission maps or parallax settings")
+        self.height_blend = QCheckBox("Blend surfaces by height")
+        self.height_blend.setToolTip("Use height maps to choose the visible surface at layer transitions")
+        self.height_blend_transition = QDoubleSpinBox()
+        self.height_blend_transition.setRange(0.001, 1.0)
+        self.height_blend_transition.setDecimals(4)
+        self.height_blend_transition.setSingleStep(0.01)
+        self.height_blend_transition.setToolTip("Width of the height blend transition")
+        self.height_blend_strength = QDoubleSpinBox()
+        self.height_blend_strength.setRange(0.0, 1.0)
+        self.height_blend_strength.setDecimals(2)
+        self.height_blend_strength.setSingleStep(0.05)
+        self.parallax_mode = QComboBox()
+        self.parallax_mode.addItem("Off", "NONE")
+        self.parallax_mode.addItem("Parallax", "PARALLAX")
+        self.parallax_mode.addItem("Parallax occlusion", "PARALLAX_OCCLUSION")
+        self.parallax_min_steps = QSpinBox()
+        self.parallax_min_steps.setRange(1, 256)
+        self.parallax_max_steps = QSpinBox()
+        self.parallax_max_steps.setRange(1, 256)
+        self.parallax_min_steps.setToolTip("Minimum parallax-occlusion ray-march steps")
+        self.parallax_max_steps.setToolTip("Maximum parallax-occlusion ray-march steps")
+        effects_form.addRow("Terrain shader profile", self.terrain_shader_version)
+        effects_form.addRow(self.height_blend)
+        effects_form.addRow("Transition width", self.height_blend_transition)
+        effects_form.addRow("Blend strength", self.height_blend_strength)
+        effects_form.addRow("Parallax mode", self.parallax_mode)
+        effects_form.addRow("POM minimum steps", self.parallax_min_steps)
+        effects_form.addRow("POM maximum steps", self.parallax_max_steps)
+
         layout = QVBoxLayout(self)
         layout.addWidget(intro)
         layout.addWidget(self.warnings)
         layout.addWidget(biomes)
         layout.addWidget(surfaces)
         layout.addWidget(blending)
+        layout.addWidget(effects)
         layout.addStretch(1)
 
         self.surface_list.currentRowChanged.connect(self._show_surface)
@@ -695,8 +912,10 @@ class MaterialPanel(QWidget):
         self.surface_editor.changed.connect(self._surface_edited)
         self.surface_editor.terrain_requested.connect(self.terrain_preview_requested)
         self.surface_editor.large_preview_requested.connect(self.surface_preview_requested)
+        self.surface_editor.height_blend_preview_requested.connect(self.height_blend_preview_requested)
         self.biome_editor.changed.connect(self._biome_edited)
         self.add_surface.clicked.connect(self._add_surface)
+        self.import_surface_sets.clicked.connect(self._import_surface_sets)
         self.rename_surface.clicked.connect(self._rename_surface)
         self.remove_surface.clicked.connect(self._remove_surface)
         self.add_biome.clicked.connect(self._add_biome)
@@ -707,6 +926,12 @@ class MaterialPanel(QWidget):
         for spin in (self.slope_radius, self.paint_softness):
             spin.valueChanged.connect(self._global_edited)
         self.double_sided.toggled.connect(self._global_edited)
+        self.terrain_shader_version.currentIndexChanged.connect(self._global_edited)
+        self.height_blend.toggled.connect(self._global_edited)
+        for spin in (self.height_blend_transition, self.height_blend_strength,
+                     self.parallax_min_steps, self.parallax_max_steps):
+            spin.valueChanged.connect(self._global_edited)
+        self.parallax_mode.currentIndexChanged.connect(self._global_edited)
         self.fit.clicked.connect(self.fit_requested)
         self.terrain_setup.clicked.connect(self.terrain_setup_requested)
         self.save_preset.clicked.connect(self.save_preset_requested)
@@ -720,6 +945,15 @@ class MaterialPanel(QWidget):
         self.slope_radius.setValue(material.slope_radius_m)
         self.paint_softness.setValue(material.paint_softness_m)
         self.double_sided.setChecked(material.double_sided)
+        self.terrain_shader_version.setCurrentIndex(
+            max(0, self.terrain_shader_version.findData(material.terrain_shader_version)))
+        self.height_blend.setChecked(material.height_blend_enabled)
+        self.height_blend_transition.setValue(material.height_blend_transition)
+        self.height_blend_strength.setValue(material.height_blend_strength)
+        self.parallax_mode.setCurrentIndex(
+            max(0, self.parallax_mode.findData(material.parallax_mode)))
+        self.parallax_min_steps.setValue(material.parallax_min_steps)
+        self.parallax_max_steps.setValue(material.parallax_max_steps)
         self._loading = False
         self._refresh_lists(0, 0)
 
@@ -816,6 +1050,13 @@ class MaterialPanel(QWidget):
         self._material.slope_radius_m = self.slope_radius.value()
         self._material.paint_softness_m = self.paint_softness.value()
         self._material.double_sided = self.double_sided.isChecked()
+        self._material.terrain_shader_version = self.terrain_shader_version.currentData()
+        self._material.height_blend_enabled = self.height_blend.isChecked()
+        self._material.height_blend_transition = self.height_blend_transition.value()
+        self._material.height_blend_strength = self.height_blend_strength.value()
+        self._material.parallax_mode = self.parallax_mode.currentData()
+        self._material.parallax_min_steps = self.parallax_min_steps.value()
+        self._material.parallax_max_steps = self.parallax_max_steps.value()
         self._emit()
 
     def _ask_name(self, title: str, current: str, taken: list[str]) -> str | None:
@@ -842,6 +1083,35 @@ class MaterialPanel(QWidget):
         self._material.surfaces.append(Surface(self._unique("surface", self._material.surface_names())))
         self._refresh_lists(len(self._material.surfaces) - 1, self.biome_list.currentRow())
         self._emit()
+
+    def _import_surface_sets(self) -> None:
+        settings = QSettings()
+        directory = QFileDialog.getExistingDirectory(
+            self, "Import material sets from directory", settings.value("last_texture_dir", ""))
+        if not directory:
+            return
+        settings.setValue("last_texture_dir", directory)
+        dialog = MaterialSetImportDialog(directory, self._material, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.scan is None:
+            QMessageBox.warning(self, "Import material sets", "The directory scan is no longer available.")
+            return
+        try:
+            result = apply_material_sets(
+                self._material, dialog.scan, dialog.selected_names, dialog.conflict_choices,
+                dialog.update_existing)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Import material sets", str(error))
+            return
+        if not result["added"] and not result["updated"]:
+            return
+        self._refresh_lists(self.surface_list.currentRow(), self.biome_list.currentRow())
+        self._emit()
+        QMessageBox.information(
+            self, "Import material sets",
+            f"Added {result['added']} surfaces; updated {result['updated']}; "
+            f"preserved {result['skipped']} existing surfaces.")
 
     def _rename_surface(self) -> None:
         row = self.surface_list.currentRow()

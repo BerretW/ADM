@@ -107,9 +107,12 @@ SHADER_INTERACTIVE = ("adm.surface.interactive", "1.0.0")
 SHADER_PROFILE_V2 = "2.0.0"
 SHADER_PROFILE_EDGE_WEAR = "2.1.0"
 SHADER_PROFILE_COLOR1_VERSIONS = frozenset({SHADER_PROFILE_V2, SHADER_PROFILE_EDGE_WEAR})
+SHADER_PROFILE_LAYERED_HEIGHT_V1 = "1.1.0"
+SHADER_PROFILE_LAYERED_HEIGHT_V2 = "2.1.0"
 SHADER_MASK_CHANNELS = ("R", "G", "B", "A")
 LAYERS_EXT = "ADM_material_layers_v1"
 VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
+MATERIAL_HEIGHT_EXT = "ADM_material_height_v1"
 TINT_PALETTE_MAX_HEIGHT = 5
 VERTEX_CONTROL_PARAMS = {
     "tintOffset": {"type": "F32", "minimum": -1024.0, "maximum": 1024.0, "animatable": True},
@@ -131,14 +134,14 @@ JOINT_DISPLAY_CAPABILITY = "ADM-JOINT-DISPLAY-1"
 ANIMATION_TIMING_EXT = "ADM_animation_timing_v1"
 ANIMATION_TIMING_VERSION = "1.1.0"
 ANIMATION_TIMING_CAPABILITY = "ADM-ANIMATION-TIMING-1"
-SUPPORTED_EXTENSIONS = (LAYERS_EXT, VERTEX_CONTROL_EXT, EXTERNAL_IMAGES_EXT, PHYSICAL_SURFACES_EXT,
-                        INTERACTIVE_SURFACES_EXT, HUMANOID_SOCKETS_EXT, JOINT_DISPLAY_EXT,
-                        ANIMATION_TIMING_EXT)
+SUPPORTED_EXTENSIONS = (LAYERS_EXT, VERTEX_CONTROL_EXT, MATERIAL_HEIGHT_EXT, EXTERNAL_IMAGES_EXT,
+                        PHYSICAL_SURFACES_EXT, INTERACTIVE_SURFACES_EXT, HUMANOID_SOCKETS_EXT,
+                        JOINT_DISPLAY_EXT, ANIMATION_TIMING_EXT)
 PHYSICAL_SURFACE_PROFILES = (
     "adm.phys.wood.v1", "adm.phys.metal.v1", "adm.phys.stone.v1",
     "adm.phys.ground.v1", "adm.phys.glass.v1",
 )
-SHADER_PARAM_TYPES = ("F32", "VEC2", "VEC3", "VEC4", "BOOL", "TEXTURE")
+SHADER_PARAM_TYPES = ("F32", "VEC2", "VEC3", "VEC4", "BOOL", "TEXTURE", "ENUM")
 SHADER_NUMERIC_DIMS = {"F32": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
 OFFICIAL_SHADER_KINDS = {
     SHADER_CORE: "CORE",
@@ -179,6 +182,10 @@ def _shader_param(name, typ, default, description, minimum=None, maximum=None, a
 
 def _texture_param(name, description):
     return _shader_param(name, "TEXTURE", None, description)
+
+
+def _enum_param(name, values, default, description):
+    return {"name": name, "type": "ENUM", "values": list(values), "default": default, "description": description}
 
 
 def _scalar_map_params(prefix):
@@ -368,7 +375,8 @@ OFFICIAL_SHADERS = {
 
 # TEXTURE parameters that carry sRGB-encoded albedo; every other TEXTURE parameter is linear data.
 SHADER_COLOR_TEXTURES = frozenset({"detail_texture", "layer0_texture", "layer1_texture", "layer2_texture",
-                                   "layer3_texture"})
+                                   "layer3_texture", "layer0_emissive_texture", "layer1_emissive_texture",
+                                   "layer2_emissive_texture", "layer3_emissive_texture"})
 
 COLOR1_CONTRACTS = {
     "CORE": (
@@ -582,6 +590,73 @@ OFFICIAL_SHADERS[SHADER_TWO_LAYER] = [
     if not p["name"].startswith(("layer2_", "layer3_"))
 ]
 
+
+def _layered_height_params(base, layer_count):
+    params = [dict(parameter) for parameter in base]
+    for index in range(layer_count):
+        prefix = f"layer{index}"
+        params.extend((
+            _texture_param(f"{prefix}_ao_texture", f"Optional linear ambient-occlusion map for {prefix}."),
+            _shader_param(f"{prefix}_ao_channel", "F32", 0.0,
+                          f"Texture channel for {prefix} ambient occlusion: 0=R, 1=G, 2=B, 3=A.", 0.0, 3.0),
+            _shader_param(f"{prefix}_ao_invert", "BOOL", False,
+                          f"Invert the selected {prefix} ambient-occlusion channel."),
+            _shader_param(f"{prefix}_ao_strength", "F32", 1.0,
+                          f"Ambient-occlusion strength for {prefix}.", 0.0, 1.0),
+            _texture_param(f"{prefix}_height_texture", f"Optional linear height map for {prefix}."),
+            _shader_param(f"{prefix}_height_channel", "F32", 0.0,
+                          f"Texture channel for {prefix} height: 0=R, 1=G, 2=B, 3=A.", 0.0, 3.0),
+            _shader_param(f"{prefix}_height_invert", "BOOL", False,
+                          f"Invert the selected {prefix} height channel."),
+            _shader_param(f"{prefix}_height_scale", "F32", 1.0,
+                          f"Scale the selected {prefix} height sample.", 0.0, 1000.0),
+            _shader_param(f"{prefix}_height_bias", "F32", 0.0,
+                          f"Bias the selected {prefix} height sample.", -1.0, 1.0),
+            _shader_param(f"{prefix}_parallax_scale", "F32", 0.0,
+                          f"Maximum parallax displacement for {prefix}, in scaled UV units.", 0.0, 1.0),
+            _texture_param(f"{prefix}_emissive_texture", f"Optional sRGB emission map for {prefix}."),
+        ))
+    params.extend((
+        _shader_param("height_blend_enabled", "BOOL", False, "Enable height-based layer blending."),
+        _shader_param("height_blend_transition", "F32", 0.2,
+                      "Positive height range controlling the height-blend transition.", 0.001, 1.0),
+        _shader_param("height_blend_strength", "F32", 1.0,
+                      "Blend from base weights to height-aware weights.", 0.0, 1.0),
+        _enum_param("parallax_mode", ("NONE", "PARALLAX", "PARALLAX_OCCLUSION"), "NONE",
+                    "Per-layer height-map parallax method."),
+        _shader_param("parallax_reference_height", "F32", 0.5,
+                      "Height at which parallax produces no UV offset.", 0.0, 1.0),
+        _shader_param("parallax_min_steps", "F32", 8.0,
+                      "Integer minimum ray-march steps for parallax occlusion.", 1.0, 256.0),
+        _shader_param("parallax_max_steps", "F32", 32.0,
+                      "Integer maximum ray-march steps for parallax occlusion.", 1.0, 256.0),
+    ))
+    return params
+
+
+_advanced_layer_profiles = (
+    (SHADER_TERRAIN_4[0], SHADER_PROFILE_LAYERED_HEIGHT_V1, SHADER_TERRAIN_4, 4, "TERRAIN_4"),
+    (SHADER_TERRAIN_4[0], SHADER_PROFILE_LAYERED_HEIGHT_V2,
+     (SHADER_TERRAIN_4[0], SHADER_PROFILE_V2), 4, "TERRAIN_4"),
+    (SHADER_TWO_LAYER[0], SHADER_PROFILE_LAYERED_HEIGHT_V1, SHADER_TWO_LAYER, 2, "TWO_LAYER"),
+    (SHADER_LAYERED[0], SHADER_PROFILE_LAYERED_HEIGHT_V2,
+     (SHADER_LAYERED[0], SHADER_PROFILE_V2), 4, "LAYERED"),
+)
+for _shader_id, _version, _base_key, _layer_count, _kind in _advanced_layer_profiles:
+    _key = (_shader_id, _version)
+    OFFICIAL_SHADERS[_key] = _layered_height_params(OFFICIAL_SHADERS[_base_key], _layer_count)
+    OFFICIAL_SHADER_KINDS[_key] = _kind
+
+SHADER_LAYERED_HEIGHT_COUNTS = {
+    (SHADER_TERRAIN_4[0], SHADER_PROFILE_LAYERED_HEIGHT_V1): 4,
+    (SHADER_TERRAIN_4[0], SHADER_PROFILE_LAYERED_HEIGHT_V2): 4,
+    (SHADER_TWO_LAYER[0], SHADER_PROFILE_LAYERED_HEIGHT_V1): 2,
+    (SHADER_LAYERED[0], SHADER_PROFILE_LAYERED_HEIGHT_V2): 4,
+}
+SHADER_PROFILE_CAPABILITIES = {
+    key: "ADM-SHADER-LAYERED-HEIGHT-1" for key in SHADER_LAYERED_HEIGHT_COUNTS
+}
+
 OFFICIAL_SHADER_IDS = {kind: key[0] for key, kind in OFFICIAL_SHADER_KINDS.items()}
 OFFICIAL_SHADER_COLOR1_KEYS = frozenset(
     key for key in OFFICIAL_SHADERS if key[1] in SHADER_PROFILE_COLOR1_VERSIONS
@@ -603,7 +678,7 @@ SHADER_COLOR_TEXTURES = frozenset(
         p["name"] for key, params in OFFICIAL_SHADERS.items()
         if key[1] in SHADER_PROFILE_COLOR1_VERSIONS
         for p in params if p["type"] == "TEXTURE" and p["name"].endswith("_texture")
-        and not p["name"].endswith(("_metallic_texture", "_roughness_texture"))
+        and not p["name"].endswith(("_metallic_texture", "_roughness_texture", "_ao_texture", "_height_texture"))
     }
 )
 

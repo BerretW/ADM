@@ -95,6 +95,8 @@ def set_param(mat, name, value):
     v = mat.adm.params[name]
     if isinstance(value, bpy.types.Image):
         v.image = value
+    elif isinstance(value, str):
+        v.value_enum = value
     elif isinstance(value, (tuple, list)):
         cur = list(v.value_vec)
         cur[:len(value)] = value
@@ -124,6 +126,7 @@ def preview_bsdf(mat, materials):
 def main():
     adm_blender.register()
     from adm_blender.core import constants as K
+    from adm_blender.core.material_math import height_blend_weights
     from adm_blender.blender import materials as M
     from adm_blender.blender import shader_preview as SP
     from adm_blender.blender.export_adm import ExportOptions, ModelExporter
@@ -196,6 +199,8 @@ def main():
                 set_param(mat, prm["name"], float(prm.get("maximum", 1.0)) * 0.5)
             elif prm["type"] == "BOOL":
                 mat.adm.params[prm["name"]].value_bool = True
+            elif prm["type"] == "ENUM":
+                set_param(mat, prm["name"], prm["values"][0])
             else:
                 set_param(mat, prm["name"], [0.5] * K.SHADER_NUMERIC_DIMS[prm["type"]])
         check(all(v.use for v in mat.adm.params), f"{kind}: editing values enables Override")
@@ -652,6 +657,70 @@ def main():
         rough = bake_socket(plane, mat, bsdf.inputs["Roughness"].links[0].from_socket)
         check(close(metal[8, 3, :1], (0.4,)) and close(rough[8, 3, :1], (0.6,)),
               f"TERRAIN_4@{version}: inversion can be disabled or reset to default")
+
+    # Advanced terrain height blending is a real node effect; AO and POM settings
+    # remain editable and survive ADM import/export.
+    mat = bpy.data.materials.new("terrain_height_blend_v21")
+    plane.data.materials.clear()
+    plane.data.materials.append(mat)
+    M.convert_to_adm_material(mat)
+    mat.adm.shader = "TERRAIN_4"
+    mat.adm.shader_version = K.SHADER_PROFILE_LAYERED_HEIGHT_V2
+    color1.data.foreach_set("color", np.tile((0.5, 0.5, 0.0, 0.0), len(color1.data)).ravel())
+    set_param(mat, "layer0_base_color", (1.0, 0.0, 0.0, 1.0))
+    set_param(mat, "layer1_base_color", (0.0, 0.0, 1.0, 1.0))
+    set_param(mat, "layer0_height_texture", image("height_low", lambda x, y: (0.1, 0.1, 0.1, 1.0)))
+    set_param(mat, "layer1_height_texture", image("height_high", lambda x, y: (0.9, 0.9, 0.9, 1.0)))
+    mat.adm.params["height_blend_enabled"].value_bool = True
+    set_param(mat, "height_blend_transition", 0.2)
+    set_param(mat, "height_blend_strength", 1.0)
+    bsdf = preview_bsdf(mat, M)
+    actual = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    weights = height_blend_weights((0.5, 0.5, 0.0, 0.0), (0.1, 0.9, 0.5, 0.5),
+                                   transition=0.2, present=(True, True, False, False))
+    expected = (weights[0], 0.0, weights[1])
+    check(close(actual, expected),
+          f"TERRAIN_4@2.1.0: Cycles bake applies height blending ({actual} vs {expected})")
+
+    mat.adm.params["height_blend_enabled"].value_bool = False
+    set_param(mat, "layer0_ao_texture", image("ao_packed", lambda x, y: (0.2, 0.4, 0.6, 0.8)))
+    set_param(mat, "layer0_ao_channel", 1.0)
+    set_param(mat, "layer1_ao_texture", image("ao_white", lambda x, y: (1.0, 1.0, 1.0, 1.0)))
+    bsdf = preview_bsdf(mat, M)
+    actual = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(actual, (0.35, 0.0, 0.35)),
+          f"TERRAIN_4@2.1.0: selected AO channels affect the documented preview approximation ({actual})")
+
+    set_param(mat, "parallax_mode", "PARALLAX_OCCLUSION")
+    set_param(mat, "layer0_parallax_scale", 0.025)
+    exporter = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True))
+    data, report = exporter.export()
+    check(report.ok, "TERRAIN_4@2.1.0: advanced material export validates")
+    if report.ok:
+        terrain_doc = next(material for material in report.doc["materials"]
+                           if material.get("shader") == {
+                               "id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_PROFILE_LAYERED_HEIGHT_V2})
+        terrain_params = terrain_doc["shaderParameters"]
+        check(terrain_params["parallax_mode"] == "PARALLAX_OCCLUSION"
+              and terrain_params["layer0_parallax_scale"] == 0.025
+              and "layer0_ao_texture" in terrain_params,
+              "TERRAIN_4@2.1.0: AO texture and POM metadata export")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "terrain_height.adm")
+            with open(path, "wb") as stream:
+                stream.write(data)
+            _, imported_root = import_model(bpy.context, path, ImportOptions())
+            imported = next(obj for obj in imported_root.children_recursive if obj.type == "MESH")
+            imported_mat = imported.active_material
+            check(imported_mat.adm.shader == "TERRAIN_4"
+                  and imported_mat.adm.shader_version == K.SHADER_PROFILE_LAYERED_HEIGHT_V2
+                  and imported_mat.adm.params["parallax_mode"].value_enum == "PARALLAX_OCCLUSION"
+                  and imported_mat.adm.params["layer0_ao_texture"].image is not None,
+                  "TERRAIN_4@2.1.0: shader version, AO texture, and POM metadata round-trip")
+            imported_color1 = imported.data.color_attributes.get("COLOR_1")
+            check(imported_color1 is not None and
+                  close(imported_color1.data[0].color, (0.5, 0.5, 0.0, 0.0)),
+                  "TERRAIN_4@2.1.0: authored COLOR_1 weights round-trip")
 
     # Two-layer mask directly interpolates all layer properties without vertex colors.
     mat = bpy.data.materials.new("two_layer")

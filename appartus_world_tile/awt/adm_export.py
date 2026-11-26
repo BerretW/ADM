@@ -1,4 +1,4 @@
-"""Write built tiles straight to ADM 1.0 files with ``adm.terrain.four_layer@2.0.0`` materials.
+"""Write built tiles straight to ADM 1.0 files with versioned layered terrain materials.
 
 One ``.adm`` per tile: a root node placed at the tile centre (so the tile lands at its world
 position), one child per LOD with a ``lodGroups`` entry.  The build stores per-vertex surface
@@ -28,7 +28,7 @@ import numpy as np
 
 from . import __version__
 from .material import (SHADER_ID, SHADER_VERSION, SURFACES_PER_BIOME, PreparedImage, Surface, TerrainMaterial,
-                       prepare_texture, srgb_to_linear)
+                       MAX_TEXTURE_BYTES, prepare_texture, srgb_to_linear)
 from .ply import read_ply, weight_fields
 
 INDEX_NAME = "world.json"
@@ -81,8 +81,21 @@ def _png_image(rgba: np.ndarray, name: str) -> PreparedImage:
     return PreparedImage(data, "image/png", hashlib.sha256(data).hexdigest(), w, h, name)
 
 
+def _png_scalar_image(values: np.ndarray, name: str) -> PreparedImage:
+    from PIL import Image
+
+    pixels = np.ascontiguousarray(values)
+    if pixels.ndim != 2 or pixels.dtype not in (np.dtype(np.uint8), np.dtype(np.uint16)):
+        raise ValueError("Scalar fallback must be a 2D 8-bit or 16-bit grayscale image")
+    height, width = pixels.shape
+    stream = io.BytesIO()
+    Image.fromarray(pixels).save(stream, "PNG", optimize=True)
+    data = stream.getvalue()
+    return PreparedImage(data, "image/png", hashlib.sha256(data).hexdigest(), width, height, name)
+
+
 def prepare_adm_texture(path: str, role: str) -> PreparedTexture:
-    """Make an ADM DDS primary and PNG fallback, preserving compatible DDS source bytes."""
+    """Make an ADM GPU primary and PNG fallback, preserving compatible source bytes."""
     from PIL import Image
     from adm_blender.core import gputex
 
@@ -91,33 +104,62 @@ def prepare_adm_texture(path: str, role: str) -> PreparedTexture:
     if compression is None:
         raise ValueError(f"Unknown texture role {role!r}")
 
-    decoded = prepare_texture(path)
-    rgba = None
+    stat = os.stat(path)
+    name = os.path.splitext(os.path.basename(path))[0]
     with open(path, "rb") as handle:
-        is_dds = handle.read(4) == gputex.DDS_MAGIC
-        if is_dds:
-            handle.seek(0)
-            source_bytes = handle.read()
-        else:
-            source_bytes = b""
-    if is_dds:
+        source_mime = gputex.mime_of(handle.read(12))
+    source_bytes = b""
+    if source_mime is not None:
+        if stat.st_size > MAX_TEXTURE_BYTES:
+            raise ValueError(f"Texture is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+        with open(path, "rb") as handle:
+            source_bytes = handle.read(MAX_TEXTURE_BYTES + 1)
+        if len(source_bytes) > MAX_TEXTURE_BYTES:
+            raise ValueError(f"Texture is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+    source_info = None
+    if source_mime is not None:
         try:
-            info = gputex.parse(source_bytes, gputex.MIME_DDS, strict=True)
-            if info["srgb"] == color_role:
-                rgba = gputex.decode(source_bytes, gputex.MIME_DDS, strict=True)[0]
-                fallback = _png_image(rgba, decoded.name)
-                primary = PreparedImage(source_bytes, gputex.MIME_DDS, hashlib.sha256(source_bytes).hexdigest(),
-                                        info["width"], info["height"], decoded.name)
-                return PreparedTexture(primary, fallback)
-        except ValueError:
-            pass
+            source_info = gputex.parse(source_bytes, source_mime, strict=True)
+        except gputex.GpuTextureError:
+            if source_mime == gputex.MIME_KTX2:
+                raise
 
-    with Image.open(io.BytesIO(decoded.data)) as image:
-        rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
-    fallback = decoded if decoded.mime == "image/png" else _png_image(rgba, decoded.name)
+    if source_info and source_info["kind"] in ("R8", "R16", "BC4") and role == "data":
+        values, _ = gputex.decode_scalar(source_bytes, source_mime, strict=True)
+        fallback = _png_scalar_image(values, name)
+        primary = PreparedImage(source_bytes, source_mime, hashlib.sha256(source_bytes).hexdigest(),
+                                source_info["width"], source_info["height"], name)
+        return PreparedTexture(primary, fallback)
+
+    if source_info and source_mime == gputex.MIME_KTX2 and source_info["srgb"] != color_role:
+        raise ValueError(f"KTX2 texture color space does not match the {role} role")
+
+    if source_info and source_info["srgb"] == color_role:
+        rgba = gputex.decode(source_bytes, source_mime, strict=True)[0]
+        fallback = _png_image(rgba, name)
+        primary = PreparedImage(source_bytes, source_mime, hashlib.sha256(source_bytes).hexdigest(),
+                                source_info["width"], source_info["height"], name)
+        return PreparedTexture(primary, fallback)
+
+    if source_info:
+        rgba = gputex.decode(source_bytes, source_mime, strict=True)[0]
+        fallback = _png_image(rgba, name)
+    else:
+        decoded = prepare_texture(path)
+        with Image.open(io.BytesIO(decoded.data)) as image:
+            image.load()
+            scalar16 = np.asarray(image)
+            if role == "data" and scalar16.ndim == 2 and scalar16.dtype == np.uint16:
+                blob, _kind = gputex.encode_scalar(scalar16, gputex.MIME_DDS, "R16", mipmaps=True)
+                fallback = decoded if decoded.mime == "image/png" else _png_scalar_image(scalar16, decoded.name)
+                primary = PreparedImage(blob, gputex.MIME_DDS, hashlib.sha256(blob).hexdigest(),
+                                        scalar16.shape[1], scalar16.shape[0], decoded.name)
+                return PreparedTexture(primary, fallback)
+            rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+        fallback = decoded if decoded.mime == "image/png" else _png_image(rgba, decoded.name)
     blob, _kind = gputex.encode(rgba, gputex.MIME_DDS, compression, srgb=color_role, mipmaps=True)
     primary = PreparedImage(blob, gputex.MIME_DDS, hashlib.sha256(blob).hexdigest(),
-                            rgba.shape[1], rgba.shape[0], decoded.name)
+                            rgba.shape[1], rgba.shape[0], name)
     return PreparedTexture(primary, fallback)
 
 
@@ -319,10 +361,17 @@ def _surface_texture_slots(surface: Surface):
             yield slot.path, "data"
     if surface.normal:
         yield surface.normal, "normal"
+    if surface.ao_map.path:
+        yield surface.ao_map.path, "data"
+    if surface.height_map.path:
+        yield surface.height_map.path, "data"
+    if surface.emission:
+        yield surface.emission, "albedo"
 
 
 def _material_params(surfaces: list[Surface], uv_scale: list[float],
-                     texture_index: Callable[[str, str], int]) -> dict:
+                     texture_index: Callable[[str, str], int], material: TerrainMaterial,
+                     advanced: bool) -> dict:
     params: dict = {}
     for i, surface in enumerate(surfaces):
         if surface.albedo:
@@ -337,7 +386,30 @@ def _material_params(surfaces: list[Surface], uv_scale: list[float],
                 params[f"layer{i}_{kind}_invert"] = bool(slot.invert)
         if surface.normal:
             params[f"layer{i}_normal"] = {"index": texture_index(surface.normal, "normal")}
+        if advanced:
+            for name, slot in (("ao", surface.ao_map), ("height", surface.height_map)):
+                if slot.path:
+                    params[f"layer{i}_{name}_texture"] = {"index": texture_index(slot.path, "data")}
+                params[f"layer{i}_{name}_channel"] = float(slot.channel)
+                params[f"layer{i}_{name}_invert"] = bool(slot.invert)
+            params[f"layer{i}_ao_strength"] = float(surface.ao_strength)
+            params[f"layer{i}_height_scale"] = float(surface.height_scale)
+            params[f"layer{i}_height_bias"] = float(surface.height_bias)
+            params[f"layer{i}_parallax_scale"] = float(surface.parallax_scale)
+            if surface.emission:
+                params[f"layer{i}_emissive_texture"] = {
+                    "index": texture_index(surface.emission, "albedo")}
+            params[f"layer{i}_emissive"] = [1.0, 1.0, 1.0] if surface.emission else [0.0, 0.0, 0.0]
     params["uv_scale"] = (list(uv_scale) + [1.0] * 4)[:4]
+    if advanced:
+        params.update({
+            "height_blend_enabled": bool(material.height_blend_enabled),
+            "height_blend_transition": float(material.height_blend_transition),
+            "height_blend_strength": float(material.height_blend_strength),
+            "parallax_mode": material.parallax_mode,
+            "parallax_min_steps": float(material.parallax_min_steps),
+            "parallax_max_steps": float(material.parallax_max_steps),
+        })
     return params
 
 
@@ -351,6 +423,8 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     four surfaces and lost the weakest ones).
     """
     buffers, constants, _container, _validate = _core()
+    if material.terrain_shader_version == SHADER_VERSION and material.has_advanced_shader_features():
+        raise ValueError("Advanced terrain settings require the explicit terrain shader version 2.1.0.")
     build_dir = manifest["_dir"]
     b = buffers.BinBuilder()
     tile_size = float(manifest["tile_size_m"])
@@ -367,7 +441,13 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         lods.append((vertices, faces, masks, conflicts))
     sets, assign = group_masks(np.concatenate([lod[2] for lod in lods]))
     used = sorted({i for s in sets for i in _slots(s)})
-    tangents = any(surfaces[i].normal for i in used)
+    advanced = material.terrain_shader_version == "2.1.0"
+    tangents = any(
+        surfaces[i].normal
+        or (advanced and material.parallax_mode != "NONE" and surfaces[i].height_map.path
+            and surfaces[i].parallax_scale > 0.0)
+        for i in used
+    )
 
     images: list[dict] = []
     textures: list[dict] = []
@@ -408,18 +488,26 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         slots = _slots(set_mask)
         chosen = [surfaces[i] for i in slots]
         base = chosen[0]
-        materials.append({
+        exported_material = {
             "name": f"AWT Terrain {tile['id']} {'+'.join(s.name for s in chosen)}",
             "baseColorFactor": [srgb_to_linear(c) for c in base.color] + [1.0],
             "metallicFactor": float(base.metallic),
             "roughnessFactor": float(base.roughness),
-            "emissiveFactor": [0.0, 0.0, 0.0],
+            "emissiveFactor": [1.0, 1.0, 1.0] if base.emission else [0.0, 0.0, 0.0],
             "alphaMode": "OPAQUE",
             "doubleSided": bool(material.double_sided),
             "animationId": f"awt_terrain_{tile['id']}_{k}",
-            "shader": {"id": SHADER_ID, "version": SHADER_VERSION},
-            "shaderParameters": _material_params(chosen, [uv_all[i] for i in slots], texture_index),
-        })
+            "shader": {"id": SHADER_ID, "version": material.terrain_shader_version},
+            "shaderParameters": _material_params(
+                chosen, [uv_all[i] for i in slots], texture_index, material, advanced),
+        }
+        if base.albedo:
+            exported_material["baseColorTexture"] = {"index": texture_index(base.albedo, "albedo")}
+        if base.normal:
+            exported_material["normalTexture"] = {"index": texture_index(base.normal, "normal")}
+        if base.emission:
+            exported_material["emissiveTexture"] = {"index": texture_index(base.emission, "albedo")}
+        materials.append(exported_material)
 
     meshes = []
     stats = {"primitives": [], "conflicts": 0}
@@ -513,6 +601,10 @@ def export_tiles(
     warnings = []
     if rules_outdated(manifest, material):
         warnings.append("Biomes, paint or surfaces changed since the build; rebuild to update the vertex layers")
+    if material.terrain_shader_version == "2.1.0":
+        warnings.append("Portable PBR fallbacks use only the first layer's textures and factors; they do not "
+                        "represent vertex-weighted layers, metallic/roughness maps, AO maps, "
+                        "height blending or parallax.")
     tiles = {tile["id"]: tile for tile in manifest["tiles"]}
     if mode == "all":
         todo = list(tiles)

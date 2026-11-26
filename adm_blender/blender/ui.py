@@ -1163,6 +1163,8 @@ def _draw_param_row(box, v, prm, typ, label=None):
         _vec_prop(sub, v, "value_vec", K.SHADER_NUMERIC_DIMS[typ])
     elif typ == "BOOL":
         sub.prop(v, "value_bool", text="")
+    elif typ == "ENUM":
+        sub.prop(v, "value_enum", text="")
     if prm.get("animatable"):
         r.operator("adm.material_key_param", icon="KEYFRAME", text="").name = v.name
 
@@ -1183,7 +1185,10 @@ def _shader_param_groups(shader, version, names):
             groups.append((identifier, label, prefix, selected))
             remaining[:] = [name for name in remaining if name not in selected]
 
-    if shader in ("TERRAIN_4", "TWO_LAYER") or (shader == "LAYERED" and version == K.SHADER_PROFILE_V2):
+    if shader in ("TERRAIN_4", "TWO_LAYER") or (
+            shader == "LAYERED" and (version == K.SHADER_PROFILE_V2
+                                     or (K.OFFICIAL_SHADER_IDS.get(shader), version)
+                                     in K.SHADER_LAYERED_HEIGHT_COUNTS)):
         for i in range(2 if shader == "TWO_LAYER" else 4):
             add_group(f"layer_{i}", f"Layer {i}", f"layer{i}_")
     if K.has_color1_profile(shader, version):
@@ -1220,7 +1225,8 @@ def _draw_shader_params(layout, p, params):
     paired_options = set()
     if p.shader != "CUSTOM":
         for name in available:
-            if name.endswith(("_metallic_texture", "_roughness_texture")):
+            if name.endswith(("_metallic_texture", "_roughness_texture",
+                              "_ao_texture", "_height_texture")):
                 prefix = name[:-len("_texture")]
                 options = (prefix + "_channel", prefix + "_invert")
                 if all(option in available and option in params for option in options):
@@ -1230,7 +1236,10 @@ def _draw_shader_params(layout, p, params):
         "strength": "Strength", "texture": "Albedo", "base_color": "Color factor",
         "color": "Color factor", "normal": "Normal", "metallic_texture": "Metallic",
         "metallic": "Metallic factor", "roughness_texture": "Roughness",
-        "roughness": "Roughness factor", "emissive": "Emissive", "value": "Value",
+        "roughness": "Roughness factor", "ao_texture": "Ambient occlusion",
+        "ao_strength": "AO strength", "height_texture": "Height",
+        "height_scale": "Height scale", "height_bias": "Height bias",
+        "parallax_scale": "Parallax scale", "emissive": "Emissive", "value": "Value",
     }
 
     def draw_names(layout, names, prefix=""):
@@ -1341,8 +1350,11 @@ def draw_material(lay, context, mat):
         col.label(text="Mask alpha and two-sided rendering are required", icon="INFO")
     else:
         col.prop(p, "shader")
-    if p.shader not in ("CUSTOM", "INTERACTIVE", "TWO_LAYER"):
+    if p.shader not in ("CUSTOM", "INTERACTIVE"):
         col.prop(p, "shader_version")
+    if p.shader_key() in K.SHADER_LAYERED_HEIGHT_COUNTS:
+        col.label(text="AO is previewed as diffuse-color darkening; parallax/POM UV offsets are not previewed",
+                  icon="INFO")
     if p.shader == "LAYERED" and p.shader_version == "1.0.0":
         col.label(text="Viewport: layered preview (ADM Preview nodes, not exported)", icon="INFO")
     elif p.shader == "EMISSIVE":

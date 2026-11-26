@@ -885,6 +885,8 @@ def param_value_from_prop(typ, v, texref):
         return float(v.value_f) if typ == "F32" else _num_value(typ, v.value_vec)
     if typ == "BOOL":
         return bool(v.value_bool)
+    if typ == "ENUM":
+        return str(v.value_enum)
     return texref(v.image, v.tex_coord)
 
 
@@ -1002,6 +1004,8 @@ def sync_official_shader_params(mat, key=None):
                 v.value_f = float(prm["default"])
         elif typ == "BOOL":
             v.value_bool = bool(prm["default"])
+        elif typ == "ENUM":
+            v.value_enum = prm["default"]
 
 
 def _apply_shader_value(v, typ, val, resolve_image):
@@ -1011,6 +1015,8 @@ def _apply_shader_value(v, typ, val, resolve_image):
         _set_vec(v, "value_vec", val, K.SHADER_NUMERIC_DIMS[typ])
     elif typ == "BOOL":
         v.value_bool = bool(val)
+    elif typ == "ENUM":
+        v.value_enum = val
     elif isinstance(val, dict):
         v.image = resolve_image(val)
         v.tex_coord = val.get("texCoord", 0)
@@ -1032,12 +1038,13 @@ def _apply_shader(mat, m, scene, resolve_image):
     a.animation_id = m.get("animationId", "")
     sh = m.get("shader")
     key = (sh["id"], sh["version"]) if isinstance(sh, dict) else K.SHADER_CORE
-    a.shader_version = key[1]
     sp = m.get("shaderParameters", {}) or {}
     if key == K.SHADER_CORE:
         a.shader = "CORE"
+        a.shader_version = key[1]
     elif key == K.SHADER_LAYERED:
         a.shader = "LAYERED"
+        a.shader_version = key[1]
         a.layer_factor = sp.get("layer_factor", 0.0)
         ext = (m.get("extensions") or {}).get(K.LAYERS_EXT)
         if ext:
@@ -1048,12 +1055,16 @@ def _apply_shader(mat, m, scene, resolve_image):
                 a.layer_mask_uv = ext["maskTexture"].get("texCoord", 0)
     elif key == K.SHADER_CUTOUT:
         a.shader = "CUTOUT"
+        a.shader_version = key[1]
     elif key == K.SHADER_EMISSIVE:
         a.shader = "EMISSIVE"
+        a.shader_version = key[1]
     elif key == K.SHADER_DECAL:
         a.shader = "DECAL"
+        a.shader_version = key[1]
     elif key in K.OFFICIAL_SHADER_KINDS:
         a.shader = K.OFFICIAL_SHADER_KINDS[key]
+        a.shader_version = key[1]
         sync_official_shader_params(mat, key)
         defs = {p["name"]: p for p in K.OFFICIAL_SHADERS[key]}
         for name, val in sp.items():
@@ -1073,6 +1084,7 @@ def _apply_shader(mat, m, scene, resolve_image):
                         v.image.alpha_mode = "CHANNEL_PACKED"
     else:
         a.shader = "CUSTOM"
+        a.shader_version = key[1]
         a.custom_shader = f"{key[0]}@{key[1]}"
         sdef = scene.adm_anim.shaders.get(a.custom_shader)
         if sdef is not None:

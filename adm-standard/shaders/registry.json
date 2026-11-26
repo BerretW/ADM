@@ -7822,6 +7822,3016 @@
         }
       ],
       "contract": "adm.surface.two_layer.v1.md"
+    },
+    {
+      "id": "adm.terrain.four_layer",
+      "version": "1.1.0",
+      "parameters": [
+        {
+          "name": "layer0_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 0."
+        },
+        {
+          "name": "layer1_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 1."
+        },
+        {
+          "name": "layer2_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 2."
+        },
+        {
+          "name": "layer3_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 3."
+        },
+        {
+          "name": "layer0_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer1_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer2_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer3_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer0_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 0."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 1."
+        },
+        {
+          "name": "layer2_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 2."
+        },
+        {
+          "name": "layer3_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 3."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 0."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 1."
+        },
+        {
+          "name": "layer2_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 2."
+        },
+        {
+          "name": "layer3_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 3."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 roughness texture channel."
+        },
+        {
+          "name": "layer2_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 metallic texture channel."
+        },
+        {
+          "name": "layer2_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 roughness texture channel."
+        },
+        {
+          "name": "layer3_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 metallic texture channel."
+        },
+        {
+          "name": "layer3_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 roughness texture channel."
+        },
+        {
+          "name": "layer0_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer1_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer2_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer3_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer0_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 0."
+        },
+        {
+          "name": "layer1_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 1."
+        },
+        {
+          "name": "layer2_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 2."
+        },
+        {
+          "name": "layer3_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 3."
+        },
+        {
+          "name": "blend_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear RGBA weights for terrain layers 0 through 3."
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Per-layer UV tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001,
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0,
+            1000.0,
+            1000.0
+          ]
+        },
+        {
+          "name": "layer0_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer0."
+        },
+        {
+          "name": "layer0_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 ambient-occlusion channel."
+        },
+        {
+          "name": "layer0_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer0."
+        },
+        {
+          "name": "layer0_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 height channel."
+        },
+        {
+          "name": "layer0_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer0 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer0_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer0 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer0, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer0."
+        },
+        {
+          "name": "layer1_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer1."
+        },
+        {
+          "name": "layer1_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 ambient-occlusion channel."
+        },
+        {
+          "name": "layer1_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer1."
+        },
+        {
+          "name": "layer1_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 height channel."
+        },
+        {
+          "name": "layer1_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer1 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer1_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer1 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer1, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer1."
+        },
+        {
+          "name": "layer2_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer2."
+        },
+        {
+          "name": "layer2_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 ambient-occlusion channel."
+        },
+        {
+          "name": "layer2_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer2."
+        },
+        {
+          "name": "layer2_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 height channel."
+        },
+        {
+          "name": "layer2_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer2 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer2_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer2 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer2, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer2."
+        },
+        {
+          "name": "layer3_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer3."
+        },
+        {
+          "name": "layer3_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 ambient-occlusion channel."
+        },
+        {
+          "name": "layer3_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer3."
+        },
+        {
+          "name": "layer3_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 height channel."
+        },
+        {
+          "name": "layer3_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer3 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer3_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer3 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer3, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer3."
+        },
+        {
+          "name": "height_blend_enabled",
+          "type": "BOOL",
+          "default": false,
+          "description": "Enable height-based layer blending."
+        },
+        {
+          "name": "height_blend_transition",
+          "type": "F32",
+          "default": 0.2,
+          "description": "Positive height range controlling the height-blend transition.",
+          "minimum": 0.001,
+          "maximum": 1.0
+        },
+        {
+          "name": "height_blend_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Blend from base weights to height-aware weights.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_mode",
+          "type": "ENUM",
+          "values": [
+            "NONE",
+            "PARALLAX",
+            "PARALLAX_OCCLUSION"
+          ],
+          "default": "NONE",
+          "description": "Per-layer height-map parallax method."
+        },
+        {
+          "name": "parallax_reference_height",
+          "type": "F32",
+          "default": 0.5,
+          "description": "Height at which parallax produces no UV offset.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_min_steps",
+          "type": "F32",
+          "default": 8.0,
+          "description": "Integer minimum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        },
+        {
+          "name": "parallax_max_steps",
+          "type": "F32",
+          "default": 32.0,
+          "description": "Integer maximum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        }
+      ],
+      "contract": "ADM_layered_height_profiles_v1.md",
+      "capability": "ADM-SHADER-LAYERED-HEIGHT-1"
+    },
+    {
+      "id": "adm.terrain.four_layer",
+      "version": "2.1.0",
+      "parameters": [
+        {
+          "name": "layer0_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 0."
+        },
+        {
+          "name": "layer1_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 1."
+        },
+        {
+          "name": "layer2_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 2."
+        },
+        {
+          "name": "layer3_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 3."
+        },
+        {
+          "name": "layer0_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer1_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer2_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer3_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer0_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 0."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 1."
+        },
+        {
+          "name": "layer2_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 2."
+        },
+        {
+          "name": "layer3_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 3."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 0."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 1."
+        },
+        {
+          "name": "layer2_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 2."
+        },
+        {
+          "name": "layer3_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 3."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 2 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 3 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 roughness texture channel."
+        },
+        {
+          "name": "layer2_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 metallic texture channel."
+        },
+        {
+          "name": "layer2_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 2 roughness texture channel."
+        },
+        {
+          "name": "layer3_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 metallic texture channel."
+        },
+        {
+          "name": "layer3_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 3 roughness texture channel."
+        },
+        {
+          "name": "layer0_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer1_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer2_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer3_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer0_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 0."
+        },
+        {
+          "name": "layer1_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 1."
+        },
+        {
+          "name": "layer2_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 2."
+        },
+        {
+          "name": "layer3_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 3."
+        },
+        {
+          "name": "blend_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear RGBA weights for terrain layers 0 through 3."
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Per-layer UV tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001,
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0,
+            1000.0,
+            1000.0
+          ]
+        },
+        {
+          "name": "color1_r_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.R mask (Layer 1).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "color1_g_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.G mask (Layer 2).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "color1_b_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.B mask (Layer 3).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "color1_a_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.A mask (Layer 4).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer0."
+        },
+        {
+          "name": "layer0_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 ambient-occlusion channel."
+        },
+        {
+          "name": "layer0_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer0."
+        },
+        {
+          "name": "layer0_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 height channel."
+        },
+        {
+          "name": "layer0_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer0 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer0_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer0 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer0, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer0."
+        },
+        {
+          "name": "layer1_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer1."
+        },
+        {
+          "name": "layer1_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 ambient-occlusion channel."
+        },
+        {
+          "name": "layer1_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer1."
+        },
+        {
+          "name": "layer1_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 height channel."
+        },
+        {
+          "name": "layer1_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer1 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer1_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer1 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer1, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer1."
+        },
+        {
+          "name": "layer2_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer2."
+        },
+        {
+          "name": "layer2_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 ambient-occlusion channel."
+        },
+        {
+          "name": "layer2_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer2."
+        },
+        {
+          "name": "layer2_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 height channel."
+        },
+        {
+          "name": "layer2_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer2 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer2_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer2 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer2, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer2."
+        },
+        {
+          "name": "layer3_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer3."
+        },
+        {
+          "name": "layer3_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 ambient-occlusion channel."
+        },
+        {
+          "name": "layer3_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer3."
+        },
+        {
+          "name": "layer3_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 height channel."
+        },
+        {
+          "name": "layer3_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer3 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer3_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer3 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer3, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer3."
+        },
+        {
+          "name": "height_blend_enabled",
+          "type": "BOOL",
+          "default": false,
+          "description": "Enable height-based layer blending."
+        },
+        {
+          "name": "height_blend_transition",
+          "type": "F32",
+          "default": 0.2,
+          "description": "Positive height range controlling the height-blend transition.",
+          "minimum": 0.001,
+          "maximum": 1.0
+        },
+        {
+          "name": "height_blend_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Blend from base weights to height-aware weights.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_mode",
+          "type": "ENUM",
+          "values": [
+            "NONE",
+            "PARALLAX",
+            "PARALLAX_OCCLUSION"
+          ],
+          "default": "NONE",
+          "description": "Per-layer height-map parallax method."
+        },
+        {
+          "name": "parallax_reference_height",
+          "type": "F32",
+          "default": 0.5,
+          "description": "Height at which parallax produces no UV offset.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_min_steps",
+          "type": "F32",
+          "default": 8.0,
+          "description": "Integer minimum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        },
+        {
+          "name": "parallax_max_steps",
+          "type": "F32",
+          "default": 32.0,
+          "description": "Integer maximum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        }
+      ],
+      "contract": "ADM_layered_height_profiles_v1.md",
+      "capability": "ADM-SHADER-LAYERED-HEIGHT-1"
+    },
+    {
+      "id": "adm.surface.two_layer",
+      "version": "1.1.0",
+      "parameters": [
+        {
+          "name": "layer0_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 0."
+        },
+        {
+          "name": "layer1_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for terrain layer 1."
+        },
+        {
+          "name": "layer0_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer1_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer0_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 0."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear metallic map for layer 1."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 0."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear roughness map for layer 1."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer 1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer 1 roughness texture channel."
+        },
+        {
+          "name": "layer0_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 0.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer1_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer0_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 0."
+        },
+        {
+          "name": "layer1_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 1."
+        },
+        {
+          "name": "blend_mask",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Linear red channel blends layer 0 (black) into layer 1 (white)."
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Per-layer UV tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001,
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0,
+            1000.0,
+            1000.0
+          ]
+        },
+        {
+          "name": "layer0_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer0."
+        },
+        {
+          "name": "layer0_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 ambient-occlusion channel."
+        },
+        {
+          "name": "layer0_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer0."
+        },
+        {
+          "name": "layer0_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 height channel."
+        },
+        {
+          "name": "layer0_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer0 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer0_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer0 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer0, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer0."
+        },
+        {
+          "name": "layer1_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer1."
+        },
+        {
+          "name": "layer1_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 ambient-occlusion channel."
+        },
+        {
+          "name": "layer1_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer1."
+        },
+        {
+          "name": "layer1_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 height channel."
+        },
+        {
+          "name": "layer1_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer1 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer1_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer1 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer1, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer1."
+        },
+        {
+          "name": "height_blend_enabled",
+          "type": "BOOL",
+          "default": false,
+          "description": "Enable height-based layer blending."
+        },
+        {
+          "name": "height_blend_transition",
+          "type": "F32",
+          "default": 0.2,
+          "description": "Positive height range controlling the height-blend transition.",
+          "minimum": 0.001,
+          "maximum": 1.0
+        },
+        {
+          "name": "height_blend_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Blend from base weights to height-aware weights.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_mode",
+          "type": "ENUM",
+          "values": [
+            "NONE",
+            "PARALLAX",
+            "PARALLAX_OCCLUSION"
+          ],
+          "default": "NONE",
+          "description": "Per-layer height-map parallax method."
+        },
+        {
+          "name": "parallax_reference_height",
+          "type": "F32",
+          "default": 0.5,
+          "description": "Height at which parallax produces no UV offset.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_min_steps",
+          "type": "F32",
+          "default": 8.0,
+          "description": "Integer minimum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        },
+        {
+          "name": "parallax_max_steps",
+          "type": "F32",
+          "default": 32.0,
+          "description": "Integer maximum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        }
+      ],
+      "contract": "ADM_layered_height_profiles_v1.md",
+      "capability": "ADM-SHADER-LAYERED-HEIGHT-1"
+    },
+    {
+      "id": "adm.pbr.layered",
+      "version": "2.1.0",
+      "parameters": [
+        {
+          "name": "layer0_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for PBR layer 1."
+        },
+        {
+          "name": "layer1_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for PBR layer 2."
+        },
+        {
+          "name": "layer2_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for PBR layer 3."
+        },
+        {
+          "name": "layer3_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Albedo texture for PBR layer 4."
+        },
+        {
+          "name": "layer0_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer1_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer2_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer3_base_color",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear base color factor for layer 4.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "maximum": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "layer0_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_metallic",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Metallic factor for layer 4.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_roughness",
+          "type": "F32",
+          "default": 0.8,
+          "description": "Roughness factor for layer 4.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer0."
+        },
+        {
+          "name": "layer0_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 metallic texture channel."
+        },
+        {
+          "name": "layer0_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer0."
+        },
+        {
+          "name": "layer0_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 roughness texture channel."
+        },
+        {
+          "name": "layer1_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer1."
+        },
+        {
+          "name": "layer1_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 metallic texture channel."
+        },
+        {
+          "name": "layer1_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer1."
+        },
+        {
+          "name": "layer1_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 roughness texture channel."
+        },
+        {
+          "name": "layer2_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer2."
+        },
+        {
+          "name": "layer2_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 metallic texture channel."
+        },
+        {
+          "name": "layer2_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer2."
+        },
+        {
+          "name": "layer2_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 roughness texture channel."
+        },
+        {
+          "name": "layer3_metallic_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear metallic map for layer3."
+        },
+        {
+          "name": "layer3_metallic_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 metallic: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_metallic_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 metallic texture channel."
+        },
+        {
+          "name": "layer3_roughness_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear roughness map for layer3."
+        },
+        {
+          "name": "layer3_roughness_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 roughness: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_roughness_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 roughness texture channel."
+        },
+        {
+          "name": "layer0_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 1.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer1_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 2.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer2_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 3.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer3_emissive",
+          "type": "VEC3",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear emissive factor for layer 4.",
+          "minimum": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "layer0_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 1."
+        },
+        {
+          "name": "layer1_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 2."
+        },
+        {
+          "name": "layer2_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 3."
+        },
+        {
+          "name": "layer3_normal",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional tangent-space normal map for layer 4."
+        },
+        {
+          "name": "uv_scale",
+          "type": "VEC4",
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Per-layer UV tiling multiplier.",
+          "minimum": [
+            0.001,
+            0.001,
+            0.001,
+            0.001
+          ],
+          "maximum": [
+            1000.0,
+            1000.0,
+            1000.0,
+            1000.0
+          ]
+        },
+        {
+          "name": "color1_r_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.R mask (Layer 1).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "color1_g_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.G mask (Layer 2).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "color1_b_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.B mask (Layer 3).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "color1_a_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Strength for the COLOR_1.A mask (Layer 4).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer0."
+        },
+        {
+          "name": "layer0_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 ambient-occlusion channel."
+        },
+        {
+          "name": "layer0_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer0.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer0."
+        },
+        {
+          "name": "layer0_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer0 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer0_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer0 height channel."
+        },
+        {
+          "name": "layer0_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer0 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer0_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer0 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer0, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer0_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer0."
+        },
+        {
+          "name": "layer1_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer1."
+        },
+        {
+          "name": "layer1_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 ambient-occlusion channel."
+        },
+        {
+          "name": "layer1_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer1.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer1."
+        },
+        {
+          "name": "layer1_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer1 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer1_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer1 height channel."
+        },
+        {
+          "name": "layer1_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer1 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer1_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer1 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer1, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer1_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer1."
+        },
+        {
+          "name": "layer2_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer2."
+        },
+        {
+          "name": "layer2_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 ambient-occlusion channel."
+        },
+        {
+          "name": "layer2_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer2.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer2."
+        },
+        {
+          "name": "layer2_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer2 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer2_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer2 height channel."
+        },
+        {
+          "name": "layer2_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer2 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer2_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer2 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer2, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer2_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer2."
+        },
+        {
+          "name": "layer3_ao_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear ambient-occlusion map for layer3."
+        },
+        {
+          "name": "layer3_ao_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 ambient occlusion: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_ao_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 ambient-occlusion channel."
+        },
+        {
+          "name": "layer3_ao_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Ambient-occlusion strength for layer3.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_height_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional linear height map for layer3."
+        },
+        {
+          "name": "layer3_height_channel",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Texture channel for layer3 height: 0=R, 1=G, 2=B, 3=A.",
+          "minimum": 0.0,
+          "maximum": 3.0
+        },
+        {
+          "name": "layer3_height_invert",
+          "type": "BOOL",
+          "default": false,
+          "description": "Invert the selected layer3 height channel."
+        },
+        {
+          "name": "layer3_height_scale",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Scale the selected layer3 height sample.",
+          "minimum": 0.0,
+          "maximum": 1000.0
+        },
+        {
+          "name": "layer3_height_bias",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Bias the selected layer3 height sample.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_parallax_scale",
+          "type": "F32",
+          "default": 0.0,
+          "description": "Maximum parallax displacement for layer3, in scaled UV units.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "layer3_emissive_texture",
+          "type": "TEXTURE",
+          "default": null,
+          "description": "Optional sRGB emission map for layer3."
+        },
+        {
+          "name": "height_blend_enabled",
+          "type": "BOOL",
+          "default": false,
+          "description": "Enable height-based layer blending."
+        },
+        {
+          "name": "height_blend_transition",
+          "type": "F32",
+          "default": 0.2,
+          "description": "Positive height range controlling the height-blend transition.",
+          "minimum": 0.001,
+          "maximum": 1.0
+        },
+        {
+          "name": "height_blend_strength",
+          "type": "F32",
+          "default": 1.0,
+          "description": "Blend from base weights to height-aware weights.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_mode",
+          "type": "ENUM",
+          "values": [
+            "NONE",
+            "PARALLAX",
+            "PARALLAX_OCCLUSION"
+          ],
+          "default": "NONE",
+          "description": "Per-layer height-map parallax method."
+        },
+        {
+          "name": "parallax_reference_height",
+          "type": "F32",
+          "default": 0.5,
+          "description": "Height at which parallax produces no UV offset.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "parallax_min_steps",
+          "type": "F32",
+          "default": 8.0,
+          "description": "Integer minimum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        },
+        {
+          "name": "parallax_max_steps",
+          "type": "F32",
+          "default": 32.0,
+          "description": "Integer maximum ray-march steps for parallax occlusion.",
+          "minimum": 1.0,
+          "maximum": 256.0
+        }
+      ],
+      "contract": "ADM_layered_height_profiles_v1.md",
+      "capability": "ADM-SHADER-LAYERED-HEIGHT-1"
     }
   ]
 }

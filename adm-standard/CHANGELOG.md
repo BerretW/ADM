@@ -19,6 +19,18 @@
 
 ### Added
 
+- Added opt-in `ADM-TEX-KTX2-2` and `ADM-TEX-DDS-2` format contracts for R8, R16, BC4, BC5, and
+  BC7 while retaining the original version 1 capability meanings and portable fallback rules.
+- Added renderer-independent layer AO, effective-height, height-blend, and tangent-space
+  parallax reference math helpers with focused numerical tests.
+- Specified `ADM_material_height_v1` for material-space height and parallax data and added
+  validator checks for its version, texture reference, UV set, ranges, and POM settings.
+- Added four versioned layered-material profiles with per-layer AO, height-based blending,
+  parallax/POM bounds, texture-role validation, explicit PBR fallback, and generated capability
+  metadata.
+- World Tile exports the selected `@2.1.0` profile and its AO, height, emission, blend, and
+  parallax data. Its export diagnostics describe the limitations of portable PBR fallbacks.
+- Added typed enum shader parameters for closed, case-sensitive mode selections.
 - Added a machine-readable reference-test catalog that records existing fixture evidence and
   explicitly lists missing fixtures and expectations for all eight test categories.
 - Added explanatory rejection diagnostics for unsupported container versions and layouts.

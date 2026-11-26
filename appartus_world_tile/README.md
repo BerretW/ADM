@@ -62,28 +62,39 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   tiles. The title shows `*` while the project has unsaved changes; closing asks to save.
 * **Terrain tab:** heightmap, scale, tile size with tile count and memory estimate, LOD
   errors, build folder, **Build tiles**.
-* **Material tab:** a surface library (albedo, tint, texture repeat in metres, metallic and
-  roughness factors/maps with channel and invert, and normal map) plus biomes that select and
-  blend those surfaces. The six starter biomes are lowland, forest, shore, water, mountains
-  and rocky terrain. Each biome can be placed automatically by height/slope bands or painted
-  manually; its surface list can also limit individual surfaces by height and slope. Use
-  **Surface noise** on each biome to vary its surfaces spatially.
+* **Material tab:** a surface library (albedo, tint, texture repeat in metres, metallic,
+  roughness, AO and height maps with channel and invert, plus normal and emission maps) and
+  optional height-blend/parallax settings, plus biomes that select and blend those surfaces.
+  Choose the terrain shader profile explicitly: profile 2.1.0 is required to export AO, height,
+  emission, height blending, or parallax. The six starter biomes are lowland, forest, shore,
+  water, mountains and rocky terrain. Each biome can be placed automatically by height/slope
+  bands or painted manually; its surface list can also limit individual surfaces by height and
+  slope. Use **Surface noise** on each biome to vary its surfaces spatially.
+  **Import sets…** scans a directory tree for split material maps and previews found, missing,
+  conflicting, packed, and unknown files before you apply the selected sets.
   **Terrain setup wizard** starts from current rules or a temperate, alpine, coastal/island or
   arid profile, then lets you edit each biome's height/slope limits and choose albedo images
   for its shared surfaces. **Save preset** copies the material setup and its textures into the
   AWT user-data folder; **Load preset** restores it. Presets do not include map-specific paint.
-  Presets with surface noise use version 2 and are not supported by older tool versions.
+  Presets with surface noise use version 2; presets with advanced shader settings use version 3.
   Neighbouring biomes should share at least one surface so the transition uses a common
   texture rather than changing abruptly. Texture repeat is rounded to a whole number per tile,
   so textures continue across tiles. The **Surface** tab on the right shows the selected
   surface on an interactive **Sphere**, **Plane**, or **Terrain relief**. Drag to rotate,
-  middle-drag to pan, and use the mouse wheel to zoom. The preview shows albedo, tint, and
-  scalar metallic and roughness; it does not show metallic, roughness, or normal maps.
+  middle-drag to pan, and use the mouse wheel to zoom. **Material** mode applies albedo,
+  normal, AO, metallic, roughness, and emission maps where VTK supports them. Select a map
+  from the preview menu to inspect it directly; **Height** shows the selected channel as
+  grayscale. The preview does not render parallax, parallax occlusion, or multi-surface height
+  blending.
   The sphere is 1 m in diameter; the plane and relief are 15 × 15 m. **Repeat** controls the
   preview texture scale in metres. The spherical mapping uses the equator and a pole-to-pole
   arc for horizontal and vertical scale, so its texture is distorted near the poles. The
   preview uses the exact repeat; built tiles round repeats to align their boundaries.
   **Show blended terrain** opens the 3D terrain with all current biome rules applied.
+  **Compare surface blending** opens a separate two-to-four-layer preview. Set base weights,
+  toggle height blending, adjust transition and strength, and select a layer to inspect its
+  final weight. Drag to rotate, pan, or zoom; choose a studio, grazing, or soft light. This
+  preview composites albedo and tint; it does not render AO, normal, emission, or parallax effects.
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.
@@ -96,6 +107,35 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   **Material** (surface albedos × tint blended by vertex weights,
   without normal maps). LOD switch, vertical exaggeration, wireframe. The preview keeps
   under 8 M triangles and automatically picks the finest LOD that fits.
+
+## Import material sets
+
+Use **Import sets…** in the **Surface library** to scan a folder and its subfolders. The importer
+groups files by the name before a recognized map suffix. It identifies file formats by their
+contents, not their filename extensions; supported inputs are DDS, KTX2, PNG, TIFF, and TGA.
+
+The default suffixes are:
+
+| Map | Suffixes |
+|---|---|
+| Albedo | `_abte`, `_albedo`, `_basecolor`, `_diffuse` |
+| Normal | `_nm`, `_normal` |
+| Ambient occlusion | `_ao`, `_occlusion` |
+| Roughness | `_roughness` |
+| Metallic | `_metallic` |
+| Height | `_height`, `_displacement` |
+| Emission | `_emission`, `_emissive` |
+
+For example, `rock_01_abte.dds`, `rock_01_nm.ktx2`, and `rock_01_ao.png` form the `rock_01`
+surface. Edit suffixes in the import dialog when your files use different names, then select
+**Scan again**.
+
+Review the **Found maps** and **Missing maps** columns before you import. If several files match
+one map, choose the intended file for that conflict. The importer never assigns packed `_ma` or
+unknown maps. Select the surface sets to import; existing surfaces stay unchanged unless you
+enable **Update matching existing surfaces**. Updates replace only maps that were found, so
+missing maps keep their current values. New surfaces are added to the library but are not
+automatically assigned to biomes.
 
 ## Adjust biome heights visually
 
@@ -119,8 +159,9 @@ JSON with the build parameters (heightmap, scale, tiles, LOD errors, biome rules
 build folder), roads, the surface/biome material, the export settings and the tile selection. Paths are stored
 relative to the project file, so the folder can be moved together with its heightmap and
 textures. Reopening a project loads the heightmap and the built tiles from the build folder.
-Version 2 and 3 projects can be opened. Projects with biome surface noise use version 4 and
-cannot be opened by older versions of the tool; projects without noise use version 3.
+Version 2, 3, and 4 projects can be opened. Projects with advanced shader settings use version 5;
+projects with biome surface noise use version 4; projects without either use version 3. Older
+tool versions cannot open files saved with a newer format version.
 
 ## Create a road
 
@@ -143,7 +184,7 @@ grid of at most 4096 cells per side; a road must be at least one paint cell wide
 
 ```
 adm/
-  x000_y000.adm           one model per tile: all LODs, four_layer@2.0.0 materials and COLOR_1
+  x000_y000.adm           one model per tile: all LODs, selected layered profile and COLOR_1
   textures/<name>_<hash>.dds   primary layer textures (unless they are embedded)
   textures/<name>_<hash>.png   PNG fallback for each primary texture
   world.json              what was exported: per-tile digest, origin, size; settings; material
@@ -153,25 +194,34 @@ adm/
   imported tiles line up without any manual placement. Several LODs become an ADM
   `lodGroup`; LOD 1 starts at *LOD 1 from* (default: one tile size) and every further LOD
   doubles that distance. A single LOD is written as a plain mesh.
-* Material: `adm.terrain.four_layer@2.0.0`. Surface weights are per-vertex `COLOR_1`; each
-  primitive uses up to four surfaces. A tile using more than four surfaces is split across
-  multiple primitives/materials. Each material includes `layer{i}_texture`, `_base_color`,
-  `_metallic`, `_roughness`, `_metallic_texture` / `_roughness_texture` with `_channel` and
-  `_invert`, `_normal`, and `uv_scale`. Tangents are written only when a used surface has a
-  normal map.
+* Material profile defaults to `adm.terrain.four_layer@2.0.0`. Choose
+  `adm.terrain.four_layer@2.1.0` in **Terrain shader settings** to export AO, height, emission,
+  height blending, or parallax. Profile 2.0.0 remains unchanged; if you author advanced settings
+  without selecting 2.1.0, export stops with an explicit error. Surface weights are per-vertex
+  `COLOR_1`; each primitive uses up to four surfaces. A tile using more than four surfaces is
+  split across multiple primitives/materials. Each material includes layer albedo, base color,
+  metallic and roughness factors and maps, normal, and UV scale. Profile 2.1.0 also includes
+  per-layer AO and height maps, channel/invert controls, height scale/bias, emission maps,
+  height-blend settings, and parallax/POM settings. Tangents are written when a used surface has
+  a normal map or active parallax with a height map and non-zero scale.
+  The portable PBR fallback represents only the first layer's textures and factors. It does not
+  reproduce vertex-weighted layers, metallic/roughness maps, AO maps, height blending, or
+  parallax; the export result reports these limitations.
 * Layer textures are shared through `ADM_external_images_v1` by default (content hash in the
   file name and in the tile, checked on import). Each texture has a DDS primary image and
   same-size PNG fallback. **Embed** puts both images into every tile, instead, repeating the
   data per tile. ADM-compatible DDS files are preserved byte-for-byte when their color space
   matches the texture role. Other inputs are converted to DDS: albedo uses automatic BC1/BC3
-  selection, normal maps use uncompressed RGBA8, and metallic/roughness maps use BC3; color
-  textures use sRGB while data textures use linear UNORM. PNG is used as the importer-friendly
-  fallback. DDS textures using BC1, BC3, BC4, BC5, BC6 or BC7 are decoded by AWT; supported
+  selection, normal maps use uncompressed RGBA8, and data maps use BC3 or keep a compatible
+  scalar format. Albedo and emission use sRGB; normal, AO, height, metallic, and roughness maps
+  use linear UNORM. PNG is used as the importer-friendly fallback. DDS textures using BC1, BC3,
+  BC4, BC5, BC6 or BC7 are decoded by AWT; supported
   BC2/DXT3 files are read through Pillow.
   Single 2D textures are supported (not texture arrays, cubemaps or volumes).
 * **Export changed** compares a digest of every tile's meshes, vertex weights, material
-  (including the texture contents), placement and export settings with `world.json`. Rebuilding with other
-  LOD errors, retexturing a layer or changing the LOD distance marks the affected tiles;
+  (including the texture contents), placement and export settings with `world.json`. Shader-only
+  material edits do not rebuild terrain geometry or vertex weights. Rebuilding with other LOD
+  errors, retexturing a layer or changing the LOD distance marks tiles for re-export;
   a missing `.adm` file is always exported again.
 * Every written tile is validated with the ADM validator before it replaces the old file
   (atomic write). Validation is the slowest step (see Performance); turn it off for quick
@@ -276,4 +326,4 @@ ADM export of 4097², 16 × 16 tiles of 256, 3 LODs, four 1024² layers with nor
 They check the error bound against every sample, watertightness across tiles, winding,
 non-power-of-two sizes, biome/surface weights and seamless edges, paint blending, UVs,
 ADM export (world placement, validation, tangents, changed-tile detection, embedded textures),
-the project round trip and the material preview bake.
+advanced profile maps and parallax tangents, project round trips, and material preview bakes.

@@ -60,9 +60,17 @@ class Surface:
     roughness: float = 0.8
     roughness_map: MapSlot = field(default_factory=MapSlot)
     normal: str = ""
+    ao_map: MapSlot = field(default_factory=MapSlot)
+    ao_strength: float = 1.0
+    height_map: MapSlot = field(default_factory=MapSlot)
+    height_scale: float = 1.0
+    height_bias: float = 0.0
+    parallax_scale: float = 0.0
+    emission: str = ""
 
     def textures(self) -> list[str]:
-        return [p for p in (self.albedo, self.metallic_map.path, self.roughness_map.path, self.normal) if p]
+        return [p for p in (self.albedo, self.metallic_map.path, self.roughness_map.path, self.normal,
+                            self.ao_map.path, self.height_map.path, self.emission) if p]
 
 
 @dataclass
@@ -201,6 +209,13 @@ class TerrainMaterial:
     surface_paint: np.ndarray | None = field(default=None, repr=False, compare=False)
     surface_paint_cell: int = 1
     roads: list[Road] = field(default_factory=list)
+    height_blend_enabled: bool = False
+    height_blend_transition: float = 0.2
+    height_blend_strength: float = 1.0
+    parallax_mode: str = "NONE"
+    parallax_min_steps: int = 8
+    parallax_max_steps: int = 32
+    terrain_shader_version: str = SHADER_VERSION
 
     # ------------------------------------------------------------ lookups
     def surface_names(self) -> list[str]:
@@ -375,12 +390,38 @@ class TerrainMaterial:
             for value in (surface.metallic, surface.roughness):
                 if not 0.0 <= value <= 1.0:
                     raise ValueError(f"Surface '{surface.name}': metallic and roughness must be 0..1")
-            for slot in (surface.metallic_map, surface.roughness_map):
+            for slot in (surface.metallic_map, surface.roughness_map, surface.ao_map, surface.height_map):
                 if slot.channel not in (0, 1, 2, 3):
                     raise ValueError(f"Surface '{surface.name}': map channel must be R, G, B or A")
+            for value, label in ((surface.ao_strength, "AO strength"),
+                                 (surface.height_scale, "height scale"),
+                                 (surface.height_bias, "height bias"),
+                                 (surface.parallax_scale, "parallax scale")):
+                if not math.isfinite(value):
+                    raise ValueError(f"Surface '{surface.name}': {label} must be finite")
+            if not 0.0 <= surface.ao_strength <= 1.0:
+                raise ValueError(f"Surface '{surface.name}': AO strength must be 0..1")
+            if not 0.0 <= surface.height_scale <= 1000.0:
+                raise ValueError(f"Surface '{surface.name}': height scale must be 0..1000")
+            if not -1.0 <= surface.height_bias <= 1.0:
+                raise ValueError(f"Surface '{surface.name}': height bias must be -1..1")
+            if not 0.0 <= surface.parallax_scale <= 1.0:
+                raise ValueError(f"Surface '{surface.name}': parallax scale must be 0..1")
             for path in surface.textures():
                 if not os.path.isfile(path):
                     raise ValueError(f"Surface '{surface.name}': texture not found: {path}")
+        if not (math.isfinite(self.height_blend_transition)
+                and 0.001 <= self.height_blend_transition <= 1.0):
+            raise ValueError("Height blend transition must be 0.001..1")
+        if not (math.isfinite(self.height_blend_strength) and 0.0 <= self.height_blend_strength <= 1.0):
+            raise ValueError("Height blend strength must be 0..1")
+        if self.parallax_mode not in ("NONE", "PARALLAX", "PARALLAX_OCCLUSION"):
+            raise ValueError("Parallax mode must be NONE, PARALLAX or PARALLAX_OCCLUSION")
+        if not (isinstance(self.parallax_min_steps, int) and isinstance(self.parallax_max_steps, int)
+                and 1 <= self.parallax_min_steps <= self.parallax_max_steps <= 256):
+            raise ValueError("POM steps must satisfy 1 <= minimum <= maximum <= 256")
+        if self.terrain_shader_version not in ("2.0.0", "2.1.0"):
+            raise ValueError("Unsupported terrain shader version")
 
     # --------------------------------------------------------- digests
     def rules_digest(self) -> str:
@@ -405,6 +446,16 @@ class TerrainMaterial:
         data = {"surfaces": [_surface_dict(s, None) for s in self.surfaces],
                 "uv_scale": self.uv_scale(tile_size_m), "double_sided": self.double_sided,
                 "files": {path: prepare_texture(path).sha256 for path in self.textures()}}
+        if self.has_advanced_shader_features():
+            data["terrain_shader"] = {
+                    "version": self.terrain_shader_version,
+                    "height_blend_enabled": self.height_blend_enabled,
+                    "height_blend_transition": self.height_blend_transition,
+                    "height_blend_strength": self.height_blend_strength,
+                    "parallax_mode": self.parallax_mode,
+                    "parallax_min_steps": self.parallax_min_steps,
+                    "parallax_max_steps": self.parallax_max_steps,
+                }
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:32]
 
     # ------------------------------------------------------- persistence
@@ -416,6 +467,16 @@ class TerrainMaterial:
             "paint_softness_m": self.paint_softness_m,
             "double_sided": self.double_sided,
         }
+        if self.has_advanced_shader_features():
+            data["terrain_shader"] = {
+                "version": self.terrain_shader_version,
+                "height_blend_enabled": self.height_blend_enabled,
+                "height_blend_transition": self.height_blend_transition,
+                "height_blend_strength": self.height_blend_strength,
+                "parallax_mode": self.parallax_mode,
+                "parallax_min_steps": self.parallax_min_steps,
+                "parallax_max_steps": self.parallax_max_steps,
+            }
         if self.has_paint():
             from PIL import Image
 
@@ -443,7 +504,7 @@ class TerrainMaterial:
 
         def slot(value) -> MapSlot:
             value = value if isinstance(value, dict) else {}
-            return MapSlot(path=absolute(value.get("path")), channel=int(value.get("channel", 0)) % 4,
+            return MapSlot(path=absolute(value.get("path")), channel=int(value.get("channel", 0)),
                            invert=bool(value.get("invert", False)))
 
         material = cls()
@@ -460,6 +521,13 @@ class TerrainMaterial:
                 surface.roughness = float(raw.get("roughness", surface.roughness))
                 surface.roughness_map = slot(raw.get("roughness_map"))
                 surface.normal = absolute(raw.get("normal"))
+                surface.ao_map = slot(raw.get("ao_map"))
+                surface.ao_strength = float(raw.get("ao_strength", 1.0))
+                surface.height_map = slot(raw.get("height_map"))
+                surface.height_scale = float(raw.get("height_scale", 1.0))
+                surface.height_bias = float(raw.get("height_bias", 0.0))
+                surface.parallax_scale = float(raw.get("parallax_scale", 0.0))
+                surface.emission = absolute(raw.get("emission"))
                 material.surfaces.append(surface)
         raw_biomes = [b for b in data.get("biomes", []) if isinstance(b, dict) and b.get("name")]
         if raw_biomes:
@@ -477,6 +545,17 @@ class TerrainMaterial:
         material.slope_radius_m = float(data.get("slope_radius_m", material.slope_radius_m))
         material.paint_softness_m = float(data.get("paint_softness_m", material.paint_softness_m))
         material.double_sided = bool(data.get("double_sided", False))
+        shader = data.get("terrain_shader")
+        if shader is not None:
+            if not isinstance(shader, dict):
+                raise ValueError("Invalid terrain shader settings")
+            material.terrain_shader_version = str(shader.get("version", SHADER_VERSION))
+            material.height_blend_enabled = bool(shader.get("height_blend_enabled", False))
+            material.height_blend_transition = float(shader.get("height_blend_transition", 0.2))
+            material.height_blend_strength = float(shader.get("height_blend_strength", 1.0))
+            material.parallax_mode = str(shader.get("parallax_mode", "NONE"))
+            material.parallax_min_steps = int(shader.get("parallax_min_steps", 8))
+            material.parallax_max_steps = int(shader.get("parallax_max_steps", 32))
         paint = data.get("paint")
         if isinstance(paint, dict) and paint.get("png"):
             from PIL import Image
@@ -502,6 +581,16 @@ class TerrainMaterial:
             raise ValueError(f"Invalid road data: {exc}") from exc
         return material
 
+    def has_advanced_shader_features(self) -> bool:
+        return (self.terrain_shader_version != SHADER_VERSION
+                or self.height_blend_enabled or self.parallax_mode != "NONE"
+                or self.height_blend_transition != 0.2 or self.height_blend_strength != 1.0
+                or self.parallax_min_steps != 8 or self.parallax_max_steps != 32
+                or any(surface.ao_map.path or surface.ao_strength != 1.0 or surface.height_map.path
+                       or surface.height_scale != 1.0 or surface.height_bias != 0.0
+                       or surface.parallax_scale != 0.0 or surface.emission
+                       for surface in self.surfaces))
+
 
 def _surface_dict(surface: Surface, base_dir: str | None) -> dict:
     def rel(path: str) -> str:
@@ -517,6 +606,21 @@ def _surface_dict(surface: Surface, base_dir: str | None) -> dict:
     data["normal"] = rel(data["normal"])
     data["metallic_map"]["path"] = rel(data["metallic_map"]["path"])
     data["roughness_map"]["path"] = rel(data["roughness_map"]["path"])
+    data["ao_map"]["path"] = rel(data["ao_map"]["path"])
+    data["height_map"]["path"] = rel(data["height_map"]["path"])
+    data["emission"] = rel(data["emission"])
+    defaults = {
+        "ao_map": {"path": "", "channel": 0, "invert": False},
+        "ao_strength": 1.0,
+        "height_map": {"path": "", "channel": 0, "invert": False},
+        "height_scale": 1.0,
+        "height_bias": 0.0,
+        "parallax_scale": 0.0,
+        "emission": "",
+    }
+    for key, default in defaults.items():
+        if data[key] == default:
+            del data[key]
     return data
 
 
@@ -549,13 +653,15 @@ class PreparedImage:
 
     @property
     def extension(self) -> str:
-        return {"image/png": ".png", "image/jpeg": ".jpg", "image/vnd-ms.dds": ".dds"}[self.mime]
+        return {"image/png": ".png", "image/jpeg": ".jpg", "image/ktx2": ".ktx2",
+                "image/vnd-ms.dds": ".dds"}[self.mime]
 
 
 _cache: dict[tuple, PreparedImage] = {}
 _cache_lock = threading.Lock()
-_DDS_MAX_BYTES = 512 * 1024 * 1024
-_DDS_MAX_PIXELS = 64 * 1024 * 1024
+MAX_TEXTURE_BYTES = 512 * 1024 * 1024
+MAX_TEXTURE_PIXELS = 64 * 1024 * 1024
+_DDS_MAX_PIXELS = MAX_TEXTURE_PIXELS
 
 
 def _eight_bit(image):
@@ -647,19 +753,17 @@ def prepare_texture(path: str) -> PreparedImage:
 
     stat = os.stat(path)
     is_dds = os.path.splitext(path)[1].lower() == ".dds"
-    if is_dds and stat.st_size > _DDS_MAX_BYTES:
-        raise ValueError(f"DDS file is larger than the {_DDS_MAX_BYTES // (1024 * 1024)} MiB limit")
+    if stat.st_size > MAX_TEXTURE_BYTES:
+        raise ValueError(f"Texture file is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
     key = (os.path.abspath(path), stat.st_mtime_ns, stat.st_size)
     with _cache_lock:
         cached = _cache.get(key)
     if cached is not None:
         return cached
     with open(path, "rb") as handle:
-        magic = handle.read(4)
-        if magic == b"DDS " and stat.st_size > _DDS_MAX_BYTES:
-            raise ValueError(f"DDS file is larger than the {_DDS_MAX_BYTES // (1024 * 1024)} MiB limit")
-        handle.seek(0)
-        raw = handle.read()
+        raw = handle.read(MAX_TEXTURE_BYTES + 1)
+    if len(raw) > MAX_TEXTURE_BYTES:
+        raise ValueError(f"Texture file is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
     is_dds = is_dds or raw[:4] == b"DDS "
     if raw[:4] == b"DDS ":
         if len(raw) < 128 or struct.unpack_from("<I", raw, 4)[0] != 124:
@@ -669,8 +773,10 @@ def prepare_texture(path: str) -> PreparedImage:
             raise ValueError(f"Cannot read texture {path}: DDS dimensions exceed the {_DDS_MAX_PIXELS:,}-pixel limit")
     try:
         with Image.open(io.BytesIO(raw)) as image:
-            image.load()
             width, height = image.size
+            if not width or not height or width * height > MAX_TEXTURE_PIXELS:
+                raise ValueError(f"Texture dimensions exceed the {MAX_TEXTURE_PIXELS:,}-pixel limit")
+            image.load()
             fmt = image.format
             progressive = bool(image.info.get("progressive") or image.info.get("progression"))
             if fmt == "PNG":

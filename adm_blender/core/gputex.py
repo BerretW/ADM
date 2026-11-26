@@ -1,9 +1,8 @@
 """GPU texture containers of the ADM texture registry (spec §8.6).
 
-``ADM-TEX-KTX2-1`` and ``ADM-TEX-DDS-1`` share one payload subset: a single 2D image with one or more
-mip levels in RGBA8, BC1 or BC3, each in an UNORM or sRGB variant. KTX2 must not be supercompressed;
-DDS must carry the DX10 extended header. Header parsing is pure Python (used by the validator);
-encoding/decoding needs numpy and is imported lazily.
+The version 1 capabilities cover RGBA8, BC1, and BC3. Version 2 additionally covers R8, R16,
+BC4, BC5, and BC7. KTX2 must not be supercompressed; DDS must carry the DX10 extended header.
+Header parsing is pure Python (used by the validator); pixel conversion is imported lazily.
 """
 
 import struct
@@ -12,18 +11,24 @@ KTX2_MAGIC = b"\xabKTX 20\xbb\r\n\x1a\n"
 DDS_MAGIC = b"DDS "
 MIME_KTX2 = "image/ktx2"
 MIME_DDS = "image/vnd-ms.dds"
-KINDS = ("RGBA8", "BC1", "BC3")
+KINDS = ("RGBA8", "BC1", "BC3", "BC4", "BC5", "BC7")
 
 # kind -> (bytes per block, block edge in texels)
-_BLOCK = {"RGBA8": (4, 1), "BC1": (8, 4), "BC3": (16, 4)}
+_BLOCK = {"RGBA8": (4, 1), "BC1": (8, 4), "BC3": (16, 4), "R8": (1, 1), "R16": (2, 1),
+          "BC4": (8, 4), "BC5": (16, 4), "BC7": (16, 4)}
 
 _VK = {37: ("RGBA8", False), 43: ("RGBA8", True), 131: ("BC1", False), 132: ("BC1", True),
-       133: ("BC1", False), 134: ("BC1", True), 137: ("BC3", False), 138: ("BC3", True)}
+       133: ("BC1", False), 134: ("BC1", True), 137: ("BC3", False), 138: ("BC3", True),
+       9: ("R8", False), 70: ("R16", False), 139: ("BC4", False), 141: ("BC5", False),
+       145: ("BC7", False), 146: ("BC7", True)}
 _VK_WRITE = {("RGBA8", False): 37, ("RGBA8", True): 43, ("BC1", False): 131, ("BC1", True): 132,
-             ("BC3", False): 137, ("BC3", True): 138}
-_DFD_MODEL = {"RGBA8": 1, "BC1": 128, "BC3": 130}   # KHR_DF_MODEL_RGBSDA / BC1A / BC3
+             ("BC3", False): 137, ("BC3", True): 138, ("R8", False): 9, ("R16", False): 70,
+             ("BC4", False): 139, ("BC5", False): 141, ("BC7", False): 145, ("BC7", True): 146}
+_DFD_MODEL = {"RGBA8": 1, "BC1": 128, "BC3": 130, "R8": 1, "R16": 1,
+              "BC4": 131, "BC5": 132, "BC7": 134}
 _DXGI = {28: ("RGBA8", False), 29: ("RGBA8", True), 71: ("BC1", False), 72: ("BC1", True),
-         77: ("BC3", False), 78: ("BC3", True)}
+         77: ("BC3", False), 78: ("BC3", True), 61: ("R8", False), 56: ("R16", False),
+         80: ("BC4", False), 83: ("BC5", False), 98: ("BC7", False), 99: ("BC7", True)}
 _DXGI_WRITE = {v: k for k, v in _DXGI.items()}
 
 _DDSD_CAPS, _DDSD_HEIGHT, _DDSD_WIDTH, _DDSD_PITCH = 0x1, 0x2, 0x4, 0x8
@@ -100,8 +105,9 @@ def _parse_ktx2(blob):
     if vk not in _VK:
         raise GpuTextureError(f"vkFormat {vk} is outside the ADM KTX2 subset")
     kind, srgb = _VK[vk]
-    if type_size != 1:
-        raise GpuTextureError("typeSize must be 1")
+    expected_type_size = 2 if kind == "R16" else 1
+    if type_size != expected_type_size:
+        raise GpuTextureError(f"typeSize must be {expected_type_size} for {kind}")
     if depth != 0 or layers != 0 or faces != 1:
         raise GpuTextureError("only a single 2D image is allowed (no depth, array or cubemap)")
     if scheme != 0 or sgd_len != 0:
@@ -119,6 +125,17 @@ def _parse_ktx2(blob):
     levels = _check_levels(blob, kind, w, h, [(o, n) for o, n, _ in raw], align)
     if dfd_len < 28 or dfd_off + dfd_len > len(blob) or dfd_off % 4:
         raise GpuTextureError("invalid data format descriptor range")
+    if kvd_len and (kvd_off + kvd_len > len(blob) or kvd_off % 4):
+        raise GpuTextureError("invalid key/value data range")
+    ranges = [(0, 80 + 24 * nlevels, "header and level index"),
+              (dfd_off, dfd_off + dfd_len, "data format descriptor")]
+    if kvd_len:
+        ranges.append((kvd_off, kvd_off + kvd_len, "key/value data"))
+    ranges.extend((off, off + length, f"level {i}") for i, (off, length, _, _) in enumerate(levels))
+    ranges.sort(key=lambda item: item[0])
+    for previous, current in zip(ranges, ranges[1:]):
+        if current[0] < previous[1]:
+            raise GpuTextureError(f"{previous[2]} overlaps {current[2]}")
     total, = struct.unpack_from("<I", blob, dfd_off)
     model, _, transfer = struct.unpack_from("<3B", blob, dfd_off + 12)
     if total != dfd_len:
@@ -127,12 +144,15 @@ def _parse_ktx2(blob):
         raise GpuTextureError(f"DFD color model {model} does not match vkFormat {vk}")
     if transfer != (2 if srgb else 1):
         raise GpuTextureError("DFD transfer function does not match the sRGB/UNORM vkFormat")
-    if kvd_len and kvd_off + kvd_len > len(blob):
-        raise GpuTextureError("invalid key/value data range")
-    end = max([dfd_off + dfd_len, kvd_off + kvd_len] + [o + n for o, n, _, _ in levels])
+    section_ends = [dfd_off + dfd_len] + [o + n for o, n, _, _ in levels]
+    if kvd_len:
+        section_ends.append(kvd_off + kvd_len)
+    end = max(section_ends)
     if end != len(blob):
         raise GpuTextureError("trailing bytes after the last KTX2 section")
-    return {"kind": kind, "srgb": srgb, "width": w, "height": h, "levels": levels}
+    capability = "ADM-TEX-KTX2-1" if kind in ("RGBA8", "BC1", "BC3") else "ADM-TEX-KTX2-2"
+    return {"kind": kind, "srgb": srgb, "width": w, "height": h, "levels": levels,
+            "capability": capability}
 
 
 def _gcd(a, b):
@@ -179,7 +199,9 @@ def _parse_dds(blob, strict):
     levels = _check_levels(blob, kind, w, h, list(zip(offsets, sizes)), 0)
     if strict and offset + sum(sizes) != len(blob):
         raise GpuTextureError("trailing bytes after the last DDS level")
-    info = {"kind": kind, "srgb": srgb, "width": w, "height": h, "levels": levels}
+    capability = "ADM-TEX-DDS-1" if kind in ("RGBA8", "BC1", "BC3") else "ADM-TEX-DDS-2"
+    info = {"kind": kind, "srgb": srgb, "width": w, "height": h, "levels": levels,
+            "capability": capability}
     if swizzle:
         info["masks"] = swizzle
     return info
@@ -246,6 +268,35 @@ def mip_chain(rgba, srgb, mipmaps=True):
         if srgb:
             out[..., :3] = _linear_to_srgb(out[..., :3])
         levels.append((np.clip(out, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+    return levels
+
+
+def normal_mip_chain(rgba, mipmaps=True):
+    """Build BC5 normal levels by averaging reconstructed vectors and renormalizing."""
+    import numpy as np
+
+    levels = [np.ascontiguousarray(rgba, dtype=np.uint8)]
+    if not mipmaps:
+        return levels
+    rgb = rgba[..., :2].astype(np.float64) / 255.0 * 2.0 - 1.0
+    xy_length2 = np.sum(rgb * rgb, axis=-1)
+    z = np.sqrt(np.maximum(0.0, 1.0 - xy_length2))
+    vectors = np.concatenate((rgb, z[..., None]), axis=-1)
+    lengths = np.linalg.norm(vectors, axis=-1, keepdims=True)
+    vectors /= np.maximum(lengths, 1e-12)
+    while vectors.shape[0] > 1 or vectors.shape[1] > 1:
+        h, w = vectors.shape[:2]
+        if h > 1:
+            vectors = 0.5 * (vectors[0:h - h % 2:2] + vectors[1:h - h % 2 + 1:2])
+        if w > 1:
+            vectors = 0.5 * (vectors[:, 0:w - w % 2:2] + vectors[:, 1:w - w % 2 + 1:2])
+        lengths = np.linalg.norm(vectors, axis=-1, keepdims=True)
+        vectors /= np.maximum(lengths, 1e-12)
+        level = np.zeros(vectors.shape[:2] + (4,), dtype=np.uint8)
+        level[..., :2] = np.clip(vectors[..., :2] * 127.5 + 127.5 + 0.5, 0, 255).astype(np.uint8)
+        level[..., 2] = np.clip(vectors[..., 2] * 127.5 + 127.5 + 0.5, 0, 255).astype(np.uint8)
+        level[..., 3] = 255
+        levels.append(level)
     return levels
 
 
@@ -322,26 +373,133 @@ def _encode_alpha_blocks(blk):
     return out
 
 
+def _encode_bc7_mode6(blk):
+    """Encode RGBA blocks using the valid single-subset BC7 mode 6."""
+    import numpy as np
+    colors = blk.astype(np.float64)
+    mean = colors.mean(axis=1)
+    centered = colors - mean[:, None, :]
+    covariance = np.einsum("nki,nkj->nij", centered, centered)
+    axis = np.full((blk.shape[0], 4), 0.5)
+    for _ in range(8):
+        candidate = np.einsum("nij,nj->ni", covariance, axis)
+        length = np.linalg.norm(candidate, axis=1, keepdims=True)
+        axis = np.where(length > 1e-12, candidate / np.maximum(length, 1e-12), axis)
+    projection = np.einsum("nki,ni->nk", centered, axis)
+    endpoints = np.stack((mean + axis * projection.min(axis=1)[:, None],
+                          mean + axis * projection.max(axis=1)[:, None]), axis=1)
+    endpoints = np.clip(endpoints, 0.0, 255.0)
+
+    quantized = np.empty((blk.shape[0], 2, 4), dtype=np.uint8)
+    pbits = np.empty((blk.shape[0], 2), dtype=np.uint8)
+    for endpoint in range(2):
+        candidates = []
+        errors = []
+        for pbit in (0, 1):
+            quant = np.clip(np.rint((endpoints[:, endpoint] - pbit) / 2.0), 0, 127)
+            reconstructed = quant * 2 + pbit
+            candidates.append(quant.astype(np.uint8))
+            errors.append(np.square(endpoints[:, endpoint] - reconstructed).sum(axis=1))
+        use_one = errors[1] < errors[0]
+        quantized[:, endpoint] = np.where(use_one[:, None], candidates[1], candidates[0])
+        pbits[:, endpoint] = use_one.astype(np.uint8)
+
+    expanded = quantized.astype(np.uint16) * 2 + pbits[:, :, None]
+    weights = np.array([0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64],
+                       dtype=np.uint16)
+    palette = ((64 - weights[None, :, None]) * expanded[:, 0, None, :]
+               + weights[None, :, None] * expanded[:, 1, None, :] + 32) >> 6
+    distances = np.square(colors[:, :, None, :] - palette[:, None, :, :]).sum(axis=-1)
+    indices = distances.argmin(axis=-1).astype(np.uint8)
+    reverse = indices[:, 0] >= 8
+    if reverse.any():
+        old_first = expanded[reverse, 0].copy()
+        expanded[reverse, 0] = expanded[reverse, 1]
+        expanded[reverse, 1] = old_first
+        old_quantized = quantized[reverse, 0].copy()
+        quantized[reverse, 0] = quantized[reverse, 1]
+        quantized[reverse, 1] = old_quantized
+        old_pbits = pbits[reverse, 0].copy()
+        pbits[reverse, 0] = pbits[reverse, 1]
+        pbits[reverse, 1] = old_pbits
+        indices[reverse] = 15 - indices[reverse]
+
+    low = np.full(blk.shape[0], 1 << 6, dtype=np.uint64)
+    high = np.zeros(blk.shape[0], dtype=np.uint64)
+
+    def put(values, offset, width):
+        nonlocal low, high
+        values = values.astype(np.uint64)
+        if offset < 64:
+            low |= values << np.uint64(offset)
+        else:
+            high |= values << np.uint64(offset - 64)
+
+    bit = 7
+    for channel in range(4):
+        put(quantized[:, 0, channel], bit, 7)
+        bit += 7
+        put(quantized[:, 1, channel], bit, 7)
+        bit += 7
+    put(pbits[:, 0], 63, 1)
+    put(pbits[:, 1], 64, 1)
+    put(indices[:, 0], 65, 3)
+    for pixel in range(1, 16):
+        put(indices[:, pixel], 68 + (pixel - 1) * 4, 4)
+    out = bytearray(16 * blk.shape[0])
+    for i, (lo, hi) in enumerate(zip(low, high)):
+        out[i * 16:i * 16 + 8] = int(lo).to_bytes(8, "little")
+        out[i * 16 + 8:i * 16 + 16] = int(hi).to_bytes(8, "little")
+    return bytes(out)
+
+
 def encode_level(px, kind):
     import numpy as np
     if kind == "RGBA8":
         return np.ascontiguousarray(px, dtype=np.uint8).tobytes()
     blk = _blocks(np.ascontiguousarray(px, dtype=np.uint8))
+    if kind in ("BC4", "BC5"):
+        red = blk.copy()
+        red[..., 3] = blk[..., 0]
+        red_data = _encode_alpha_blocks(red)
+        if kind == "BC4":
+            return red_data.tobytes()
+        green = blk.copy()
+        green[..., 3] = blk[..., 1]
+        return np.concatenate((red_data, _encode_alpha_blocks(green)), axis=1).tobytes()
+    if kind == "BC7":
+        return _encode_bc7_mode6(blk)
     color = _encode_color_blocks(blk)
     if kind == "BC1":
         return color.tobytes()
-    return np.concatenate([_encode_alpha_blocks(blk), color], 1).tobytes()
+    if kind == "BC3":
+        return np.concatenate([_encode_alpha_blocks(blk), color], 1).tobytes()
+    raise GpuTextureError(f"unsupported encoder format {kind!r}")
 
 
 def _dfd(kind, srgb):
     transfer = 2 if srgb else 1
     alpha_linear = 0x10 if srgb else 0
-    if kind == "RGBA8":
+    if kind in ("R8", "R16"):
+        dims, plane = (0, 0, 0, 0), _BLOCK[kind][0]
+        bits = 15 if kind == "R16" else 7
+        upper = 65535 if kind == "R16" else 255
+        samples = [(0, bits, 0, upper)]
+    elif kind == "RGBA8":
         dims, plane = (0, 0, 0, 0), 4
         samples = [(0, 7, 0, 255), (8, 7, 1, 255), (16, 7, 2, 255), (24, 7, 15 | alpha_linear, 255)]
     elif kind == "BC1":
         dims, plane = (3, 3, 0, 0), 8
         samples = [(0, 63, 0, 0xFFFFFFFF)]
+    elif kind == "BC4":
+        dims, plane = (3, 3, 0, 0), 8
+        samples = [(0, 63, 0, 0xFFFFFFFF)]
+    elif kind == "BC5":
+        dims, plane = (3, 3, 0, 0), 16
+        samples = [(0, 63, 0, 0xFFFFFFFF), (64, 63, 1, 0xFFFFFFFF)]
+    elif kind == "BC7":
+        dims, plane = (3, 3, 0, 0), 16
+        samples = [(0, 127, 0, 0xFFFFFFFF)]
     else:
         dims, plane = (3, 3, 0, 0), 16
         samples = [(0, 63, 15 | alpha_linear, 0xFFFFFFFF), (64, 63, 0, 0xFFFFFFFF)]
@@ -362,7 +520,11 @@ def write_ktx2(levels, kind, srgb):
     """levels: list of uint8 (h, w, 4) arrays, level 0 first."""
     h, w = levels[0].shape[:2]
     data = [encode_level(px, kind) for px in levels]
-    n = len(levels)
+    return _write_ktx2_data(data, w, h, kind, srgb)
+
+
+def _write_ktx2_data(data, w, h, kind, srgb):
+    n = len(data)
     dfd = _dfd(kind, srgb)
     kvd = _kvd()
     dfd_off = 80 + 24 * n
@@ -379,7 +541,8 @@ def write_ktx2(levels, kind, srgb):
         index[i] = (pos, len(data[i]), len(data[i]))
         body += data[i]
         pos += len(data[i])
-    head = KTX2_MAGIC + struct.pack("<9I", _VK_WRITE[(kind, srgb)], 1, w, h, 0, 0, 1, n, 0)
+    type_size = 2 if kind == "R16" else 1
+    head = KTX2_MAGIC + struct.pack("<9I", _VK_WRITE[(kind, srgb)], type_size, w, h, 0, 0, 1, n, 0)
     head += struct.pack("<4I2Q", dfd_off, len(dfd), kvd_off, len(kvd), 0, 0)
     for entry in index:
         head += struct.pack("<3Q", *entry)
@@ -389,18 +552,22 @@ def write_ktx2(levels, kind, srgb):
 def write_dds(levels, kind, srgb):
     h, w = levels[0].shape[:2]
     data = b"".join(encode_level(px, kind) for px in levels)
-    n = len(levels)
+    return _write_dds_data(data, w, h, len(levels), kind, srgb)
+
+
+def _write_dds_data(data, w, h, n, kind, srgb):
     flags = _DDSD_CAPS | _DDSD_HEIGHT | _DDSD_WIDTH | _DDSD_PIXELFORMAT
-    flags |= _DDSD_PITCH if kind == "RGBA8" else _DDSD_LINEARSIZE
+    uncompressed = kind in ("RGBA8", "R8", "R16")
+    flags |= _DDSD_PITCH if uncompressed else _DDSD_LINEARSIZE
     caps = _DDSCAPS_TEXTURE
     if n > 1:
         flags |= _DDSD_MIPMAPCOUNT
         caps |= _DDSCAPS_COMPLEX | _DDSCAPS_MIPMAP
-    pitch = w * 4 if kind == "RGBA8" else level_size(kind, w, h)
+    pitch = w * _BLOCK[kind][0] if uncompressed else level_size(kind, w, h)
     head = DDS_MAGIC + struct.pack("<7I44x", 124, flags, h, w, pitch, 0, n)
     head += struct.pack("<2I4s5I", 32, _DDPF_FOURCC, b"DX10", 0, 0, 0, 0, 0)
     head += struct.pack("<5I", caps, 0, 0, 0, 0)
-    alpha_mode = 3 if kind == "BC1" else 1           # DDS_ALPHA_MODE_OPAQUE / STRAIGHT
+    alpha_mode = 3 if kind in ("BC1", "R8", "R16", "BC4", "BC5") else 1
     head += struct.pack("<5I", _DXGI_WRITE[(kind, srgb)], 3, 0, 1, alpha_mode)
     return head + data
 
@@ -416,11 +583,87 @@ def encode(rgba, mime, kind="AUTO", srgb=False, mipmaps=True):
         kind = "BC3" if (rgba[..., 3] < 255).any() else "BC1"
     if kind not in KINDS:
         raise GpuTextureError(f"unknown texture format {kind!r}")
-    levels = mip_chain(rgba, srgb, mipmaps)
+    if kind in ("BC4", "BC5") and srgb:
+        raise GpuTextureError(f"{kind} is a linear data format and cannot be sRGB")
+    levels = normal_mip_chain(rgba, mipmaps) if kind == "BC5" else mip_chain(rgba, srgb, mipmaps)
     if mime == MIME_KTX2:
         return write_ktx2(levels, kind, srgb), kind
     if mime == MIME_DDS:
         return write_dds(levels, kind, srgb), kind
+    raise GpuTextureError(f"not a GPU texture mime type: {mime!r}")
+
+
+def scalar_mip_chain(values, kind, mipmaps=True):
+    """Build box-filtered R8/R16 scalar levels while preserving the source bit depth."""
+    import numpy as np
+    if kind not in ("R8", "R16"):
+        raise GpuTextureError(f"scalar mipmaps require R8 or R16, got {kind!r}")
+    values = np.asarray(values)
+    dtype = np.uint8 if kind == "R8" else np.uint16
+    if values.ndim != 2 or not all(values.shape) or values.dtype != dtype:
+        raise GpuTextureError(f"{kind} input must be a 2D {np.dtype(dtype)} array")
+    current = np.ascontiguousarray(values)
+    levels = [current]
+    if not mipmaps:
+        return levels
+    while current.shape[0] > 1 or current.shape[1] > 1:
+        height, width = current.shape
+        out_height, out_width = max(1, height // 2), max(1, width // 2)
+        rows = out_height * 2 if height > 1 else 1
+        columns = out_width * 2 if width > 1 else 1
+        source = current[:rows, :columns]
+        if height > 1 and width > 1:
+            sums = source.reshape(out_height, 2, out_width, 2).sum(axis=(1, 3), dtype=np.uint32)
+            count = 4
+        elif height > 1:
+            sums = source.reshape(out_height, 2, out_width).sum(axis=1, dtype=np.uint32)
+            count = 2
+        else:
+            sums = source.reshape(out_height, out_width, 2).sum(axis=2, dtype=np.uint32)
+            count = 2
+        reduced = ((sums + count // 2) // count).astype(dtype)
+        current = reduced
+        levels.append(current)
+    return levels
+
+
+def encode_scalar_level(values, kind):
+    """Encode one 2D R8, R16, or BC4 scalar level."""
+    import numpy as np
+    if kind in ("R8", "R16"):
+        dtype = np.uint8 if kind == "R8" else np.uint16
+        if values.ndim != 2 or values.dtype != dtype:
+            raise GpuTextureError(f"{kind} input must be a 2D {np.dtype(dtype)} array")
+        if kind == "R16":
+            return np.ascontiguousarray(values.astype("<u2", copy=False)).tobytes()
+        return np.ascontiguousarray(values).tobytes()
+    if kind == "BC4":
+        if values.ndim != 2 or values.dtype != np.uint8:
+            raise GpuTextureError("BC4 input must be a 2D uint8 array")
+        rgba = np.zeros(values.shape + (4,), dtype=np.uint8)
+        rgba[..., 0] = values
+        rgba[..., 3] = 255
+        return encode_level(rgba, kind)
+    raise GpuTextureError(f"unsupported scalar encoder format {kind!r}")
+
+
+def encode_scalar(values, mime, kind="R8", mipmaps=True):
+    """Encode a 2D uint8/uint16 scalar image as R8, R16, or BC4."""
+    import numpy as np
+    if kind == "BC4" and np.asarray(values).dtype != np.uint8:
+        raise GpuTextureError("BC4 input must use uint8 values")
+    source_kind = "R16" if np.asarray(values).dtype == np.uint16 else "R8"
+    if kind not in ("R8", "R16", "BC4"):
+        raise GpuTextureError(f"unsupported scalar encoder format {kind!r}")
+    if source_kind != kind and kind != "BC4":
+        raise GpuTextureError(f"{kind} input must use {np.dtype(np.uint16 if kind == 'R16' else np.uint8)} values")
+    levels = scalar_mip_chain(values, source_kind, mipmaps)
+    data = [encode_scalar_level(level, kind) for level in levels]
+    height, width = levels[0].shape
+    if mime == MIME_KTX2:
+        return _write_ktx2_data(data, width, height, kind, False), kind
+    if mime == MIME_DDS:
+        return _write_dds_data(b"".join(data), width, height, len(data), kind, False), kind
     raise GpuTextureError(f"not a GPU texture mime type: {mime!r}")
 
 
@@ -473,6 +716,26 @@ def decode_level(blob, info, level=0, rgb_only=False):
     off, length, w, h = info["levels"][level]
     raw = np.frombuffer(blob, np.uint8, length, off)
     kind = info["kind"]
+    if kind == "R16":
+        raise GpuTextureError("R16 decoding requires decode_scalar_level to preserve precision")
+    if kind == "BC7":
+        try:
+            import texture2ddecoder
+        except ImportError as exc:
+            raise GpuTextureError("BC7 decoding requires the texture2ddecoder package") from exc
+        try:
+            decoded = texture2ddecoder.decode_bc7(raw.tobytes(), w, h)
+        except (RuntimeError, ValueError) as exc:
+            raise GpuTextureError(f"Could not decode BC7 texture: {exc}") from exc
+        if len(decoded) != w * h * 4:
+            raise GpuTextureError("BC7 decoder returned an invalid image")
+        bgra = np.frombuffer(decoded, dtype=np.uint8).reshape(h, w, 4)
+        return np.ascontiguousarray(bgra[..., [2, 1, 0, 3]])
+    if kind == "R8":
+        out = np.zeros((h, w, 4), dtype=np.uint8)
+        out[..., 0] = raw.reshape(h, w)
+        out[..., 3] = 255
+        return out
     if kind == "RGBA8":
         px = raw.reshape(h, w, 4)
         masks = info.get("masks")
@@ -489,6 +752,18 @@ def decode_level(blob, info, level=0, rgb_only=False):
         return np.array(px, dtype=np.uint8)
     nblk = _BLOCK[kind][0]
     raw = raw.reshape(-1, nblk)
+    if kind in ("BC4", "BC5"):
+        red = _decode_alpha(raw[:, :8])
+        channels = [red]
+        if kind == "BC5":
+            channels.append(_decode_alpha(raw[:, 8:]))
+        channels.extend(np.zeros_like(red) for _ in range(3 - len(channels)))
+        channels.append(np.full_like(red, 255))
+        out = np.stack(channels, axis=-1)
+        bh, bw = (h + 3) // 4, (w + 3) // 4
+        img = out.reshape(bh, bw, 4, 4, 4).transpose(0, 2, 1, 3, 4).reshape(
+            bh * 4, bw * 4, 4)
+        return np.ascontiguousarray(img[:h, :w])
     if kind == "BC1":
         out = _decode_color(raw, False, not rgb_only)
     else:
@@ -505,3 +780,24 @@ def decode(blob, mime=None, strict=False):
     info = parse(blob, mime, strict)
     rgb_only = mime == MIME_KTX2 and struct.unpack_from("<I", blob, 12)[0] in (131, 132)
     return decode_level(blob, info, 0, rgb_only), info
+
+
+def decode_scalar_level(blob, info, level=0):
+    """Decode one R8, R16, or BC4 level to a 2D scalar array."""
+    import numpy as np
+    kind = info["kind"]
+    off, length, width, height = info["levels"][level]
+    if kind == "R8":
+        return np.frombuffer(blob, np.uint8, length, off).reshape(height, width).copy()
+    if kind == "R16":
+        return np.frombuffer(blob, "<u2", length // 2, off).reshape(height, width).astype(np.uint16)
+    if kind == "BC4":
+        return decode_level(blob, info, level)[..., 0]
+    raise GpuTextureError(f"{kind} is not a scalar texture format")
+
+
+def decode_scalar(blob, mime=None, strict=False):
+    """Decode level 0 of an R8, R16, or BC4 image without losing scalar precision."""
+    mime = mime or mime_of(blob)
+    info = parse(blob, mime, strict)
+    return decode_scalar_level(blob, info), info

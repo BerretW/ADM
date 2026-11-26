@@ -150,6 +150,11 @@ def param_value_error(param, value, ntex=None):
         return None
     if typ == "BOOL":
         return None if isinstance(value, bool) else "BOOL parameter needs true/false"
+    if typ == "ENUM":
+        values = param.get("values")
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+            return "ENUM parameter needs a list of string values"
+        return None if isinstance(value, str) and value in values else "ENUM value is not one of its declared values"
     if typ == "TEXTURE":
         if value is None:
             return None
@@ -573,11 +578,31 @@ class AdmValidator(_Base):
                     want = "sRGB" if srgb else "UNORM (linear)"
                     self.r.error("IMAGE_COLORSPACE", f"materials[{mi}].{key}",
                                  f"texture {ti} must use the {want} variant of its GPU format")
+            shader = mat.get("shader")
+            if isinstance(shader, dict):
+                shader_key = (shader.get("id"), shader.get("version"))
+                definitions = K.OFFICIAL_SHADERS.get(shader_key, ())
+                values = mat.get("shaderParameters")
+                if isinstance(values, dict):
+                    for parameter in definitions:
+                        name = parameter["name"]
+                        reference = values.get(name, parameter["default"])
+                        if parameter["type"] != "TEXTURE" or not isinstance(reference, dict):
+                            continue
+                        ti = reference.get("index")
+                        if not isinstance(ti, int) or not 0 <= ti < len(textures):
+                            continue
+                        texture = textures[ti]
+                        info = gpu_info.get(texture.get("source")) if isinstance(texture, dict) else None
+                        if info and info["srgb"] != (name in K.SHADER_COLOR_TEXTURES):
+                            want = "sRGB" if name in K.SHADER_COLOR_TEXTURES else "UNORM (linear)"
+                            self.r.error("IMAGE_COLORSPACE", f"materials[{mi}].shaderParameters.{name}",
+                                         f"texture {ti} must use the {want} variant of its GPU format")
 
     # shaders -------------------------------------------------------------------------------------
     def check_shader_param_def(self, prm, p, ntex):
         if not self.keys(prm, p, ("name", "type", "default", "description"),
-                         ("minimum", "maximum", "animatable")):
+                         ("minimum", "maximum", "animatable", "values")):
             return False
         ok = True
         if not isinstance(prm["name"], str) or not PARAM_NAME_RE.match(prm["name"]):
@@ -590,6 +615,17 @@ class AdmValidator(_Base):
         if not _nonblank(prm["description"]) or len(prm["description"]) > 2048:
             self.r.error("TEXT_BLANK", p + ".description", "description must be non-whitespace text <= 2048")
         numeric = typ in K.SHADER_NUMERIC_DIMS
+        if typ == "ENUM":
+            values = prm.get("values")
+            if (not isinstance(values, list) or not values
+                    or any(not isinstance(value, str) or not value for value in values)
+                    or len(values) != len(set(values))):
+                self.r.error("SHADER_PARAM_ENUM_VALUES", p + ".values",
+                             "ENUM parameters need a non-empty list of unique strings")
+                ok = False
+        elif "values" in prm:
+            self.r.error("SHADER_PARAM_ENUM_VALUES", p + ".values", "values are allowed only for ENUM parameters")
+            ok = False
         if "animatable" in prm:
             if not isinstance(prm["animatable"], bool):
                 self.r.error("TYPE_BOOL", p + ".animatable", "must be a boolean")
@@ -738,6 +774,39 @@ class AdmValidator(_Base):
                         self.r.error("SHADER_PARAM_VALUE", f"{p}.shaderParameters.{name}", err)
                     elif prm.get("type") == "TEXTURE" and isinstance(val, dict):
                         self.material_uv_needs.setdefault(self._mi, set()).add("TEXCOORD_%d" % val.get("texCoord", 0))
+        if (params and isinstance(sp, (dict, type(None))) and "parallax_min_steps" in params
+                and "parallax_max_steps" in params):
+            minimum_default = params["parallax_min_steps"].get("default", 8)
+            maximum_default = params["parallax_max_steps"].get("default", 32)
+            minimum = sp.get("parallax_min_steps", minimum_default) if sp else minimum_default
+            maximum = sp.get("parallax_max_steps", maximum_default) if sp else maximum_default
+            if (not _is_num(minimum) or not _is_num(maximum) or int(minimum) != minimum or int(maximum) != maximum
+                    or not 1 <= minimum <= maximum <= 256):
+                self.r.error("SHADER_POM_STEPS", p + ".shaderParameters",
+                             "parallax steps must be integers satisfying 1 <= min <= max <= 256")
+        layer_count = K.SHADER_LAYERED_HEIGHT_COUNTS.get(key)
+        if layer_count and isinstance(sp, (dict, type(None))):
+            for index in range(layer_count):
+                prefix = f"layer{index}_"
+                base_ref = sp.get(prefix + "texture") if sp else None
+                base_uv = base_ref.get("texCoord", 0) if isinstance(base_ref, dict) else 0
+                for name, prm in params.items():
+                    if not name.startswith(prefix) or prm.get("type") != "TEXTURE":
+                        continue
+                    ref = sp.get(name, prm.get("default")) if sp else prm.get("default")
+                    if isinstance(ref, dict) and ref.get("texCoord", 0) != base_uv:
+                        self.r.error("SHADER_LAYER_TEXCOORD", f"{p}.shaderParameters.{name}",
+                                     f"must use the layer albedo UV set TEXCOORD_{base_uv}")
+            mode = sp.get("parallax_mode", params["parallax_mode"]["default"]) if sp else \
+                params["parallax_mode"]["default"]
+            if mode != "NONE":
+                for index in range(layer_count):
+                    height = sp.get(f"layer{index}_height_texture") if sp else None
+                    scale = sp.get(f"layer{index}_parallax_scale",
+                                   params[f"layer{index}_parallax_scale"]["default"]) if sp else \
+                        params[f"layer{index}_parallax_scale"]["default"]
+                    if height is not None and _is_num(scale) and scale > 0.0:
+                        self.material_uv_needs.setdefault(self._mi, set()).add("@normalmap")
         if params and any(pr.get("animatable") for pr in params.values()) and "animationId" not in m:
             self.r.error("MATERIAL_ANIMATION_ID_REQUIRED", p,
                          "materials using a shader with animatable parameters must provide animationId")
@@ -821,7 +890,7 @@ class AdmValidator(_Base):
                                          "roughnessFactor", "metallicRoughnessTexture", "normalTexture",
                                          "occlusionTexture", "emissiveTexture", "emissiveFactor", "alphaMode",
                                          "alphaCutoff", "doubleSided", "shader", "shaderParameters",
-                                         "animationId")):
+                                         "animationId", "extensions")):
                 continue
             needs = set()
             if "baseColorFactor" in m and not (_is_vec(m["baseColorFactor"], 4)
@@ -860,6 +929,50 @@ class AdmValidator(_Base):
             self.material_uv_needs[i] = needs
             self._mi = i
             self.check_material_shader(m, p, ntex)
+            self.check_material_height(m, p, ntex)
+
+    def check_material_height(self, material, path, texture_count):
+        extensions = material.get("extensions", {})
+        if not isinstance(extensions, dict) or K.MATERIAL_HEIGHT_EXT not in extensions:
+            return
+        key = K.MATERIAL_HEIGHT_EXT
+        p = f"{path}.extensions.{key}"
+        data = extensions[key]
+        if not self.keys(data, p, ("version", "heightTexture"), ("channel", "invert", "scale", "bias",
+                                                         "referenceHeight", "parallaxMode",
+                                                         "parallaxScale", "pomMinSteps", "pomMaxSteps")):
+            return
+        if data["version"] != "1.0.0":
+            self.r.error("EXTENSION_VERSION", p + ".version", "must be '1.0.0'")
+        ref = data["heightTexture"]
+        if not self.keys(ref, p + ".heightTexture", ("index",), ("texCoord",)):
+            return
+        self.index(ref["index"], texture_count, p + ".heightTexture.index", "textures")
+        tex_coord = ref.get("texCoord", 0)
+        if type(tex_coord) is not int or tex_coord not in (0, 1):
+            self.r.error("MATERIAL_TEXCOORD", p + ".heightTexture.texCoord", "must be 0 or 1")
+        else:
+            self.material_uv_needs.setdefault(self._mi, set()).add(f"TEXCOORD_{tex_coord}")
+        if data.get("channel", "R") not in K.SHADER_MASK_CHANNELS:
+            self.r.error("MATERIAL_HEIGHT_CHANNEL", p + ".channel", "must be R, G, B or A")
+        if "invert" in data and not isinstance(data["invert"], bool):
+            self.r.error("TYPE_BOOL", p + ".invert", "must be a boolean")
+        for field, low, high in (("scale", 0.0, 1000.0), ("bias", -1.0, 1.0),
+                                 ("referenceHeight", 0.0, 1.0), ("parallaxScale", 0.0, 1.0)):
+            if field in data and not (_is_num(data[field]) and low <= data[field] <= high):
+                self.r.error("MATERIAL_RANGE", p + "." + field,
+                             f"must be a finite number in [{low},{high}]")
+        mode = data.get("parallaxMode", "NONE")
+        if mode not in ("NONE", "PARALLAX", "PARALLAX_OCCLUSION"):
+            self.r.error("MATERIAL_HEIGHT_PARALLAX", p + ".parallaxMode",
+                         "must be NONE, PARALLAX or PARALLAX_OCCLUSION")
+        minimum = data.get("pomMinSteps", 8)
+        maximum = data.get("pomMaxSteps", 32)
+        if not (_is_int(minimum) and _is_int(maximum) and 1 <= minimum <= maximum <= 256):
+            self.r.error("MATERIAL_HEIGHT_POM_STEPS", p,
+                         "pomMinSteps and pomMaxSteps must satisfy 1 <= min <= max <= 256")
+        if mode != "NONE":
+            self.material_uv_needs.setdefault(self._mi, set()).add("@normalmap")
 
     # meshes --------------------------------------------------------------------------------------
     def check_meshes(self):

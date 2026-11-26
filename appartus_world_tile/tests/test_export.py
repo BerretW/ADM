@@ -10,7 +10,7 @@ from PIL import Image
 
 from awt.adm_export import (INDEX_NAME, ExportSettings, _core, changed_tiles, color1, export_tiles, group_masks,
                             prepare_adm_texture, rules_outdated, triangle_masks)
-from awt.material import Biome, BiomeSurface, TerrainMaterial, prepare_texture
+from awt.material import Biome, BiomeSurface, MapSlot, TerrainMaterial, prepare_texture
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields, write_ply
 from awt.project import Project, load_project
@@ -63,6 +63,126 @@ class ExportTest(unittest.TestCase):
             attrs = {name: _accessor(doc, chunks, index) for name, index in prim["attributes"].items()}
             out.append((prim, attrs, _accessor(doc, chunks, prim["indices"]).reshape(-1, 3)))
         return out
+
+    def test_shader_only_fields_round_trip_without_invalidating_terrain_rules(self):
+        material = TerrainMaterial()
+        rules = material.rules_digest()
+        material.biomes[0].noise = 0.4
+        rules = material.rules_digest()
+        surface = material.surface("grass")
+        surface.ao_map = MapSlot("", channel=1, invert=True)
+        surface.ao_strength = 0.7
+        surface.height_map = MapSlot("", channel=0)
+        surface.height_scale = 0.3
+        surface.height_bias = -0.1
+        surface.parallax_scale = 0.02
+        surface.emission = ""
+        material.height_blend_enabled = True
+        material.height_blend_transition = 0.15
+        material.height_blend_strength = 0.8
+        material.parallax_mode = "PARALLAX_OCCLUSION"
+        material.parallax_min_steps = 12
+        material.parallax_max_steps = 48
+        material.terrain_shader_version = "2.1.0"
+        self.assertEqual(material.rules_digest(), rules)
+        self.assertTrue(material.has_advanced_shader_features())
+        payload = material.to_dict(None)
+        self.assertEqual(payload["terrain_shader"]["version"], "2.1.0")
+        restored = TerrainMaterial.from_dict(payload, None)
+        restored.validate_rules()
+        self.assertEqual(restored.surface("grass").ao_map, surface.ao_map)
+        self.assertEqual(restored.surface("grass").height_map, surface.height_map)
+        self.assertEqual(restored.surface("grass").height_bias, -0.1)
+        self.assertEqual(restored.parallax_mode, "PARALLAX_OCCLUSION")
+        self.assertEqual(restored.rules_digest(), rules)
+        self.assertNotEqual(restored.fingerprint(64), TerrainMaterial().fingerprint(64))
+
+    def test_legacy_material_keeps_legacy_project_shape_and_rejects_bad_channels(self):
+        material = TerrainMaterial()
+        payload = material.to_dict(None)
+        self.assertNotIn("terrain_shader", payload)
+        self.assertNotIn("ao_map", payload["surfaces"][0])
+        payload["surfaces"][0]["ao_map"] = {"path": "", "channel": 4, "invert": False}
+        with self.assertRaisesRegex(ValueError, "channel must be R"):
+            TerrainMaterial.from_dict(payload, None).validate()
+
+    def test_advanced_project_uses_version_five_and_legacy_load_defaults(self):
+        project = Project.new()
+        project.material.height_blend_enabled = True
+        project.material.surface("grass").height_map = MapSlot("height.png")
+        payload = project.to_dict()
+        self.assertEqual(payload["format_version"], 5)
+        restored = Project.from_dict(payload)
+        self.assertTrue(restored.material.height_blend_enabled)
+        self.assertEqual(restored.material.surface("grass").height_map.path, "height.png")
+        for version in (2, 3, 4):
+            payload["format_version"] = version
+            payload["material"] = TerrainMaterial().to_dict(None)
+            loaded = Project.from_dict(payload)
+            self.assertFalse(loaded.material.height_blend_enabled)
+            self.assertEqual(loaded.material.surface("grass").height_scale, 1.0)
+
+    def test_advanced_export_requires_explicit_target_profile(self):
+        self.material.height_blend_enabled = True
+        self.assertFalse(rules_outdated(self.manifest, self.material))
+        with self.assertRaisesRegex(ValueError, "require the explicit terrain shader version 2.1.0"):
+            export_tiles(self.manifest, self.material, self.settings, "all")
+
+    def test_advanced_export_writes_profile_maps_and_tangents_for_parallax(self):
+        grass = self.material.surface("grass")
+        grass.ao_map = MapSlot(self.packed, channel=1, invert=True)
+        grass.ao_strength = 0.65
+        grass.height_map = MapSlot(self.packed, channel=2)
+        grass.height_scale = 0.4
+        grass.height_bias = -0.15
+        grass.parallax_scale = 0.025
+        grass.emission = self.albedo
+        for surface in self.material.surfaces:
+            surface.normal = ""
+        self.material.height_blend_enabled = True
+        self.material.height_blend_transition = 0.15
+        self.material.height_blend_strength = 0.8
+        self.material.parallax_mode = "PARALLAX_OCCLUSION"
+        self.material.parallax_min_steps = 12
+        self.material.parallax_max_steps = 48
+        self.material.terrain_shader_version = "2.1.0"
+
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertTrue(any("Portable PBR fallbacks" in warning for warning in result["warnings"]))
+        found_height_map = False
+        found_emission_map = False
+        found_tangent = False
+        for tile in self.manifest["tiles"]:
+            doc, chunks = _read_adm(os.path.join(self.settings.out_dir, tile["id"] + ".adm"))
+            for exported in doc["materials"]:
+                self.assertEqual(exported["shader"]["version"], "2.1.0")
+                params = exported["shaderParameters"]
+                self.assertTrue(params["height_blend_enabled"])
+                self.assertEqual(params["height_blend_transition"], 0.15)
+                self.assertEqual(params["height_blend_strength"], 0.8)
+                self.assertEqual(params["parallax_mode"], "PARALLAX_OCCLUSION")
+                self.assertEqual(params["parallax_min_steps"], 12.0)
+                self.assertEqual(params["parallax_max_steps"], 48.0)
+                height_name = next((name for name in params if name.endswith("_height_texture")), None)
+                if height_name:
+                    prefix = height_name.removesuffix("_height_texture")
+                    self.assertIn("index", params[f"{prefix}_ao_texture"])
+                    self.assertIn("index", params[height_name])
+                    self.assertEqual(params[f"{prefix}_ao_channel"], 1.0)
+                    self.assertTrue(params[f"{prefix}_ao_invert"])
+                    self.assertEqual(params[f"{prefix}_ao_strength"], 0.65)
+                    self.assertEqual(params[f"{prefix}_height_channel"], 2.0)
+                    self.assertEqual(params[f"{prefix}_height_scale"], 0.4)
+                    self.assertEqual(params[f"{prefix}_height_bias"], -0.15)
+                    self.assertEqual(params[f"{prefix}_parallax_scale"], 0.025)
+                    found_height_map = True
+                if any(name.endswith("_emissive_texture") for name in params):
+                    found_emission_map = True
+            found_tangent |= any("TANGENT" in primitive["attributes"]
+                                 for mesh in doc["meshes"] for primitive in mesh["primitives"])
+        self.assertTrue(found_height_map)
+        self.assertTrue(found_emission_map)
+        self.assertTrue(found_tangent)
 
     def test_biome_noise_requires_rebuild_and_is_exported(self):
         self.material.biomes = [Biome("plain", surfaces=[BiomeSurface("grass"), BiomeSurface("soil")])]
@@ -292,6 +412,50 @@ class ExportTest(unittest.TestCase):
         data_info = gputex.parse(converted_data.primary.data, gputex.MIME_DDS, strict=True)
         self.assertEqual(data_info["kind"], "BC3")
         self.assertFalse(data_info["srgb"])
+
+    def test_scalar_gpu_textures_preserve_source_bytes_and_png_values(self):
+        _core()
+        from adm_blender.core import gputex
+
+        values8 = np.array([[0, 1, 25, 255], [64, 128, 192, 250],
+                            [2, 3, 4, 5], [200, 201, 202, 203]], dtype=np.uint8)
+        values16 = np.array([[0, 1, 257, 4096], [8192, 16384, 32768, 65535],
+                             [1234, 2345, 3456, 4567], [50000, 60000, 100, 200]], dtype=np.uint16)
+        for kind, values in (("R8", values8), ("R16", values16), ("BC4", values8)):
+            for mime, extension in ((gputex.MIME_DDS, ".dds"), (gputex.MIME_KTX2, ".ktx2")):
+                with self.subTest(kind=kind, mime=mime):
+                    blob, encoded_kind = gputex.encode_scalar(values, mime, kind, mipmaps=False)
+                    self.assertEqual(encoded_kind, kind)
+                    path = os.path.join(self.tmp.name, "height" + extension)
+                    with open(path, "wb") as handle:
+                        handle.write(blob)
+
+                    prepared = prepare_adm_texture(path, "data")
+                    self.assertEqual(prepared.primary.data, blob)
+                    self.assertEqual(prepared.primary.mime, mime)
+                    self.assertEqual(prepared.fallback.mime, "image/png")
+                    expected, _ = gputex.decode_scalar(blob, mime, strict=True)
+                    with Image.open(io.BytesIO(prepared.fallback.data)) as image:
+                        fallback_values = np.asarray(image)
+                    np.testing.assert_array_equal(fallback_values, expected)
+
+    def test_r16_png_is_exported_as_r16_dds_without_precision_loss(self):
+        _core()
+        from adm_blender.core import gputex
+
+        values = np.array([[0, 255, 256, 4095], [8191, 32768, 65534, 65535]], dtype=np.uint16)
+        path = os.path.join(self.tmp.name, "height.png")
+        Image.fromarray(values).save(path)
+
+        prepared = prepare_adm_texture(path, "data")
+        info = gputex.parse(prepared.primary.data, gputex.MIME_DDS, strict=True)
+        self.assertEqual(info["kind"], "R16")
+        self.assertEqual(prepared.fallback.mime, "image/png")
+        decoded, _ = gputex.decode_scalar(prepared.primary.data, strict=True)
+        np.testing.assert_array_equal(decoded, values)
+        with Image.open(io.BytesIO(prepared.fallback.data)) as image:
+            fallback_values = np.asarray(image)
+        np.testing.assert_array_equal(fallback_values, values)
 
     def test_truncated_dx10_dds_reports_the_decode_error(self):
         path = os.path.join(self.tmp.name, "truncated.dds")
