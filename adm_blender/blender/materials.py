@@ -1073,12 +1073,7 @@ def _apply_shader(mat, m, scene, resolve_image):
             if v is not None and prm is not None:
                 v.use = True
                 _apply_shader_value(v, prm["type"], val, resolve_image)
-                if v.image is not None and (
-                        (prm["type"] == "TEXTURE" and name.endswith(
-                            ("_metallic_texture", "_roughness_texture")))
-                        or (K.OFFICIAL_SHADER_KINDS.get(key) == "TERRAIN_4" and name == "blend_mask")
-                        or (key == K.SHADER_TWO_LAYER and prm["type"] == "TEXTURE"
-                            and name not in K.SHADER_COLOR_TEXTURES)):
+                if v.image is not None and prm["type"] == "TEXTURE" and name not in K.SHADER_COLOR_TEXTURES:
                     v.image.colorspace_settings.name = "Non-Color"
                     if K.OFFICIAL_SHADER_KINDS.get(key) == "TERRAIN_4" and name == "blend_mask":
                         v.image.alpha_mode = "CHANNEL_PACKED"

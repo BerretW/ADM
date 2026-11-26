@@ -15,7 +15,7 @@ FAILS = []
 
 
 def check(condition, message):
-    print(("  ok  " if condition else "  FAIL ") + message)
+    print(("  ok  " if condition else "  FAIL ") + message, flush=True)
     if not condition:
         FAILS.append(message)
 
@@ -121,14 +121,17 @@ def check_shader_ui(K):
               f"{kind}: disabled override uses the nonzero roughness default")
 
 
-def main(tmp):
+def main(tmp, selected_profile=None):
+    print("PHASE register", flush=True)
     adm_blender.register()
     from adm_blender.core import constants as K
     from adm_blender.blender import materials as M
     from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
     from adm_blender.blender.import_adm import ImportOptions, ModelImporter
 
-    check_shader_ui(K)
+    if selected_profile is None:
+        print("PHASE shader UI", flush=True)
+        check_shader_ui(K)
     bpy.ops.wm.read_homefile(use_empty=True)
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     cube = bpy.context.active_object
@@ -140,8 +143,18 @@ def main(tmp):
     root = bpy.data.objects["ShaderRoot"]
 
     for key, kind in K.OFFICIAL_SHADER_KINDS.items():
+        if selected_profile is not None and selected_profile != f"{key[0]}@{key[1]}":
+            continue
+        print(f"PHASE {key[0]}@{key[1]}: configure", flush=True)
         mat.adm.shader = kind
         mat.adm.shader_version = key[1]
+        if key in K.SHADER_LAYERED_HEIGHT_COUNTS:
+            mat.adm.params["parallax_mode"].value_enum = "PARALLAX_OCCLUSION"
+            for name in ("layer0_ao_texture", "layer0_height_texture", "layer0_emissive_texture"):
+                image = bpy.data.images.new(f"{key[0]}_{key[1]}_{name}", 2, 2, alpha=True)
+                image.pixels = [0.2, 0.4, 0.7, 1.0] * 4
+                image.pack()
+                mat.adm.params[name].image = image
         scalar_maps = []
         if key[1] == K.SHADER_PROFILE_V2:
             scalar_maps = [
@@ -166,13 +179,14 @@ def main(tmp):
                 mat.adm.params["blend_mask"].image = mask
                 mat.adm.params["blend_mask"].tex_coord = 1
             for i in range(2 if kind == "TWO_LAYER" else 4):
+                layer_uv = 0 if key in K.SHADER_LAYERED_HEIGHT_COUNTS else i % 2
                 for prop in ("metallic", "roughness"):
                     name = f"layer{i}_{prop}_texture"
                     img = bpy.data.images.new(f"{key[1]}_{name}", 2, 2, alpha=True)
                     img.pixels = [0.2 + i * 0.1, 0.7, 0.9, 0.65] * 4
                     img.pack()
                     mat.adm.params[name].image = img
-                    mat.adm.params[name].tex_coord = i % 2
+                    mat.adm.params[name].tex_coord = layer_uv
                     mat.adm.params[f"layer{i}_{prop}_channel"].texture_channel = (
                         ("R", "G", "B", "A")[(i + (prop == "roughness")) % 4])
                     mat.adm.params[f"layer{i}_{prop}_invert"].value_bool = (i % 2 == 1)
@@ -189,12 +203,16 @@ def main(tmp):
             bsdf.inputs["Emission Color"].default_value = (0.25, 0.5, 0.75, 1.0)
             bsdf.inputs["Emission Strength"].default_value = 2.0
         bpy.context.view_layer.update()
+        print(f"PHASE {key[0]}@{key[1]}: export", flush=True)
         exporter = ModelExporter(bpy.context, root, ExportOptions())
         data, report = exporter.export()
         check(report.ok, f"{kind}: export validates")
         if not report.ok:
             continue
         material = report.doc["materials"][0]
+        if key in K.SHADER_LAYERED_HEIGHT_COUNTS:
+            check(material["shaderParameters"]["parallax_mode"] == "PARALLAX_OCCLUSION",
+                  f"{kind}@{key[1]}: export typed parallax enum")
         for index, name in enumerate(scalar_maps):
             prefix = name[:-len("_texture")]
             values = material["shaderParameters"]
@@ -204,9 +222,10 @@ def main(tmp):
                   f"{kind}@2.0.0: export {name} UV, channel and inversion")
         if kind in ("TERRAIN_4", "TWO_LAYER"):
             for i in range(2 if kind == "TWO_LAYER" else 4):
+                layer_uv = 0 if key in K.SHADER_LAYERED_HEIGHT_COUNTS else i % 2
                 for prop in ("metallic", "roughness"):
                     name = f"layer{i}_{prop}_texture"
-                    check(material["shaderParameters"][name].get("texCoord", 0) == i % 2,
+                    check(material["shaderParameters"][name].get("texCoord", 0) == layer_uv,
                           f"TERRAIN_4@{key[1]}: export {name} UV")
                     channel = f"layer{i}_{prop}_channel"
                     invert = f"layer{i}_{prop}_invert"
@@ -220,6 +239,7 @@ def main(tmp):
         path = os.path.join(tmp, f"{kind.lower()}.adm")
         with open(path, "wb") as stream:
             stream.write(data)
+        print(f"PHASE {key[0]}@{key[1]}: import", flush=True)
         ModelImporter(bpy.context, path, ImportOptions()).run()
         imported = next((candidate for candidate in bpy.data.materials
                          if candidate != mat and candidate.adm.shader_key() == key), None)
@@ -230,6 +250,14 @@ def main(tmp):
             expected_params = {p["name"] for p in K.OFFICIAL_SHADERS[key]}
             actual_params = {p.name for p in imported.adm.params}
             check(actual_params == expected_params, f"{kind}: typed parameter schema restored")
+            if key in K.SHADER_LAYERED_HEIGHT_COUNTS:
+                check(imported.adm.params["parallax_mode"].value_enum == "PARALLAX_OCCLUSION",
+                      f"{kind}@{key[1]}: import typed parallax enum")
+                for name in ("layer0_ao_texture", "layer0_height_texture", "layer0_emissive_texture"):
+                    image = imported.adm.params[name].image
+                    expected_color_space = "sRGB" if name.endswith("_emissive_texture") else "Non-Color"
+                    check(image is not None and image.colorspace_settings.name == expected_color_space,
+                          f"{kind}@{key[1]}: import {name} in {expected_color_space}")
             for index, name in enumerate(scalar_maps):
                 value = imported.adm.params[name]
                 prefix = name[:-len("_texture")]
@@ -249,10 +277,11 @@ def main(tmp):
                           and abs(mask.image.pixels[0] - 0.35) < 0.02,
                           "TWO_LAYER: mask and UV survive export and import")
                 for i in range(2 if kind == "TWO_LAYER" else 4):
+                    layer_uv = 0 if key in K.SHADER_LAYERED_HEIGHT_COUNTS else i % 2
                     for prop in ("metallic", "roughness"):
                         name = f"layer{i}_{prop}_texture"
                         value = imported.adm.params[name]
-                        check(value.use and value.image is not None and value.tex_coord == i % 2
+                        check(value.use and value.image is not None and value.tex_coord == layer_uv
                               and value.image.colorspace_settings.name == "Non-Color",
                               f"TERRAIN_4@{key[1]}: import {name} image and UV")
                         if value.image is not None:
@@ -276,6 +305,13 @@ def main(tmp):
                             if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
                 check(out is not None and M.is_preview_node(out), f"{kind}: imported material shows profile preview")
 
+    if selected_profile is not None:
+        if not any(selected_profile == f"{key[0]}@{key[1]}" for key in K.OFFICIAL_SHADER_KINDS):
+            raise ValueError(f"Unknown shader profile: {selected_profile}")
+        adm_blender.unregister()
+        return
+
+    print("PHASE vertex controls", flush=True)
     mat.adm.shader = "CORE"
     mat.adm.shader_version = K.SHADER_PROFILE_V2
     color1 = cube.data.color_attributes.get("COLOR_1")
@@ -302,8 +338,11 @@ def main(tmp):
 
 if __name__ == "__main__":
     try:
+        args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+        if len(args) > 1:
+            raise ValueError("Expected at most one shader profile ID@version")
         with tempfile.TemporaryDirectory(prefix="adm_shaders_") as tmp:
-            main(tmp)
+            main(tmp, args[0] if args else None)
     except Exception:
         traceback.print_exc()
         FAILS.append("exception")

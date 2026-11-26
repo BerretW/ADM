@@ -702,7 +702,7 @@ def main():
                                "id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_PROFILE_LAYERED_HEIGHT_V2})
         terrain_params = terrain_doc["shaderParameters"]
         check(terrain_params["parallax_mode"] == "PARALLAX_OCCLUSION"
-              and terrain_params["layer0_parallax_scale"] == 0.025
+              and abs(terrain_params["layer0_parallax_scale"] - 0.025) < 1e-6
               and "layer0_ao_texture" in terrain_params,
               "TERRAIN_4@2.1.0: AO texture and POM metadata export")
         with tempfile.TemporaryDirectory() as tmp:

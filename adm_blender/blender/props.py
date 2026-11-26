@@ -318,8 +318,9 @@ def _param_value_update(self, context):
     if not param_updates_quiet():
         if not self.use:
             self.use = True
-        elif self.name.endswith(("_metallic_channel", "_roughness_channel",
-                                 "_metallic_invert", "_roughness_invert")):
+        elif self.name == "height_blend_enabled" or self.name.endswith(
+                ("_metallic_channel", "_roughness_channel", "_ao_channel", "_height_channel",
+                 "_metallic_invert", "_roughness_invert", "_ao_invert", "_height_invert")):
             _param_owner_refresh(self)
 
 
@@ -364,28 +365,45 @@ def _param_image_update(self, context):
 
 
 _ENUM_ITEM_CACHE = {}
+_ENUM_UNAVAILABLE = [("UNAVAILABLE", "Unavailable", "No enum schema is available", 0)]
 
 
 def _enum_value_items(self, context):
     mat = getattr(self, "id_data", None)
     if not isinstance(mat, bpy.types.Material):
-        return [("UNAVAILABLE", "Unavailable", "")]
+        return _ENUM_UNAVAILABLE
     key = mat.adm.shader_key()
     schema = K.OFFICIAL_SHADERS.get(key)
     if schema is None and mat.adm.shader == "CUSTOM" and context is not None and context.scene is not None:
         from .materials import scene_shader_registry
         schema = scene_shader_registry(context.scene).get(key)
-    parameter = next((p for p in (schema or ()) if p["name"] == self.name), None)
+    if isinstance(schema, dict):
+        parameter = schema.get(self.name)
+    else:
+        parameter = next((p for p in (schema or ()) if p["name"] == self.name), None)
     values = tuple(parameter.get("values", ())) if parameter else ()
-    if self.value_enum and self.value_enum not in values:
-        values = (self.value_enum,) + values
+    raw = self.get("value_enum", 0)
     if not values:
-        return [("UNAVAILABLE", "Unavailable", "")]
-    if values not in _ENUM_ITEM_CACHE:
-        _ENUM_ITEM_CACHE[values] = [
-            (value, value.replace("_", " ").title(), value) for value in values
-        ]
-    return _ENUM_ITEM_CACHE[values]
+        if not isinstance(raw, int) or raw == 0:
+            return _ENUM_UNAVAILABLE
+        key = ((), raw)
+        if key not in _ENUM_ITEM_CACHE:
+            _ENUM_ITEM_CACHE[key] = [
+                ("UNAVAILABLE", "Unavailable", "No enum schema is available", 0),
+                (f"INVALID_{raw}", f"Invalid stored value ({raw})",
+                 "Choose a valid value before exporting", raw),
+            ]
+        return _ENUM_ITEM_CACHE[key]
+    invalid = raw if isinstance(raw, int) and not 0 <= raw < len(values) else None
+    cache_key = (values, invalid)
+    if cache_key not in _ENUM_ITEM_CACHE:
+        items = [(value, value.replace("_", " ").title(), value, index)
+                 for index, value in enumerate(values)]
+        if invalid is not None:
+            items.append((f"INVALID_{invalid}", f"Invalid stored value ({invalid})",
+                          "Choose a valid value before exporting", invalid))
+        _ENUM_ITEM_CACHE[cache_key] = items
+    return _ENUM_ITEM_CACHE[cache_key]
 
 
 class ADMShaderParamValue(PropertyGroup):
@@ -424,6 +442,9 @@ def _official_shader_versions(shader):
     })
 
 
+_SHADER_VERSION_ITEM_CACHE = {}
+
+
 def _shader_version_items(self, context):
     versions = ("1.0.0", "1.1.0", "2.0.0", "2.1.0")
     labels = {
@@ -445,49 +466,73 @@ def _shader_version_items(self, context):
         ("LAYERED", K.SHADER_PROFILE_LAYERED_HEIGHT_V2): (
             "2.1.0 (height layers)", "Add per-layer AO, height blending, and parallax metadata"),
     }
-    items = []
-    for version in versions:
-        label, description = labels.get(
-            (self.shader, version), (version, f"Use the {version} profile"))
-        items.append((version, label, description))
-    return items
+    shader = self.shader
+    raw = self.get("shader_version", 0)
+    invalid = raw if isinstance(raw, int) and not 0 <= raw < len(versions) else None
+    cache_key = (shader, invalid)
+    if cache_key not in _SHADER_VERSION_ITEM_CACHE:
+        items = []
+        for number, version in enumerate(versions):
+            label, description = labels.get(
+                (shader, version), (version, f"Use the {version} profile"))
+            items.append((version, label, description, number))
+        if invalid is not None:
+            items.append((f"INVALID_{invalid}", f"Invalid stored version ({invalid})",
+                          "Choose a supported profile version", invalid))
+        _SHADER_VERSION_ITEM_CACHE[cache_key] = items
+    return _SHADER_VERSION_ITEM_CACHE[cache_key]
+
+
+_SHADER_UPDATE_OWNERS = set()
 
 
 def _shader_update(self, context):
-    versions = _official_shader_versions(self.shader)
-    if versions and self.shader_version not in versions:
-        self.shader_version = "1.0.0" if "1.0.0" in versions else versions[0]
-    required_alpha = {
-        "CUTOUT": "MASK", "DECAL": "BLEND", "GLASS": "BLEND", "WATER": "BLEND",
-        "FOLIAGE": "MASK",
-    }.get(self.shader)
-    if required_alpha is not None:
-        self.alpha_mode = required_alpha
-        from .materials import apply_alpha_mode_to_material
-        apply_alpha_mode_to_material(self.id_data, required_alpha)
-        if self.shader == "FOLIAGE":
-            self.id_data.use_backface_culling = False
-    if self.shader == "INTERACTIVE":
-        self.shader_version = "1.0.0"
-    if self.shader != "CUSTOM":
-        from .materials import sync_official_shader_params
-        sync_official_shader_params(self.id_data)
-    from .materials import refresh_shader_preview
-    refresh_shader_preview(self.id_data)
+    owner = self.id_data.as_pointer()
+    if owner in _SHADER_UPDATE_OWNERS:
+        return
+    _SHADER_UPDATE_OWNERS.add(owner)
+    try:
+        versions = _official_shader_versions(self.shader)
+        if versions and self.shader_version not in versions:
+            self.shader_version = "1.0.0" if "1.0.0" in versions else versions[0]
+        required_alpha = {
+            "CUTOUT": "MASK", "DECAL": "BLEND", "GLASS": "BLEND", "WATER": "BLEND",
+            "FOLIAGE": "MASK",
+        }.get(self.shader)
+        if required_alpha is not None:
+            self.alpha_mode = required_alpha
+            from .materials import apply_alpha_mode_to_material
+            apply_alpha_mode_to_material(self.id_data, required_alpha)
+            if self.shader == "FOLIAGE":
+                self.id_data.use_backface_culling = False
+        if self.shader == "INTERACTIVE" and self.shader_version != "1.0.0":
+            self.shader_version = "1.0.0"
+        if self.shader != "CUSTOM":
+            from .materials import sync_official_shader_params
+            sync_official_shader_params(self.id_data)
+        from .materials import refresh_shader_preview
+        refresh_shader_preview(self.id_data)
+    finally:
+        _SHADER_UPDATE_OWNERS.remove(owner)
 
 
 def _shader_version_update(self, context):
-    if self.shader == "INTERACTIVE" and self.shader_version != "1.0.0":
-        self.shader_version = "1.0.0"
+    owner = self.id_data.as_pointer()
+    if owner in _SHADER_UPDATE_OWNERS:
         return
-    versions = _official_shader_versions(self.shader)
-    if versions and self.shader_version not in versions:
-        self.shader_version = "1.0.0" if "1.0.0" in versions else versions[0]
-        return
-    from .materials import sync_official_shader_params, refresh_shader_preview
-    if self.shader != "CUSTOM":
-        sync_official_shader_params(self.id_data)
-    refresh_shader_preview(self.id_data)
+    _SHADER_UPDATE_OWNERS.add(owner)
+    try:
+        if self.shader == "INTERACTIVE" and self.shader_version != "1.0.0":
+            self.shader_version = "1.0.0"
+        versions = _official_shader_versions(self.shader)
+        if versions and self.shader_version not in versions:
+            self.shader_version = "1.0.0" if "1.0.0" in versions else versions[0]
+        from .materials import sync_official_shader_params, refresh_shader_preview
+        if self.shader != "CUSTOM":
+            sync_official_shader_params(self.id_data)
+        refresh_shader_preview(self.id_data)
+    finally:
+        _SHADER_UPDATE_OWNERS.remove(owner)
 
 
 def _vertex_controls_update(self, context):

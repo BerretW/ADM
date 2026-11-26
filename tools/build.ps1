@@ -442,6 +442,7 @@ try {
         "test_skeleton_blender.py",
         "test_material_slots.py",
         "test_shader_harness.py",
+        "test_shader_enums_blender.py",
         "test_shader_profiles.py",
         "test_shader_preview.py",
         "test_lod_generator.py",
