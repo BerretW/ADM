@@ -37,7 +37,9 @@
       "id": "material-test",
       "status": "partial",
       "fixtures": [
-        "adm-standard/fixtures/profiles/shader_masks_v2.adm"
+        "adm-standard/fixtures/profiles/shader_masks_v2.adm",
+        "adm-standard/fixtures/advanced-materials/manifest.json",
+        "adm_blender/tests/build_advanced_material_test_scene.py"
       ],
       "expectations": [
         "adm-standard/fixtures/expectations/shader_masks_v2.json"
@@ -45,13 +47,16 @@
       "referenceTests": [
         "adm-standard/tools/test_shader_vertex_masks.py",
         "adm_blender/tests/test_shader_math.py",
-        "adm_blender/tests/test_shader_preview.py"
+        "adm_blender/tests/test_shader_preview.py",
+        "adm-standard/tools/generate_advanced_material_references.py"
       ],
       "verifiedChecks": [
-        "The mask expectation file provides reference vectors for registered COLOR_1 profiles."
+        "The mask expectation file provides reference vectors for registered COLOR_1 profiles.",
+        "Procedural Rock, Cobblestone, Sand, Dirt, and Grass maps are generated without third-party assets."
       ],
       "notTested": [
-        "A single measured material fixture covering every listed PBR, COLOR_0, tint and emission behavior."
+        "A single measured material fixture covering every listed PBR, COLOR_0, tint and emission behavior.",
+        "A second independent renderer bake and cross-reader visual golden image."
       ],
       "requiredFixtureData": [
         "Materials covering PBR, COLOR_0 tint, COLOR_1 masks, emission and portable fallbacks."
@@ -219,11 +224,13 @@
       "id": "terrain",
       "status": "partial",
       "fixtures": [
-        "ADM/terrain_four_layer_v2.adm"
+        "ADM/terrain_four_layer_v2.adm",
+        "appartus_world_tile/reference_project/advanced_reference.awtp"
       ],
       "expectations": [],
       "referenceTests": [
-        "adm_blender/tests/test_terrain_workflow.py"
+        "adm_blender/tests/test_terrain_workflow.py",
+        "appartus_world_tile/tools/generate_reference_project.py"
       ],
       "verifiedChecks": [
         "The Blender terrain workflow test exercises reference implementation import/export."

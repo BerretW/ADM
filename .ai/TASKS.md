@@ -58,33 +58,33 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Ensure material-only edits do not rebuild geometry or vertex weights.
 
 ## M8 - ADM Editor
-- [ ] Integrate the ADM Editor requirements into existing authoring tools:
+- [x] Integrate the ADM Editor requirements into existing authoring tools:
       `adm_blender` and `appartus_world_tile`, including layer maps, height/AO
       controls, GPU formats, profile versions, validation, import/export, and
       real material preview.
-- [ ] Integrate layer maps, height/AO controls, GPU formats, profile versions,
+- [x] Integrate layer maps, height/AO controls, GPU formats, profile versions,
       validation, import/export, and real material preview.
-- [ ] Preserve legacy profile editing and make upgrades explicit.
-- [ ] Round-trip unsupported parameters without silent loss.
+- [x] Preserve legacy profile editing and make upgrades explicit.
+- [x] Round-trip unsupported parameters without silent loss.
   - No standalone ADM Editor application is required or permitted. Transfer
     these authoring requirements to existing tools.
 
 ## M9 - Blender plugin
-- [ ] Integrate profiles, nodes, properties, UI, math, import/export, codecs,
+- [x] Integrate profiles, nodes, properties, UI, math, import/export, codecs,
       validation, and vertex painting.
-- [ ] Preserve COLOR_0/COLOR_1, precision, and unsupported POM metadata.
-- [ ] Test real node generation and a bake/render of height blending.
+- [x] Preserve COLOR_0/COLOR_1, precision, and unsupported POM metadata.
+- [x] Test real node generation and a bake/render of height blending.
 
 ## M10 - Remaining ecosystem
-- [ ] Audit every shader consumer (editors, viewers, SDK, CLI, validators,
+- [x] Audit every shader consumer (editors, viewers, SDK, CLI, validators,
       generators, importers, exporters, and reference renderers).
-- [ ] Record full/partial/fallback/not-applicable support per consumer.
-- [ ] Prevent unsupported fields from being silently discarded.
+- [x] Record full/partial/fallback/not-applicable support per consumer.
+- [x] Prevent unsupported fields from being silently discarded.
 
 ## M11 - Fixtures and documentation
-- [ ] Create original procedural Rock, Sand, Dirt, Grass, and Cobblestone maps.
-- [ ] Create an Advanced Terrain ADM scene and a functional multi-tile AWTP sample.
-- [ ] Update specification, registries, profiles, docs, changelog, gaps,
+- [x] Create original procedural Rock, Sand, Dirt, Grass, and Cobblestone maps.
+- [x] Create an Advanced Terrain ADM scene and a functional multi-tile AWTP sample.
+- [x] Update specification, registries, profiles, docs, changelog, gaps,
       conformance, and fixture catalog with exact implemented contracts.
 
 ## M12 - Full verification

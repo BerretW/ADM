@@ -33,6 +33,10 @@
 - Added typed enum shader parameters for closed, case-sensitive mode selections.
 - Added a machine-readable reference-test catalog that records existing fixture evidence and
   explicitly lists missing fixtures and expectations for all eight test categories.
+- Added deterministic procedural Rock, Cobblestone, Sand, Dirt, and Grass material references,
+  a Blender advanced layered-material scene generator, and a loadable Advanced World Tile project.
+- Added an implementation support matrix that separates real consumer support from
+  metadata preservation and portable PBR fallback behavior.
 - Added explanatory rejection diagnostics for unsupported container versions and layouts.
 
 ## ADM 1.0 optional animation-timing extension — 2026-11-18

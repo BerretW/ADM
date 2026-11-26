@@ -1,0 +1,458 @@
+{
+ "format": "apparatus-world-tile-project",
+ "format_version": 5,
+ "generator": "appartus_world_tile 0.7.6",
+ "build": {
+  "input_path": "heightmap.png",
+  "out_dir": "tiles",
+  "spacing_m": 2.0,
+  "height_min_m": 0.0,
+  "height_max_m": 500.0,
+  "remap_float": false,
+  "tile_cells": 256,
+  "max_errors_m": [
+   1.0,
+   4.0,
+   12.0
+  ],
+  "origin": "corner",
+  "threads": 0,
+  "raw_size": null,
+  "texture_error": 0.12,
+  "texture_detail_m": 4.0
+ },
+ "material": {
+  "surfaces": [
+   {
+    "name": "rock",
+    "color": [
+     255,
+     255,
+     255
+    ],
+    "repeat_m": 4.0,
+    "albedo": "../../adm-standard/fixtures/advanced-materials/rock/albedo.png",
+    "metallic": 0.0,
+    "metallic_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "roughness": 0.82,
+    "roughness_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "normal": "../../adm-standard/fixtures/advanced-materials/rock/normal.png",
+    "ao_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/rock/ao.png",
+     "channel": 0,
+     "invert": false
+    },
+    "height_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/rock/height.png",
+     "channel": 0,
+     "invert": false
+    },
+    "parallax_scale": 0.08
+   },
+   {
+    "name": "cobblestone",
+    "color": [
+     255,
+     255,
+     255
+    ],
+    "repeat_m": 4.0,
+    "albedo": "../../adm-standard/fixtures/advanced-materials/cobblestone/albedo.png",
+    "metallic": 0.0,
+    "metallic_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "roughness": 0.82,
+    "roughness_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "normal": "../../adm-standard/fixtures/advanced-materials/cobblestone/normal.png",
+    "ao_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/cobblestone/ao.png",
+     "channel": 0,
+     "invert": false
+    },
+    "height_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/cobblestone/height.png",
+     "channel": 0,
+     "invert": false
+    },
+    "parallax_scale": 0.08
+   },
+   {
+    "name": "sand",
+    "color": [
+     255,
+     255,
+     255
+    ],
+    "repeat_m": 4.0,
+    "albedo": "../../adm-standard/fixtures/advanced-materials/sand/albedo.png",
+    "metallic": 0.0,
+    "metallic_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "roughness": 0.82,
+    "roughness_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "normal": "../../adm-standard/fixtures/advanced-materials/sand/normal.png",
+    "ao_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/sand/ao.png",
+     "channel": 0,
+     "invert": false
+    },
+    "height_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/sand/height.png",
+     "channel": 0,
+     "invert": false
+    },
+    "parallax_scale": 0.08
+   },
+   {
+    "name": "dirt",
+    "color": [
+     255,
+     255,
+     255
+    ],
+    "repeat_m": 4.0,
+    "albedo": "../../adm-standard/fixtures/advanced-materials/dirt/albedo.png",
+    "metallic": 0.0,
+    "metallic_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "roughness": 0.82,
+    "roughness_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "normal": "../../adm-standard/fixtures/advanced-materials/dirt/normal.png",
+    "ao_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/dirt/ao.png",
+     "channel": 0,
+     "invert": false
+    },
+    "height_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/dirt/height.png",
+     "channel": 0,
+     "invert": false
+    },
+    "parallax_scale": 0.08
+   },
+   {
+    "name": "grass",
+    "color": [
+     255,
+     255,
+     255
+    ],
+    "repeat_m": 4.0,
+    "albedo": "../../adm-standard/fixtures/advanced-materials/grass/albedo.png",
+    "metallic": 0.0,
+    "metallic_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "roughness": 0.82,
+    "roughness_map": {
+     "path": "",
+     "channel": 0,
+     "invert": false
+    },
+    "normal": "../../adm-standard/fixtures/advanced-materials/grass/normal.png",
+    "ao_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/grass/ao.png",
+     "channel": 0,
+     "invert": false
+    },
+    "height_map": {
+     "path": "../../adm-standard/fixtures/advanced-materials/grass/height.png",
+     "channel": 0,
+     "invert": false
+    },
+    "parallax_scale": 0.08
+   }
+  ],
+  "biomes": [
+   {
+    "name": "grassland",
+    "color": [
+     82,
+     130,
+     64
+    ],
+    "auto": true,
+    "height": {
+     "min": null,
+     "max": 150.0,
+     "fade": 30.0
+    },
+    "slope": {
+     "min": null,
+     "max": null,
+     "fade": 0.0
+    },
+    "surfaces": [
+     {
+      "surface": "grass",
+      "height": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "slope": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "strength": 1.0
+     },
+     {
+      "surface": "dirt",
+      "height": {
+       "min": null,
+       "max": 120.0,
+       "fade": 20.0
+      },
+      "slope": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "strength": 1.0
+     }
+    ],
+    "noise": 0.35
+   },
+   {
+    "name": "sand shore",
+    "color": [
+     194,
+     174,
+     118
+    ],
+    "auto": true,
+    "height": {
+     "min": null,
+     "max": 55.0,
+     "fade": 12.0
+    },
+    "slope": {
+     "min": null,
+     "max": null,
+     "fade": 0.0
+    },
+    "surfaces": [
+     {
+      "surface": "sand",
+      "height": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "slope": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "strength": 1.0
+     },
+     {
+      "surface": "grass",
+      "height": {
+       "min": 45.0,
+       "max": null,
+       "fade": 15.0
+      },
+      "slope": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "strength": 1.0
+     }
+    ],
+    "noise": 0.25
+   },
+   {
+    "name": "rock ridge",
+    "color": [
+     132,
+     128,
+     120
+    ],
+    "auto": true,
+    "height": {
+     "min": 150.0,
+     "max": null,
+     "fade": 25.0
+    },
+    "slope": {
+     "min": 20.0,
+     "max": null,
+     "fade": 8.0
+    },
+    "surfaces": [
+     {
+      "surface": "rock",
+      "height": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "slope": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "strength": 1.0
+     },
+     {
+      "surface": "cobblestone",
+      "height": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "slope": {
+       "min": null,
+       "max": 35.0,
+       "fade": 8.0
+      },
+      "strength": 1.0
+     },
+     {
+      "surface": "dirt",
+      "height": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "slope": {
+       "min": null,
+       "max": 28.0,
+       "fade": 6.0
+      },
+      "strength": 0.45
+     }
+    ],
+    "noise": 0.45
+   },
+   {
+    "name": "road edge",
+    "color": [
+     155,
+     145,
+     130
+    ],
+    "auto": false,
+    "height": {
+     "min": null,
+     "max": null,
+     "fade": 0.0
+    },
+    "slope": {
+     "min": null,
+     "max": null,
+     "fade": 0.0
+    },
+    "surfaces": [
+     {
+      "surface": "cobblestone",
+      "height": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "slope": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "strength": 1.0
+     },
+     {
+      "surface": "dirt",
+      "height": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "slope": {
+       "min": null,
+       "max": null,
+       "fade": 0.0
+      },
+      "strength": 0.3
+     }
+    ],
+    "noise": 0.1
+   }
+  ],
+  "slope_radius_m": 2.0,
+  "paint_softness_m": 8.0,
+  "double_sided": false,
+  "terrain_shader": {
+   "version": "2.1.0",
+   "height_blend_enabled": true,
+   "height_blend_transition": 0.2,
+   "height_blend_strength": 1.0,
+   "parallax_mode": "PARALLAX_OCCLUSION",
+   "parallax_min_steps": 8,
+   "parallax_max_steps": 32
+  },
+  "roads": [
+   {
+    "surface": "cobblestone",
+    "width_m": 8.0,
+    "shoulder_m": 5.0,
+    "points": [
+     [
+      48.0,
+      48.0,
+      45.0
+     ],
+     [
+      128.0,
+      128.0,
+      90.0
+     ],
+     [
+      208.0,
+      176.0,
+      150.0
+     ]
+    ]
+   }
+  ]
+ },
+ "export": {
+  "out_dir": "adm",
+  "lod_distance_m": 0.0,
+  "embed_textures": false,
+  "validate": true,
+  "threads": 0
+ },
+ "selection": []
+}

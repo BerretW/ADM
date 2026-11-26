@@ -1,0 +1,61 @@
+{
+  "format": "ADM-procedural-material-reference",
+  "formatVersion": 1,
+  "materials": [
+    {
+      "id": "rock",
+      "maps": {
+        "albedo": "advanced-materials/rock/albedo.png",
+        "normal": "advanced-materials/rock/normal.png",
+        "roughness": "advanced-materials/rock/roughness.png",
+        "ao": "advanced-materials/rock/ao.png",
+        "height": "advanced-materials/rock/height.png"
+      }
+    },
+    {
+      "id": "cobblestone",
+      "maps": {
+        "albedo": "advanced-materials/cobblestone/albedo.png",
+        "normal": "advanced-materials/cobblestone/normal.png",
+        "roughness": "advanced-materials/cobblestone/roughness.png",
+        "ao": "advanced-materials/cobblestone/ao.png",
+        "height": "advanced-materials/cobblestone/height.png"
+      }
+    },
+    {
+      "id": "sand",
+      "maps": {
+        "albedo": "advanced-materials/sand/albedo.png",
+        "normal": "advanced-materials/sand/normal.png",
+        "roughness": "advanced-materials/sand/roughness.png",
+        "ao": "advanced-materials/sand/ao.png",
+        "height": "advanced-materials/sand/height.png"
+      }
+    },
+    {
+      "id": "dirt",
+      "maps": {
+        "albedo": "advanced-materials/dirt/albedo.png",
+        "normal": "advanced-materials/dirt/normal.png",
+        "roughness": "advanced-materials/dirt/roughness.png",
+        "ao": "advanced-materials/dirt/ao.png",
+        "height": "advanced-materials/dirt/height.png"
+      }
+    },
+    {
+      "id": "grass",
+      "maps": {
+        "albedo": "advanced-materials/grass/albedo.png",
+        "normal": "advanced-materials/grass/normal.png",
+        "roughness": "advanced-materials/grass/roughness.png",
+        "ao": "advanced-materials/grass/ao.png",
+        "height": "advanced-materials/grass/height.png"
+      }
+    }
+  ],
+  "notes": [
+    "All pixels and texture data are generated deterministically.",
+    "Height and AO are single-channel linear grayscale.",
+    "Normal maps use the ADM tangent-space +Y convention."
+  ]
+}
