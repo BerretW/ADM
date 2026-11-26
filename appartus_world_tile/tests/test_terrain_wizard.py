@@ -477,6 +477,317 @@ class TerrainWizardTest(unittest.TestCase):
             delta = np.abs(reference[band] - no_pom[band])
             self.assertGreater(np.count_nonzero(delta > 3), 100, f"maximum POM difference: {delta.max()}")
 
+    def test_layered_preview_interpolates_vertex_weights(self):
+        import pyvista as pv
+        from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
+        from awt.gui.preview_shader import install_layered_preview
+
+        surfaces = [Surface("red", color=[255, 0, 0]), Surface("blue", color=[0, 0, 255])]
+        settings = TerrainMaterial(parallax_mode="PARALLAX_OCCLUSION")
+        plotter = pv.Plotter(off_screen=True, window_size=(128, 128))
+        self.addCleanup(plotter.close)
+        plotter.set_background("black")
+        plotter.show(auto_close=False)
+        units = plotter.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+
+        def render(reverse, constant=None):
+            plotter.clear()
+            plotter.add_light(pv.Light(position=(0, 0, 10), focal_point=(0, 0, 0)))
+            mesh = pv.Plane(i_size=15, j_size=15, i_resolution=8, j_resolution=8)
+            weight = np.clip(mesh.points[:, 0] / 15 + 0.5, 0, 1)
+            if reverse:
+                weight = 1 - weight
+            mesh.point_data["layer_weights"] = np.column_stack(
+                (weight, 1 - weight, np.zeros_like(weight), np.zeros_like(weight))).astype(np.float32)
+            if constant is not None:
+                mesh.point_data["layer_weights"][:] = constant
+            white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+            white.SetUseSRGBColorSpace(True)
+            orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+            actor = plotter.add_mesh(mesh, texture=white, pbr=True, metallic=1, roughness=1, render=False)
+            mapper = vtkPolyDataMapper()
+            mapper.SetInputData(mesh)
+            mapper.ScalarVisibilityOff()
+            actor.SetMapper(mapper)
+            actor.prop.SetTexture("albedoTex", white)
+            actor.prop.SetORMTexture(orm)
+            install_layered_preview(actor, pv, surfaces[::-1] if reverse else surfaces, [1, 1], settings,
+                                    height_blend=False, transition=0.2, strength=1, texture_units=units,
+                                    vertex_weights="layer_weights")
+            plotter.view_xy()
+            plotter.camera.parallel_projection = True
+            plotter.camera.parallel_scale = 8
+            plotter.show(auto_close=False)
+            return plotter.screenshot(return_img=True).astype(int)
+
+        image = render(False)
+        permuted = render(True)
+        red_delta = image[64, 96, 0] - image[64, 32, 0]
+        blue_delta = image[64, 96, 2] - image[64, 32, 2]
+        self.assertGreater(abs(red_delta), 30)
+        self.assertGreater(abs(blue_delta), 30)
+        self.assertLess(red_delta * blue_delta, 0)
+        np.testing.assert_allclose(image, permuted, atol=2)
+        np.testing.assert_allclose(render(False, [0, 0, 0, 0]), render(False, [1, 0, 0, 0]), atol=2)
+
+    def test_exported_irregular_tiles_render_with_mixed_lods_and_permuted_layers(self):
+        self._check_exported_irregular_tiles_render(curved=False, disjoint=False)
+
+    def test_exported_curved_irregular_tiles_render_with_mixed_lods(self):
+        self._check_exported_irregular_tiles_render(curved=True, disjoint=False)
+
+    def test_exported_disjoint_biomes_render_with_mixed_lods(self):
+        self._check_exported_irregular_tiles_render(curved=True, disjoint=True)
+
+    def _check_exported_irregular_tiles_render(self, curved, disjoint):
+        from dataclasses import replace
+        import pyvista as pv
+        from PIL import Image
+        from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
+        from awt.adm_export import ExportSettings, export_tiles
+        from awt.gui.preview_shader import install_layered_preview
+        from awt.material import Biome, BiomeSurface
+        from awt.pipeline import BuildParams, build, load_manifest
+        from tests.test_export import _accessor, _read_adm
+
+        with tempfile.TemporaryDirectory() as directory:
+            heightmap = os.path.join(directory, "terrain.npy")
+            y, x = np.mgrid[:49, :65]
+            heights = 0.015 * x + 0.01 * y
+            if curved:
+                heights += 0.08 * np.sin(x / 9.0) * np.sin(y / 11.0)
+            np.save(heightmap, heights.astype(np.float32))
+            material = TerrainMaterial()
+            high_surfaces = ("soil", "sand") if disjoint else ("rock", "grass")
+            material.biomes = [
+                Biome("noise", surfaces=[BiomeSurface("grass"), BiomeSurface("rock")], noise=0.8),
+                Biome("high", surfaces=[BiomeSurface(name) for name in high_surfaces],
+                      height=Band(0.88, None, 0.2), noise=0.4),
+            ]
+            material.terrain_shader_version = "2.1.0"
+            material.height_blend_enabled = True
+            material.parallax_mode = "PARALLAX_OCCLUSION"
+            names_used = ("grass", "rock", "soil", "sand") if disjoint else ("grass", "rock")
+            for index, name in enumerate(names_used):
+                surface = material.surface(name)
+                surface.color = [255, 255, 255]
+                surface.repeat_m = (13.0, 17.0, 11.0, 19.0)[index]
+                surface.parallax_scale = 0.12
+                x = np.arange(64, dtype=np.float64)
+                y = np.arange(32, dtype=np.float64)
+                pattern = np.sin(x[None, :] * 2 * np.pi / 64) * np.sin(y[:, None] * 2 * np.pi / 32)
+                stripe = (0.55 + 0.4 * pattern)[:, :, None]
+                color = np.asarray(((210, 80, 35), (45, 130, 210),
+                                    (110, 190, 60), (200, 180, 90))[index])[None, None, :]
+                albedo = (stripe * color).astype(np.uint8)
+                height = 127 + 100 * pattern
+                surface.albedo = os.path.join(directory, name + "_albedo.png")
+                surface.height_map.path = os.path.join(directory, name + "_height.png")
+                Image.fromarray(albedo).save(surface.albedo)
+                Image.fromarray(height.astype(np.uint8)).save(surface.height_map.path)
+            params = BuildParams(input_path=heightmap, out_dir=os.path.join(directory, "build"),
+                                 tile_cells=32, max_errors_m=[0.1, 1.0], spacing_m=2.0)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            settings = ExportSettings(out_dir=os.path.join(directory, "adm"))
+            export_tiles(manifest, material, settings, "all")
+            tiles = sorted((tile for tile in manifest["tiles"]
+                            if tile["size_m"][1] < manifest["tile_size_m"]), key=lambda x: x["ix"])
+            self.assertEqual(len(tiles), 2)
+            self.assertTrue(all(tile["size_m"][1] < manifest["tile_size_m"] for tile in tiles))
+            geometry = []
+            for index, tile in enumerate(tiles):
+                doc, chunks = _read_adm(os.path.join(settings.out_dir, tile["id"] + ".adm"))
+                lod = 0 if index == 0 else len(tile["lods"]) - 1
+                for primitive in doc["meshes"][lod]["primitives"]:
+                    attributes = {name: _accessor(doc, chunks, accessor)
+                                  for name, accessor in primitive["attributes"].items()}
+                    shader = doc["materials"][primitive["material"]]
+                    names = shader["name"].split(" ", 3)[-1].split("+")
+                    self.assertTrue(set(names).issubset(names_used))
+
+                    def fallback(ref):
+                        texture = doc["textures"][ref["index"]]
+                        image = doc["images"][texture["fallbackSource"]]
+                        return os.path.join(settings.out_dir, *image["uri"].split("/"))
+
+                    shader_params = shader["shaderParameters"]
+                    self.assertEqual(shader_params["parallax_mode"], "PARALLAX_OCCLUSION")
+                    layers = []
+                    for i, name in enumerate(names):
+                        prefix = f"layer{i}_"
+                        surface = material.surface(name)
+                        layers.append(replace(
+                            surface, repeat_m=15.0 / shader_params["uv_scale"][i],
+                            albedo=fallback(shader_params[prefix + "texture"]),
+                            height_map=replace(surface.height_map,
+                                               path=fallback(shader_params[prefix + "height_texture"])),
+                            parallax_scale=shader_params[prefix + "parallax_scale"]))
+                    geometry.append((attributes, _accessor(doc, chunks, primitive["indices"]).reshape(-1, 3),
+                                     doc["nodes"][0]["translation"], layers, shader_params))
+            self.assertGreater(len(geometry), 1)
+            self.assertGreater(np.ptp(np.concatenate([g[0]["POSITION"][:, 1] for g in geometry])), 0.5)
+            all_weights = np.concatenate([g[0]["COLOR_1"][:, 0] for g in geometry])
+            self.assertGreater(np.ptp(all_weights), 0.05)
+            edge_weights = np.concatenate([
+                attrs["COLOR_1"][np.isclose(attrs["POSITION"][:, 0] + translation[0],
+                                            manifest["tile_size_m"]), 0]
+                for attrs, _, translation, _, _ in geometry])
+            edge_heights = np.concatenate([
+                attrs["POSITION"][np.isclose(attrs["POSITION"][:, 0] + translation[0],
+                                              manifest["tile_size_m"]), 1] + translation[1]
+                for attrs, _, translation, _, _ in geometry])
+            self.assertGreater(len(edge_weights), 2)
+            self.assertGreater(np.ptp(edge_weights), 0.02)
+            self.assertLess(edge_heights.min(), 0.88)
+            self.assertGreater(edge_heights.max(), 0.88)
+
+            plotter = pv.Plotter(off_screen=True, window_size=(320, 240))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            plotter.show(auto_close=False)
+            units = plotter.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+
+            def render(reverse_right=False, pom=True):
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(64, 120, -48), focal_point=(64, 0, -48)))
+                for attributes, faces, translation, exported_layers, shader_params in geometry:
+                    vertices = attributes["POSITION"] + np.asarray(translation)
+                    mesh = pv.PolyData(vertices, np.column_stack((np.full(len(faces), 3), faces)).ravel())
+                    mesh.active_texture_coordinates = attributes["TEXCOORD_0"]
+                    mesh.point_data["Normals"] = attributes["NORMAL"]
+                    weights = attributes["COLOR_1"].astype(np.float32).copy()
+                    layers = [replace(surface, parallax_scale=surface.parallax_scale if pom else 0.0)
+                              for surface in exported_layers]
+                    if reverse_right and translation[0] > manifest["tile_size_m"]:
+                        layers.reverse()
+                        weights[:, :len(layers)] = weights[:, :len(layers)][:, ::-1]
+                    mesh.point_data["layer_weights"] = weights
+                    white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                    white.SetUseSRGBColorSpace(True)
+                    orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                    actor = plotter.add_mesh(mesh, texture=white, pbr=True, metallic=1, roughness=1, render=False)
+                    mapper = vtkPolyDataMapper()
+                    mapper.SetInputData(mesh)
+                    mapper.ScalarVisibilityOff()
+                    actor.SetMapper(mapper)
+                    actor.prop.SetTexture("albedoTex", white)
+                    actor.prop.SetORMTexture(orm)
+                    install_layered_preview(actor, pv, layers, [1] * len(layers), material,
+                                            height_blend=shader_params["height_blend_enabled"],
+                                            transition=shader_params["height_blend_transition"],
+                                            strength=shader_params["height_blend_strength"], texture_units=units,
+                                            vertex_weights="layer_weights")
+                plotter.camera_position = [(64, 100, -130), (64, 0, -48), (0, 1, 0)]
+                plotter.camera.view_angle = 45
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True).astype(int)
+
+            image = render()
+            permuted = render(reverse_right=True)
+            unshifted = render(pom=False)
+            valid = np.any(image[:, 158] != 0, axis=1) & np.any(image[:, 161] != 0, axis=1)
+            jumps = np.abs(image[valid, 159] - image[valid, 160])
+            self.assertGreater(len(jumps), 30)
+            self.assertTrue(np.all(np.any(image[valid, 159] != 0, axis=1)))
+            self.assertTrue(np.all(np.any(image[valid, 160] != 0, axis=1)))
+            self.assertLessEqual(jumps.max(), 18)
+            self.assertGreater(np.count_nonzero(image), 10000)
+            np.testing.assert_allclose(image, permuted, atol=3)
+            self.assertGreater(np.count_nonzero(np.abs(image[valid, 155:165] - unshifted[valid, 155:165]) > 5), 20)
+
+    def test_over_four_surface_conflict_is_visible_in_pom_shader(self):
+        from dataclasses import replace
+        import pyvista as pv
+        from PIL import Image
+        from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
+        from awt.adm_export import color1, triangle_masks
+        from awt.gui.preview_shader import install_layered_preview
+
+        weights = np.array([[51, 51, 51, 51, 51], [51, 51, 51, 51, 51],
+                            [255, 0, 0, 0, 0], [0, 60, 60, 60, 75]], dtype=np.uint8)
+        faces = np.array([[2, 0, 1], [0, 3, 1]])
+        masks, conflicts = triangle_masks(weights, faces)
+        self.assertEqual(conflicts, 2)
+        slots = [[i for i in range(5) if int(mask) & (1 << i)] for mask in masks]
+        self.assertEqual(slots, [[0, 1, 2, 3], [1, 2, 3, 4]])
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "height.png")
+            albedo = os.path.join(directory, "albedo.png")
+            x = np.arange(64)
+            gradient = np.broadcast_to((127 + 100 * np.sin(x * 2 * np.pi / 64))[None, :], (32, 64))
+            Image.fromarray(gradient.astype(np.uint8)).save(path)
+            albedo_values = 90 + gradient * 0.7
+            Image.fromarray(np.repeat(albedo_values[:, :, None].astype(np.uint8), 3, axis=2)).save(albedo)
+            colors = [[255, 0, 0], [80, 80, 80], [80, 80, 80], [80, 80, 80], [0, 0, 255]]
+            surfaces = [Surface(str(i), color=color, albedo=albedo, height_map=MapSlot(path), parallax_scale=0.2)
+                        for i, color in enumerate(colors)]
+            settings = TerrainMaterial(parallax_mode="PARALLAX_OCCLUSION")
+            plotter = pv.Plotter(off_screen=True, window_size=(160, 160))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            plotter.show(auto_close=False)
+            units = plotter.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+            points = np.array([[0, -5, 0], [0, 5, 0], [-8, 0, 0], [8, 0, 0]], dtype=np.float32)
+
+            def render(pom):
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(0, 0, 10), focal_point=(0, 0, 0)))
+                for face, chosen in zip(faces, slots):
+                    mesh = pv.PolyData(points[face], np.array([3, 0, 1, 2]))
+                    mesh.active_texture_coordinates = points[face, :2] / 15 + 0.5
+                    mesh.point_data["layer_weights"] = color1(weights[face], chosen).astype(np.float32) / 255
+                    white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                    white.SetUseSRGBColorSpace(True)
+                    orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                    actor = plotter.add_mesh(mesh, texture=white, pbr=True, metallic=1, roughness=1, render=False)
+                    mapper = vtkPolyDataMapper()
+                    mapper.SetInputData(mesh)
+                    mapper.ScalarVisibilityOff()
+                    actor.SetMapper(mapper)
+                    actor.prop.SetTexture("albedoTex", white)
+                    actor.prop.SetORMTexture(orm)
+                    layers = [replace(surfaces[i], parallax_scale=0.2 if pom else 0.0) for i in chosen]
+                    install_layered_preview(actor, pv, layers, [1, 1, 1, 1], settings,
+                                            height_blend=True, transition=0.2, strength=1, texture_units=units,
+                                            vertex_weights="layer_weights")
+                plotter.camera_position = [(3, 0, 16), (0, 0, 0), (0, 1, 0)]
+                plotter.camera.view_angle = 40
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True).astype(int)
+
+            image = render(True)
+            unshifted = render(False)
+            jump = np.abs(image[60:100, 79] - image[60:100, 80])
+            self.assertGreater(np.median(np.max(jump, axis=1)), 10)
+            self.assertGreater(np.count_nonzero(np.abs(image - unshifted) > 5), 100)
+
+    def test_export_reports_surface_conflict_seam_risk(self):
+        import argparse
+        import contextlib
+        import io
+        from awt.cli import _export
+        from awt.project import Project
+
+        result = {"written": ["tile"], "skipped": 0, "bytes": 0, "seconds": 0.1, "out_dir": "output",
+                  "conflicts": 2, "warnings": []}
+        window = MainWindow()
+        self.addCleanup(window.close)
+        with patch.object(window, "_check_changes"):
+            window._export_done(result)
+        self.assertIn("visible seams may result", window.report.toPlainText())
+
+        args = argparse.Namespace(project="project.awtp", out="", no_validate=False,
+                                  build=False, all=True, tiles=None)
+        output = io.StringIO()
+        with patch("awt.project.load_project", return_value=Project.new()), \
+                patch("awt.pipeline.load_manifest", return_value={}), \
+                patch("awt.adm_export.export_tiles", return_value=result), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(_export(args), 0)
+        self.assertIn("warning: 2 triangles", output.getvalue())
+        self.assertIn("visible seams may result", output.getvalue())
+
     def test_generated_reference_adm_renders_pom(self):
         import shutil
         import subprocess

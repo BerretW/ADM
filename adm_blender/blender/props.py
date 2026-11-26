@@ -692,6 +692,8 @@ class ADMMaterialProps(PropertyGroup):
     reflection_multiplier: FloatProperty(name="Reflection Multiplier", default=1.0, min=0.0, max=4.0)
     wetness_offset: FloatProperty(name="Wetness Offset", default=0.0, min=-1.0, max=1.0)
     params: CollectionProperty(type=ADMShaderParamValue)
+    archived_params: CollectionProperty(type=ADMShaderParamValue, options={"HIDDEN"})
+    params_shader_id: StringProperty(options={"HIDDEN"})
     active_param: IntProperty()
 
     def shader_key(self, scene=None):

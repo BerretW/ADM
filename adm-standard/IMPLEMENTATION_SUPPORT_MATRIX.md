@@ -24,6 +24,11 @@ represented as complete renderer conformance.
 
 - Blender approximates layer AO by darkening the preview color. It retains parallax
   and POM parameters, but does not preview their UV offsets.
+- Blender retains inactive profile parameters in the project when you switch
+  profiles, restoring values whose shader and type match. An ADM export includes
+  only parameters supported by the selected profile and warns about inactive
+  overrides. Loading older projects initializes cache metadata for registered
+  profiles; unknown or conflicting custom definitions remain unverified.
 - Blender's ADM importer uses the PNG fallback for editable GPU images and
   retains a compatible primary for unchanged-image export. For BC5 normal
   maps, it reconstructs Z using the format and the fallback X and Y channels.

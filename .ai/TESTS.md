@@ -57,8 +57,32 @@
 - A later bounded end-to-end test generates the ADM scene in Blender, runs the
   fixture-specific VTK visualization with and without POM in separate processes,
   and checks that more than 500 color-channel samples change by over five
-  8-bit levels. The test passed. The tool uses fixture-specific assumptions and
-  PNG fallbacks, not an independent or general-purpose ADM renderer.
+  8-bit levels. It also checks that a non-unit UV scale is explicitly rejected.
+  The test passed. The tool uses fixture-specific assumptions and PNG fallbacks,
+  not an independent or general-purpose ADM renderer.
+- The complete World Tile test suite passed: 90 tests with Pillow 13 and VTK
+  9.7.2 on Windows. Five PyVista future warnings remain.
+- An offscreen VTK regression renders two exported sloped, irregular tiles at
+  different LODs, using exported UVs, per-vertex `COLOR_1`, shader settings,
+  and PNG fallbacks. Along the visible edge it checks varying biome-noise
+  weights and a shared-surface biome transition, absence of black gaps, a
+  maximum adjacent-channel difference of 18/255, measurable POM changes, and
+  slot-permutation invariance. It passed with VTK 9.7.2. Curved tiles and
+  disjoint-surface biome transitions are not covered by this test.
+- A separate synthetic two-triangle test uses the exporter's actual
+  `triangle_masks` and `color1` packing on five equal edge weights. The POM
+  shader renders a visible discontinuity when each triangle drops a different
+  surface. Both conflicts are reported by the packing function. This is a
+  known limit, not a passing seam guarantee for over-four-surface input. GUI and
+  CLI regressions check that export reports warn about the seam risk.
+- The shader enum switch regression saves a project while a legacy profile is
+  selected, reopens it, and checks restoration of advanced ENUM, numeric and
+  image values when the advanced profile is selected again. It checks the export
+  warning and distinguishes custom parameters with different types. It also
+  reloads an official profile with cache metadata removed to test migration.
+- `build.bat -CheckOnly` passed all steps after the shader-cache and migration
+  changes, with documented external-asset skips. The affected enum and all 47
+  Blender shader profile scenarios also passed in bounded individual runs.
 - Offscreen VTK 9.7.2 tests compare two independent layer offsets and height
   blending with the shared reference math, and render parallax-shifted normal
   and emission maps in a lit PBR pass. Both lit and unlit passes cover the

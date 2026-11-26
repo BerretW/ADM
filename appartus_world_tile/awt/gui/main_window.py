@@ -1677,7 +1677,7 @@ class MainWindow(QMainWindow):
                  f"Up to {result.get('max_primitives', 1)} materials per tile LOD (four surfaces each)"]
         if result.get("conflicts"):
             lines.append(f"{result['conflicts']:,} triangles touched more than four surfaces; the weakest "
-                         "were dropped. Lower Texture detail or simplify the biomes if this shows.")
+                         "were dropped and visible seams may result. Lower Texture detail or simplify the biomes.")
         lines += list(result.get("warnings", []))
         lines += [f"Folder: {result['out_dir']}",
                   "Import in Blender: File > Import > ADM Model, one .adm per tile."]

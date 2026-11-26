@@ -114,7 +114,8 @@ def _export(args: argparse.Namespace) -> int:
     print(f"{len(result['written'])} tiles written ({result['bytes'] / 2**20:,.1f} MiB), "
           f"{result['skipped']} unchanged or not selected, {result['seconds']:.1f} s -> {result['out_dir']}")
     if result["conflicts"]:
-        print(f"note: {result['conflicts']:,} triangles needed more than four surfaces; the weakest were dropped")
+        print(f"warning: {result['conflicts']:,} triangles needed more than four surfaces; "
+              "the weakest were dropped and visible seams may result")
     for warning in result["warnings"]:
         print(f"warning: {warning}")
     return 0

@@ -64,8 +64,14 @@ checkboxes track verification and delivery, not merely code changes.
   - Two-surface height-blend output at interpolated edge points agrees across
     irregular tiles and mixed LODs in a reference-math test. A VTK pixel test
     also compares two planar preview tiles with permuted layer slots and mixed
-    mesh density against a continuous POM reference. Rendered exported terrain,
-    varying weights, and >4-surface conflicts remain open.
+    mesh density against a continuous POM reference. Another VTK test renders
+    exported sloped irregular tiles with mixed LODs, varying biome-noise weights,
+    a shared-surface biome transition, texture fallbacks, and permuted slots.
+    Curved terrain and disjoint-surface biome transitions remain open. A separate
+    rendered five-surface example
+    demonstrates an actual discontinuity when neighboring triangles drop
+    different layers; the four-layer contract cannot represent all five
+    simultaneous weights, and export reports the conflict count.
 - [x] Ensure material-only edits do not rebuild geometry or vertex weights.
 
 ## M8 - ADM Editor
@@ -77,6 +83,8 @@ checkboxes track verification and delivery, not merely code changes.
       validation, import/export, and real material preview.
 - [x] Preserve legacy profile editing and make upgrades explicit.
 - [ ] Round-trip unsupported parameters without silent loss.
+  - Blender project data retains parameters excluded by an intermediate
+    profile; those inactive values are not exported with the legacy schema.
   - No standalone ADM Editor application is required or permitted. Transfer
     these authoring requirements to existing tools.
 

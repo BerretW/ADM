@@ -690,14 +690,17 @@ class MaterialExporter:
             d = param_def_dict(p, lambda img, uv: self._texref(img, uv))
             params.append(d)
         out = {"id": sdef.shader_id.strip(), "version": sdef.version.strip(), "parameters": params}
-        if sdef.description.strip():
-            out["description"] = sdef.description.strip()
-        if sdef.author.strip():
-            out["author"] = sdef.author.strip()
+        if sdef.description:
+            out["description"] = sdef.description
+        if sdef.author:
+            out["author"] = sdef.author
         return out
 
     def _export_shader(self, mat, out):
         a = mat.adm
+        if any(value.use for value in a.archived_params):
+            self.warn(f"material '{mat.name}': inactive shader parameters are saved in the Blender project "
+                      "but excluded from this ADM export")
         aid = a.animation_id.strip()
         if a.shader != "CORE" and not aid:
             aid = unique_animation_id(mat.name, self._animation_ids)
@@ -1036,7 +1039,7 @@ def param_def_dict(p, texref):
         d["default"] = p.default_enum
     else:
         d["default"] = texref(p.default_image, p.default_tex_coord)
-    d["description"] = p.description.strip()
+    d["description"] = p.description
     return d
 
 
@@ -1099,6 +1102,9 @@ def import_shader_definitions(scene, doc, resolve_image):
         name = f"{d['id']}@{d['version']}"
         existing = shaders.get(name)
         if existing is not None:
+            if (existing.description != d.get("description", "")
+                    or existing.author != d.get("author", "")):
+                raise ValueError(f"custom shader '{name}' has conflicting metadata")
             existing_types = {p.name: p.type for p in existing.params}
             incoming_types = {p["name"]: p["type"] for p in d.get("parameters", [])}
             if existing_types != incoming_types:
@@ -1114,6 +1120,8 @@ def import_shader_definitions(scene, doc, resolve_image):
                     raise ValueError(f"custom shader '{name}' has a conflicting ENUM definition '{param_name}'")
             for incoming in d.get("parameters", []):
                 old_param = existing.params[incoming["name"]]
+                if old_param.description != incoming.get("description", ""):
+                    raise ValueError(f"custom shader '{name}' has a conflicting parameter '{incoming['name']}'")
                 if incoming["type"] in K.SHADER_NUMERIC_DIMS:
                     old = param_def_dict(old_param, lambda _img, _uv: None)
                     for field in ("default", "minimum", "maximum"):
@@ -1176,19 +1184,101 @@ def import_shader_definitions(scene, doc, resolve_image):
                 pd.default_tex_coord = p["default"].get("texCoord", 0)
 
 
+def _copy_shader_param(source, target):
+    target.name = source.name
+    if "_schema_type" in source:
+        target["_schema_type"] = source["_schema_type"]
+    elif "_schema_type" in target:
+        del target["_schema_type"]
+    target.value_f = source.value_f
+    target.value_vec = source.value_vec
+    target.value_bool = source.value_bool
+    target.value_enum_custom = source.value_enum_custom
+    if "value_enum" in source:
+        target["value_enum"] = source["value_enum"]
+    elif "value_enum" in target:
+        del target["value_enum"]
+    target.image = source.image
+    target.tex_coord = source.tex_coord
+    target.use = source.use
+
+
+def initialize_shader_param_owners():
+    """Identify active parameters in projects saved before profile caching existed."""
+    for mat in bpy.data.materials:
+        a = mat.adm
+        if a.params_shader_id or not a.params:
+            continue
+        key = a.shader_key()
+        if not key[0]:
+            continue
+        a.params_shader_id = key[0]
+        schema = K.OFFICIAL_SHADERS.get(key)
+        if schema is not None:
+            types = {p["name"]: p["type"] for p in schema}
+        else:
+            definitions = [s for scene in bpy.data.scenes for s in scene.adm_anim.shaders
+                           if (s.shader_id, s.version) == key]
+            candidates = {}
+            for definition in definitions:
+                for param in definition.params:
+                    candidates.setdefault(param.name, set()).add(param.type)
+            types = {name: next(iter(values)) for name, values in candidates.items() if len(values) == 1}
+        for value in a.params:
+            if value.name in types and "_schema_type" not in value:
+                value["_schema_type"] = types[value.name]
+
+
+def _sync_shader_param_membership(a, shader_id, types):
+    previous_id = a.params_shader_id or shader_id
+    for i in range(len(a.params) - 1, -1, -1):
+        value = a.params[i]
+        old_type = value.get("_schema_type")
+        if old_type is None:
+            known = {p["type"] for key, schema in K.OFFICIAL_SHADERS.items() if key[0] == previous_id
+                     for p in schema if p["name"] == value.name}
+            old_type = next(iter(known)) if len(known) == 1 else None
+        if value.name not in types or (old_type is not None and old_type != types[value.name]):
+            old = next((p for p in a.archived_params
+                        if p.name == value.name and p.get("_shader_id") == previous_id
+                        and p.get("_schema_type") == old_type), None)
+            if old is None:
+                old = a.archived_params.add()
+            _copy_shader_param(value, old)
+            if old_type is not None:
+                old["_schema_type"] = old_type
+            old["_shader_id"] = previous_id
+            a.params.remove(i)
+        else:
+            value["_schema_type"] = types[value.name]
+    a.params_shader_id = shader_id
+
+
+def _restore_shader_param(a, shader_id, name, param_type):
+    for i, value in enumerate(a.archived_params):
+        if (value.name == name and value.get("_shader_id") == shader_id
+                and value.get("_schema_type") == param_type):
+            restored = a.params.add()
+            _copy_shader_param(value, restored)
+            a.archived_params.remove(i)
+            return True
+    return False
+
+
 @_quietly
 def sync_material_params(mat, sdef):
-    """Make ``mat.adm.params`` mirror the definition (keeps existing values, drops stale entries)."""
+    """Make active parameters match the definition, preserving inactive values."""
     a = mat.adm
-    names = [p.name for p in sdef.params]
-    for i in range(len(a.params) - 1, -1, -1):
-        if a.params[i].name not in names:
-            a.params.remove(i)
+    types = {p.name: p.type for p in sdef.params}
+    _sync_shader_param_membership(a, sdef.shader_id, types)
     for p in sdef.params:
         if a.params.get(p.name) is not None:
             continue
+        if _restore_shader_param(a, sdef.shader_id, p.name, p.type):
+            continue
         v = a.params.add()
         v.name = p.name
+        v["_schema_type"] = p.type
         v.use = False
         v.value_f = p.default_vec[0]
         v.value_vec = p.default_vec
@@ -1207,15 +1297,16 @@ def sync_official_shader_params(mat, key=None):
     if schema is None:
         return
     a = mat.adm
-    names = [p["name"] for p in schema]
-    for i in range(len(a.params) - 1, -1, -1):
-        if a.params[i].name not in names:
-            a.params.remove(i)
+    types = {p["name"]: p["type"] for p in schema}
+    _sync_shader_param_membership(a, key[0], types)
     for prm in schema:
         if a.params.get(prm["name"]) is not None:
             continue
+        if _restore_shader_param(a, key[0], prm["name"], prm["type"]):
+            continue
         v = a.params.add()
         v.name = prm["name"]
+        v["_schema_type"] = prm["type"]
         v.use = False
         typ = prm["type"]
         if typ in K.SHADER_NUMERIC_DIMS:

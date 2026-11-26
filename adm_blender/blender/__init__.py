@@ -14,10 +14,14 @@ CLASSES = (
 @persistent
 def _load_post(_dummy):
     operators.ensure_role_names()
+    from .materials import initialize_shader_param_owners
+    initialize_shader_param_owners()
 
 
 def register():
     props.register()
+    from .materials import initialize_shader_param_owners
+    initialize_shader_param_owners()
     for c in CLASSES:
         bpy.utils.register_class(c)
     file_io.register()

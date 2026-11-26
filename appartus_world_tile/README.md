@@ -42,8 +42,9 @@ BC5, and BC7 GPU texture sources. Open the project and build its tiles before ex
 
 ### Render the advanced ADM reference
 
-From `appartus_world_tile`, with Blender on your PATH and the GUI dependencies installed,
-generate the reference and render both POM and comparison images:
+In an ADM repository checkout, with Blender on your PATH and the GUI dependencies
+installed, run these commands from `appartus_world_tile` to generate the reference
+and render both POM and comparison images:
 
 ```bat
 blender -b --factory-startup --python ..\adm_blender\tests\build_advanced_material_test_scene.py -- reference.blend

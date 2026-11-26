@@ -75,3 +75,13 @@ implementation ambiguity. Link each decision to its source and tests.
   remain CPU estimates at unshifted UVs. Texture-unit exhaustion is reported
   rather than silently dropping maps; when a Qt context is not yet available,
   the OpenGL minimum of 16 units is used conservatively.
+- The VTK layered shader can also read a four-component point-weight attribute
+  from a polydata mapper with scalar coloring disabled. This enables a rendered
+  test of exported `COLOR_1` weights without changing the existing preview
+  controls. Zero total weight selects layer zero, as required by the shader
+  contract. Mapper and weight-array prerequisites are checked explicitly.
+- Five simultaneously nonzero surface weights at a shared vertex cannot all
+  fit in a four-layer primitive. A rendered synthetic POM example confirms
+  that the exporter's per-triangle trimming can choose different palettes and
+  introduce a visible seam. The exporter reports the conflict count; this is a
+  format and export-policy limitation, not evidence that VTK needs replacement.

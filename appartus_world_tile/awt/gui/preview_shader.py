@@ -233,7 +233,7 @@ if (abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
 
 
 def install_layered_preview(actor, pv, surfaces, weights, material, *, height_blend, transition, strength,
-                            texture_units):
+                            texture_units, vertex_weights=None):
     """Bind independent layer textures and evaluate the material at each fragment."""
     if material.parallax_mode not in ("PARALLAX", "PARALLAX_OCCLUSION"):
         raise ValueError(f"Unsupported layered parallax mode: {material.parallax_mode}")
@@ -245,9 +245,23 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         raise ValueError("Layer weights must be finite and non-negative")
     if not np.isfinite(transition) or transition <= 0 or not np.isfinite(strength) or not 0 <= strength <= 1:
         raise ValueError("Height transition must be positive and strength must be in 0..1")
+    if vertex_weights is not None:
+        if not hasattr(actor.mapper, "MapDataArrayToVertexAttribute"):
+            raise ValueError("Vertex-weight preview requires a VTK polydata mapper")
+        if actor.mapper.GetScalarVisibility():
+            raise ValueError("Vertex-weight preview requires scalar coloring to be disabled")
+        dataset = pv.wrap(actor.mapper.GetInput())
+        if vertex_weights not in dataset.point_data:
+            raise ValueError(f"Missing point-weight array: {vertex_weights}")
+        values = np.asarray(dataset.point_data[vertex_weights])
+        if values.shape != (dataset.n_points, 4) or not np.isfinite(values).all() or np.any(values < 0):
+            raise ValueError("Point weights must have four finite non-negative components")
 
     textures = {}
     lines = [_LAYER_FRAME]
+    if vertex_weights is not None:
+        components = "rgba"[:len(surfaces)]
+        lines.append("float admBaseWeightSum = " + " + ".join(f"admWeightsVC.{c}" for c in components) + ";")
 
     def number(value):
         value = float(value)
@@ -281,10 +295,13 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         if surface.repeat_m <= 0:
             raise ValueError(f"Surface '{surface.name}' repeat must be positive")
         repeat = number(15.0 / surface.repeat_m)
+        weight_expr = (f"(admBaseWeightSum > 0.0 ? admWeightsVC.{'rgba'[i]} / admBaseWeightSum"
+                       f" : {1 if i == 0 else 0}.0)"
+                       if vertex_weights is not None else number(weight / total))
         lines += [f"vec2 admUV{i} = admBaseUv * {repeat};",
                   f"vec2 admDX{i} = admBaseDx * {repeat};",
                   f"vec2 admDY{i} = admBaseDy * {repeat};",
-                  f"float admWeight{i} = {number(weight / total)};"]
+                  f"float admWeight{i} = {weight_expr};"]
         if surface.height_map.path:
             name = f"admLayerHeight{i}"
             scalar_map(name, surface.height_map)
@@ -354,6 +371,18 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         actor.prop.SetTexture(name, texture)
     shader = actor.GetShaderProperty()
     _install_view_position(shader)
+    if vertex_weights is not None:
+        from vtkmodules.vtkCommonDataModel import vtkDataObject
+
+        actor.mapper.MapDataArrayToVertexAttribute(
+            "admWeightsMC", vertex_weights, vtkDataObject.FIELD_ASSOCIATION_POINTS, -1)
+        shader.AddVertexShaderReplacement(
+            "//VTK::Color::Dec", True,
+            "//VTK::Color::Dec\nin vec4 admWeightsMC;\nout vec4 admWeightsVC;", False)
+        shader.AddVertexShaderReplacement(
+            "//VTK::Color::Impl", True, "//VTK::Color::Impl\nadmWeightsVC = admWeightsMC;", False)
+        shader.AddFragmentShaderReplacement(
+            "//VTK::Color::Dec", True, "//VTK::Color::Dec\nin vec4 admWeightsVC;", False)
     shader.AddFragmentShaderReplacement(
         "//VTK::PositionVC::Dec", True,
         "//VTK::PositionVC::Dec\nin vec3 admPositionVC;\n" + _LAYER_FUNCTIONS, False)

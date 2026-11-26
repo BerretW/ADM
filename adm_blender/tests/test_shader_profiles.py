@@ -150,6 +150,9 @@ def main(tmp, selected_profile=None):
         mat.adm.shader_version = key[1]
         if key in K.SHADER_LAYERED_HEIGHT_COUNTS:
             mat.adm.params["parallax_mode"].value_enum = "PARALLAX_OCCLUSION"
+            for param in mat.adm.params:
+                if param.name.startswith("layer") and param.name.endswith("_texture"):
+                    param.tex_coord = 0
             for name in ("layer0_ao_texture", "layer0_height_texture", "layer0_emissive_texture"):
                 image = bpy.data.images.new(f"{key[0]}_{key[1]}_{name}", 2, 2, alpha=True)
                 image.pixels = [0.2, 0.4, 0.7, 1.0] * 4

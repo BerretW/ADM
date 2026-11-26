@@ -17,6 +17,13 @@
 - An exported-geometry test now evaluates interpolated two-surface height
   blend weights along shared irregular-tile edges at mixed LODs. This checks
   reference math, not actual terrain fragment rendering or >4-surface seams.
+- An offscreen VTK test now renders two exported, sloped irregular tiles at
+  different LODs using their exported UVs, per-vertex weights, shader settings,
+  and texture fallbacks. At the sampled edge it detects POM offsets, checks
+  pixel continuity and verifies invariance under a swapped layer palette.
+  Weights vary along the edge due to biome noise and a shared-surface biome
+  transition. Curved terrain and disjoint-surface biome transitions are not yet
+  covered. A separate five-surface synthetic case demonstrates a visible seam.
 - An exploratory VTK script loaded the generated ADM scene's geometry and
   texture fallbacks, then rendered its layers with the preview shader. Toggling
   parallax scales changed 48,493 color-channel samples by more than five
@@ -28,6 +35,14 @@
   shader parameters. A generated ADM scene rendered with POM on and off differs
   at more than 500 color-channel samples. The tool uses embedded PNG fallbacks
   and is not a general ADM or independent conformance renderer.
+- Blender profile synchronization retains parameters excluded by the selected
+  schema as inactive project data and restores them on a return to the same
+  shader when their saved types match. ADM exports include only parameters
+  supported by the selected profile and warn about inactive overrides.
+  The regression switches through a legacy profile and saves/reopens the project
+  before checking restored ENUM, numeric and image values. Registration and
+  project loading infer metadata for existing official or unambiguous custom
+  definitions; unknown or conflicting definitions remain unverified.
 
 ## Baseline
 - Workspace HEAD at intake: `84ea70eae8b5b48f02d1ef41e66c8719a5259de9`.

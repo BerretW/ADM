@@ -138,6 +138,8 @@ the actual Blender color attributes, not a separate color system.
   without overwriting authored values. The panel names each channel, supports Fill/Clear/Invert and
   channel painting, and **Preview Mask** displays the selected layer/channel directly. Per-channel
   strengths and the profile's other mask parameters are edited in the material's shader parameters.
+- Switching profiles retains inactive shader parameters in the Blender project. ADM exports include
+  only the selected profile's parameters and warn when inactive overrides are excluded.
 - Choose **All Faces**, **Selected Faces** or **This Material Faces** (every face using the active
   material, regardless of selection), then edit one R/G/B/A channel or all four and click
   **Apply Channels**. Edit Mode uses its live face selection without switching modes. A single-channel
