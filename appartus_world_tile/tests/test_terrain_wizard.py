@@ -96,6 +96,448 @@ class TerrainWizardTest(unittest.TestCase):
         self.assertEqual(panel.material().terrain_shader_version, "2.1.0")
         panel.material().validate()
 
+    def test_surface_preview_parallax_and_pom_render_view_dependent_offsets(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.adm_export import _core
+        _core()
+        from adm_blender.core.material_math import parallax_offset, parallax_occlusion
+
+        with tempfile.TemporaryDirectory() as directory:
+            albedo = os.path.join(directory, "gradient.png")
+            height = os.path.join(directory, "height.png")
+            gradient = np.broadcast_to(np.arange(256, dtype=np.uint8)[None, :, None], (32, 256, 3)).copy()
+            Image.fromarray(gradient).save(albedo)
+            Image.new("L", (32, 32), 51).save(height)
+            surface = Surface("test", albedo=albedo, height_map=MapSlot(height),
+                              repeat_m=15.0, parallax_scale=0.2)
+            material = TerrainMaterial(parallax_mode="NONE")
+            preview = MaterialPreview()
+            self.addCleanup(preview.shutdown)
+            preview.mode.setCurrentIndex(1)
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            plotter.enable_parallel_projection()
+
+            def sample(mode, camera, lit=False):
+                material.parallax_mode = mode
+                preview.set_material(material)
+                preview.set_surface(surface)
+                plotter.clear()
+                if lit:
+                    plotter.add_light(pv.Light(position=(10, 0, 20), focal_point=(0, 0, 0)))
+                plotter.add_actor(preview._actor, reset_camera=False)
+                plotter.camera_position = [camera, (0, 0, 0), (0, 1, 0)]
+                plotter.camera.parallel_scale = 10
+                plotter.show(auto_close=False)
+                return int(plotter.screenshot(return_img=True)[100, 100, 0])
+
+            none = sample("NONE", (12, 0, 20))
+            single = sample("PARALLAX", (12, 0, 20))
+            pom = sample("PARALLAX_OCCLUSION", (12, 0, 20))
+            single_offset = parallax_offset((0.5, 0.5), (12, 0, 20), 0.2, scale=0.2)
+            pom_offset, _ = parallax_occlusion((0.5, 0.5), (12, 0, 20), lambda _: 0.2, scale=0.2)
+            self.assertAlmostEqual(single - none, single_offset[0] * 255, delta=3)
+            self.assertAlmostEqual(pom - none, pom_offset[0] * 255, delta=3)
+            frontal = sample("PARALLAX_OCCLUSION", (0, 0, 20))
+            frontal_none = sample("NONE", (0, 0, 20))
+            self.assertAlmostEqual(frontal, frontal_none, delta=2)
+            back_none = sample("NONE", (12, 0, -20))
+            back_pom = sample("PARALLAX_OCCLUSION", (12, 0, -20))
+            self.assertGreater(back_none, 10)
+            self.assertAlmostEqual(back_none, back_pom, delta=2)
+            surface.height_map.invert = True
+            inverted = sample("PARALLAX_OCCLUSION", (12, 0, 20))
+            self.assertGreater(inverted, pom + 5)
+
+            normal = os.path.join(directory, "normal.png")
+            orm = os.path.join(directory, "orm.png")
+            emission = os.path.join(directory, "emission.png")
+            Image.new("RGB", (32, 32), (128, 128, 255)).save(normal)
+            Image.new("RGB", (32, 32), (255, 180, 90)).save(orm)
+            Image.new("RGB", (32, 32), (20, 10, 5)).save(emission)
+            surface.normal = normal
+            surface.ao_map = MapSlot(orm, channel=0)
+            surface.roughness_map = MapSlot(orm, channel=1)
+            surface.metallic_map = MapSlot(orm, channel=2)
+            surface.emission = emission
+            surface.height_map.invert = False
+            lit_none = sample("NONE", (12, 0, 20), lit=True)
+            lit_pom = sample("PARALLAX_OCCLUSION", (12, 0, 20), lit=True)
+            self.assertGreater(lit_none, 5)
+            self.assertGreater(abs(lit_none - lit_pom), 3)
+
+    def test_parallax_height_sampling_preserves_r16_and_missing_channels(self):
+        from awt.gui.preview_shader import _height_samples
+        from awt.adm_export import _core
+        _core()
+        from adm_blender.core import gputex
+        from adm_blender.core.png import encode_png
+
+        values = np.array([[1, 255], [1000, 65535]], dtype=np.uint16)
+        with tempfile.TemporaryDirectory() as directory:
+            for mime, extension in ((gputex.MIME_DDS, "dds"), (gputex.MIME_KTX2, "ktx2")):
+                path = os.path.join(directory, "height." + extension)
+                data, _ = gputex.encode_scalar(values, mime, "R16", mipmaps=False)
+                with open(path, "wb") as stream:
+                    stream.write(data)
+                np.testing.assert_allclose(_height_samples(MapSlot(path)), values / 65535.0, atol=1e-7)
+                np.testing.assert_array_equal(_height_samples(MapSlot(path, channel=1)), 0.0)
+                np.testing.assert_array_equal(_height_samples(MapSlot(path, channel=3)), 1.0)
+            rgba = np.zeros((2, 2, 4), dtype=">u2")
+            rgba[..., 0] = values
+            rgba[..., 3] = 65535
+            path = os.path.join(directory, "fallback.png")
+            with open(path, "wb") as stream:
+                stream.write(encode_png(2, 2, rgba.tobytes(), 4, bit_depth=16))
+            np.testing.assert_allclose(_height_samples(MapSlot(path)), values / 65535.0, atol=1e-7)
+            np.testing.assert_allclose(_height_samples(MapSlot(path, invert=True)),
+                                       1.0 - values / 65535.0, atol=1e-7)
+
+    def test_multi_surface_height_blend_retains_r16_precision(self):
+        from awt.adm_export import _core
+        _core()
+        from adm_blender.core import gputex
+
+        with tempfile.TemporaryDirectory() as directory:
+            surfaces = []
+            for value in (32768, 32769):
+                path = os.path.join(directory, f"height{value}.dds")
+                data, _ = gputex.encode_scalar(np.full((2, 2), value, dtype=np.uint16),
+                                               gputex.MIME_DDS, "R16", mipmaps=False)
+                with open(path, "wb") as stream:
+                    stream.write(data)
+                surfaces.append(Surface(str(value), repeat_m=15, height_map=MapSlot(path)))
+            _, weights = compose_preview(surfaces, [1, 1], size=2, height_blend=True,
+                                         transition=1.0 / 65535.0)
+            self.assertAlmostEqual(float(weights[1, 0, 0]), 1.0 / (1.0 + math.exp(-1)), delta=0.001)
+
+    def test_parallax_renders_all_surface_preview_shapes_with_lighting(self):
+        import pyvista as pv
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            albedo = os.path.join(directory, "gradient.png")
+            height = os.path.join(directory, "height.png")
+            normal = os.path.join(directory, "normal.png")
+            gradient = np.broadcast_to(np.arange(256, dtype=np.uint8)[None, :, None], (32, 256, 3)).copy()
+            Image.fromarray(gradient).save(albedo)
+            Image.new("L", (32, 32), 51).save(height)
+            Image.new("RGB", (32, 32), (128, 128, 255)).save(normal)
+            surface = Surface("test", albedo=albedo, normal=normal, height_map=MapSlot(height),
+                              repeat_m=3.0, parallax_scale=0.15)
+            material = TerrainMaterial()
+            preview = MaterialPreview()
+            self.addCleanup(preview.shutdown)
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            plotter.enable_parallel_projection()
+            for shape in range(3):
+                preview.mode.setCurrentIndex(shape)
+                images = []
+                for mode in ("NONE", "PARALLAX_OCCLUSION"):
+                    material.parallax_mode = mode
+                    preview.set_material(material)
+                    preview.set_surface(surface)
+                    plotter.clear()
+                    plotter.add_light(pv.Light(position=(10, 0, 20), focal_point=(0, 0, 0)))
+                    plotter.add_actor(preview._actor, reset_camera=False)
+                    camera = (3, -5, 4) if shape == 0 else (12, 0, 20)
+                    plotter.camera_position = [camera, (0, 0, 0), (0, 1, 0)]
+                    plotter.camera.parallel_scale = 1.0 if shape == 0 else 10.0
+                    plotter.show(auto_close=False)
+                    images.append(plotter.screenshot(return_img=True))
+                self.assertGreater(np.count_nonzero(images[1]), 1000, f"shape {shape} failed to render")
+                self.assertGreater(np.count_nonzero(np.abs(images[1].astype(int) - images[0]) > 5),
+                                   100, f"shape {shape} has no visible POM")
+
+    def test_multi_surface_parallax_uses_independent_layer_offsets(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.adm_export import _core
+        from awt.bake import _linear_to_srgb, _srgb_to_linear
+        _core()
+        from adm_blender.core.material_math import height_blend_weights, parallax_offset, parallax_occlusion
+
+        with tempfile.TemporaryDirectory() as directory:
+            albedo = os.path.join(directory, "gradient.png")
+            gradient = np.broadcast_to(np.arange(256, dtype=np.uint8)[None, :, None], (32, 256, 3)).copy()
+            Image.fromarray(gradient).save(albedo)
+            surfaces = []
+            for index, (height, scale) in enumerate(((51, 0.2), (204, 0.1))):
+                path = os.path.join(directory, f"height{index}.png")
+                Image.new("L", (32, 32), height).save(path)
+                surfaces.append(Surface(f"layer{index}", albedo=albedo, repeat_m=15.0,
+                                        height_map=MapSlot(path), parallax_scale=scale))
+            material = TerrainMaterial(surfaces=surfaces)
+            preview = HeightBlendPreview(material)
+            self.addCleanup(preview.close)
+            preview.surface[1].setCurrentIndex(1)
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            plotter.enable_parallel_projection()
+
+            def sample(mode, blend=False, lit=False):
+                material.parallax_mode = mode
+                preview.height_blend.setChecked(blend)
+                preview._render()
+                self.assertEqual(preview.error.text(), "")
+                plotter.clear()
+                if lit:
+                    plotter.add_light(pv.Light(position=(10, 0, 20), focal_point=(0, 0, 0)))
+                plotter.add_actor(preview._actor, reset_camera=False)
+                plotter.camera_position = [(12, 0, 20), (0, 0, 0), (0, 1, 0)]
+                plotter.camera.parallel_scale = 10
+                plotter.show(auto_close=False)
+                return int(plotter.screenshot(return_img=True)[100, 100, 0])
+
+            baseline = sample("NONE")
+            single = sample("PARALLAX")
+            pom = sample("PARALLAX_OCCLUSION")
+            view = (12, 0, 20)
+            heights, scales = (0.2, 0.8), (0.2, 0.1)
+            single_offsets = [parallax_offset((0.5, 0.5), view, h, scale=s)[0]
+                              for h, s in zip(heights, scales)]
+            pom_offsets = [parallax_occlusion((0.5, 0.5), view, lambda _, h=h: h, scale=s)[0][0]
+                           for h, s in zip(heights, scales)]
+
+            def expected(offsets, weights):
+                samples = np.array([baseline / 255.0 + offset for offset in offsets])
+                return float(_linear_to_srgb(np.dot(weights, _srgb_to_linear(samples))) * 255.0)
+
+            self.assertAlmostEqual(single, expected(single_offsets, (0.5, 0.5)), delta=4)
+            self.assertAlmostEqual(pom, expected(pom_offsets, (0.5, 0.5)), delta=4)
+            blended = sample("PARALLAX_OCCLUSION", True)
+            weights = height_blend_weights((0.5, 0.5), heights, transition=0.2)
+            self.assertAlmostEqual(blended, expected(pom_offsets, weights), delta=4)
+            for surface in surfaces:
+                surface.albedo = ""
+                surface.color = [0, 0, 0]
+                surface.emission = albedo
+            emission_none = sample("NONE", lit=True)
+            emission_pom = sample("PARALLAX_OCCLUSION", lit=True)
+            self.assertGreater(emission_none, 30)
+            self.assertGreater(emission_none - emission_pom, 5)
+            normal = os.path.join(directory, "normal.png")
+            normal_pixels = np.zeros((32, 256, 3), dtype=np.uint8)
+            normal_pixels[..., 0] = np.arange(256, dtype=np.uint8)
+            normal_pixels[..., 1] = 128
+            normal_pixels[..., 2] = 230
+            Image.fromarray(normal_pixels).save(normal)
+            for surface in surfaces:
+                surface.color = [180, 180, 180]
+                surface.emission = ""
+                surface.normal = normal
+            normal_none = sample("NONE", lit=True)
+            normal_pom = sample("PARALLAX_OCCLUSION", lit=True)
+            self.assertGreater(normal_none, 30)
+            self.assertGreater(abs(normal_none - normal_pom), 2)
+
+    def test_four_layer_pom_renders_and_reports_texture_exhaustion(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            surfaces = []
+            for i in range(4):
+                paths = {}
+                width, height = 64 + i * 8, 24 + i * 4
+                gradient = np.broadcast_to(np.linspace(0, 255, width, dtype=np.uint8)[None, :, None],
+                                           (height, width, 3)).copy()
+                for name, pixels in (
+                    ("albedo", gradient),
+                    ("emission", gradient // 3),
+                    ("normal", np.full((height, width, 3), (128, 128, 255), dtype=np.uint8)),
+                    ("scalar", np.full((height, width, 3), (40 + 25 * i, 160, 80), dtype=np.uint8)),
+                ):
+                    paths[name] = os.path.join(directory, f"{i}-{name}.png")
+                    Image.fromarray(pixels).save(paths[name])
+                surfaces.append(Surface(
+                    str(i), albedo=paths["albedo"], normal=paths["normal"], emission=paths["emission"],
+                    height_map=MapSlot(paths["scalar"], channel=0, invert=bool(i % 2)),
+                    ao_map=MapSlot(paths["scalar"], channel=1, invert=bool(i % 2)),
+                    roughness_map=MapSlot(paths["scalar"], channel=1),
+                    metallic_map=MapSlot(paths["scalar"], channel=2),
+                    repeat_m=15.0 + i, parallax_scale=0.15, height_scale=0.8, height_bias=0.1))
+            material = TerrainMaterial(parallax_mode="PARALLAX_OCCLUSION")
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.show(auto_close=False)
+            units = plotter.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+
+            def actor_for(scale, budget):
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(10, 0, 20), focal_point=(0, 0, 0)))
+                mesh = pv.Plane(i_size=15, j_size=15)
+                from awt.gui.material_panel import _mesh_with_tangents
+                white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                white.SetUseSRGBColorSpace(True)
+                orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                normal = pv.numpy_to_texture(np.full((2, 2, 3), (128, 128, 255), dtype=np.uint8))
+                actor = plotter.add_mesh(_mesh_with_tangents(mesh, pv), texture=white, pbr=True,
+                                         metallic=1.0, roughness=1.0, render=False)
+                actor.prop.SetTexture("albedoTex", white)
+                actor.prop.SetORMTexture(orm)
+                actor.prop.SetNormalTexture(normal)
+                actor.prop.SetEmissiveTexture(white)
+                actor.prop.SetEmissiveFactor(1, 1, 1)
+                for surface in surfaces:
+                    surface.parallax_scale = scale
+                install_layered_preview(actor, pv, surfaces, [1, 2, 3, 4], material,
+                                        height_blend=True, transition=0.2, strength=1.0,
+                                        texture_units=budget)
+                plotter.camera_position = [(12, 0, 20), (0, 0, 0), (0, 1, 0)]
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True)
+
+            with self.assertRaisesRegex(ValueError, "texture units"):
+                actor_for(0.15, 16)
+            if units < 32:
+                with self.assertRaisesRegex(ValueError, "texture units"):
+                    actor_for(0.15, units)
+                for surface in surfaces:
+                    surface.ao_map.path = ""
+                    surface.roughness_map.path = ""
+                    surface.metallic_map.path = ""
+                    surface.normal = ""
+                    surface.emission = ""
+            baseline = actor_for(0.0, units)
+            pom = actor_for(0.15, units)
+            self.assertGreater(np.count_nonzero(baseline), 1000)
+            self.assertGreater(np.count_nonzero(np.abs(pom.astype(int) - baseline.astype(int)) > 5), 100)
+
+    def test_pom_render_matches_across_permuted_mixed_lod_tile_edge(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            surfaces = []
+            for i, color in enumerate(((220, 100, 30), (40, 140, 230))):
+                albedo = os.path.join(directory, f"albedo{i}.png")
+                height = os.path.join(directory, f"height{i}.png")
+                gradient = np.linspace(0.2, 1.0, 128)[None, :, None]
+                pixels = np.broadcast_to(np.asarray(color)[None, None, :] * gradient,
+                                         (32, 128, 3)).astype(np.uint8)
+                Image.fromarray(pixels).save(albedo)
+                Image.new("L", (32, 32), 60 + i * 120).save(height)
+                surfaces.append(Surface(str(i), albedo=albedo, repeat_m=15.0 if i == 0 else 10.0,
+                                        height_map=MapSlot(height), parallax_scale=0.3))
+            material = TerrainMaterial(parallax_mode="PARALLAX_OCCLUSION")
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            plotter.enable_parallel_projection()
+            plotter.show(auto_close=False)
+            units = plotter.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+
+            def actor(center, width, resolution, reverse):
+                mesh = pv.Plane(center=(center, 0, 0), i_size=width, j_size=15,
+                                i_resolution=resolution, j_resolution=resolution)
+                mesh.active_texture_coordinates = np.column_stack(
+                    (mesh.points[:, 0] / 15 + 0.5, mesh.points[:, 1] / 15 + 0.5))
+                white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                white.SetUseSRGBColorSpace(True)
+                orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                obj = plotter.add_mesh(mesh, texture=white, pbr=True, metallic=1, roughness=1,
+                                       render=False)
+                obj.prop.SetTexture("albedoTex", white)
+                obj.prop.SetORMTexture(orm)
+                layers = surfaces[::-1] if reverse else surfaces
+                weights = [0.3, 0.7] if reverse else [0.7, 0.3]
+                install_layered_preview(obj, pv, layers, weights, material,
+                                        height_blend=True, transition=0.2, strength=1.0,
+                                        texture_units=units)
+
+            def render(split):
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(10, 0, 20), focal_point=(0, 0, 0)))
+                if split:
+                    actor(-3.75, 7.5, 24, False)
+                    actor(2.25, 4.5, 8, True)
+                else:
+                    actor(-1.5, 12, 24, False)
+                plotter.camera_position = [(12, 0, 20), (0, 0, 0), (0, 1, 0)]
+                plotter.camera.parallel_scale = 10
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True).astype(int)
+
+            reference = render(False)
+            tiled = render(True)
+            band = np.s_[60:140, 97:103, :]
+            self.assertGreater(np.count_nonzero(reference[band]), 500)
+            self.assertLessEqual(np.max(np.abs(reference[band] - tiled[band])), 3)
+            for surface in surfaces:
+                surface.parallax_scale = 0.0
+            no_pom = render(False)
+            delta = np.abs(reference[band] - no_pom[band])
+            self.assertGreater(np.count_nonzero(delta > 3), 100, f"maximum POM difference: {delta.max()}")
+
+    def test_generated_reference_adm_renders_pom(self):
+        import shutil
+        import subprocess
+        import sys
+        from pathlib import Path
+        import pyvista as pv
+        from PIL import Image
+
+        root = Path(__file__).resolve().parents[2]
+        blender = os.environ.get("BLENDER_EXECUTABLE") or shutil.which("blender")
+        if not blender and os.name == "nt":
+            candidate = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / (
+                r"Blender Foundation\Blender 5.2\blender.exe")
+            blender = str(candidate) if candidate.is_file() else None
+        if not blender:
+            self.skipTest("Blender is required to generate the reference ADM fixture")
+        probe = pv.Plotter(off_screen=True)
+        try:
+            probe.show(auto_close=False)
+            units = probe.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+        finally:
+            probe.close()
+        if units < 17:
+            self.skipTest(f"Reference fixture requires 17 texture units; renderer reports {units}")
+
+        def run(command, timeout):
+            try:
+                result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                self.fail(f"Reference process timed out after {timeout}s: {exc.cmd}")
+            self.assertEqual(result.returncode, 0,
+                             f"Reference process failed ({result.returncode}):\n{result.stdout}\n{result.stderr}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            run([blender, "-b", "--factory-startup", "--python-exit-code", "1",
+                 "--python", str(root / "adm_blender" / "tests" / "build_advanced_material_test_scene.py"),
+                 "--", str(path / "reference.blend")], 180)
+            renderer = root / "appartus_world_tile" / "tools" / "render_advanced_reference.py"
+            for name, options in (("pom.png", []), ("no-pom.png", ["--disable-pom"])):
+                run([sys.executable, str(renderer), str(path / "reference.adm"), str(path / name), *options], 120)
+            with Image.open(path / "pom.png") as image:
+                pom = np.asarray(image).astype(int)
+            with Image.open(path / "no-pom.png") as image:
+                no_pom = np.asarray(image).astype(int)
+            self.assertGreater(np.count_nonzero(pom), 10000)
+            self.assertGreater(np.count_nonzero(np.abs(pom - no_pom) > 5), 500)
+            from awt.adm_export import _core
+            _core()
+            from adm_blender.core.constants import ADM_MAGIC
+            from adm_blender.core.container import read_container, write_container
+            doc, chunks = read_container((path / "reference.adm").read_bytes(), ADM_MAGIC)
+            doc["materials"][0]["shaderParameters"]["uv_scale"] = [2.0, 1.0, 1.0, 1.0]
+            (path / "unsupported.adm").write_bytes(write_container(ADM_MAGIC, doc, chunks))
+            rejected = subprocess.run([sys.executable, str(renderer), str(path / "unsupported.adm"),
+                                       str(path / "unsupported.png")], cwd=root,
+                                      capture_output=True, text=True, timeout=120)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("unit UV scales", rejected.stderr)
+            self.assertFalse((path / "unsupported.png").exists())
+
     def test_multi_surface_preview_uses_height_weights_and_preserves_zero_layers(self):
         from PIL import Image
 

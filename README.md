@@ -63,8 +63,9 @@ roles or animation compatibility.
 ### Important limits
 
 - RAW chunk storage is supported; optional ZSTD decoding is not.
-- Textures export as PNG by default (any source format is converted). KTX2 or DDS (RGBA8/BC1/BC3)
-  can be chosen at export and always carry an embedded PNG fallback; Basis Universal and BC7 are not supported.
+- Export preserves compatible unedited GPU textures and their portable fallback by default;
+  other images convert to PNG. You can explicitly export PNG or encode KTX2/DDS with a PNG
+  fallback. Basis Universal is not supported.
 - The original 20 shader profiles have a Blender viewport preview. Their parameters drive the node tree,
   and the export keeps the portable PBR fallback. Skin, fur and fabric previews are approximations.
   Custom shaders use a reported PBR fallback, and certified renderer conformance is not claimed.

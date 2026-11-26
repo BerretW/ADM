@@ -71,7 +71,7 @@ class TerrainSetupTest(unittest.TestCase):
     def test_advanced_shader_settings_round_trip_in_preset_version_three(self):
         material = TerrainMaterial()
         texture = os.path.join(self.tmp.name, "height.png")
-        Image.fromarray(np.full((4, 4), 128, np.uint8), "L").save(texture)
+        Image.fromarray(np.full((4, 4), 128, np.uint8)).save(texture)
         surface = material.surface("grass")
         surface.height_map.path = texture
         surface.height_scale = 0.35

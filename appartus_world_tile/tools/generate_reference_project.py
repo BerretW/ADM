@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -40,7 +41,7 @@ def main() -> None:
         + 28 * ((yy - SIZE * 0.30) / SIZE) ** 2
     )
     height = np.clip((height - height.min()) / max(1e-6, height.max() - height.min()) * 255, 0, 255)
-    Image.fromarray(height.astype(np.uint8), "L").save(OUT / "heightmap.png")
+    Image.fromarray(height.astype(np.uint8)).save(OUT / "heightmap.png")
 
     texture_root = REPO / "adm-standard" / "fixtures" / "advanced-materials"
     gpu_dir = OUT / "textures"
@@ -55,7 +56,11 @@ def main() -> None:
     names = ("rock", "cobblestone", "sand", "dirt", "grass")
     surfaces = []
     for name in names:
-        folder = texture_root / name
+        source_folder = texture_root / name
+        folder = gpu_dir / name
+        folder.mkdir(parents=True, exist_ok=True)
+        for role in ("albedo", "roughness", "normal", "ao", "height"):
+            shutil.copyfile(source_folder / f"{role}.png", folder / f"{role}.png")
         surface = Surface(
             name=name,
             repeat_m=4.0,

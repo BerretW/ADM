@@ -1,5 +1,7 @@
 """ADM PBR material <-> Blender Principled BSDF node tree (spec §8)."""
 
+import hashlib
+import json
 import os
 import re
 import tempfile
@@ -209,6 +211,51 @@ def source_bytes(image):
     return None
 
 
+def _pixel_fingerprint(image):
+    pixels = np.ascontiguousarray(image_pixels(image))
+    digest = hashlib.sha256()
+    digest.update(np.asarray(pixels.shape, dtype=np.int64).tobytes())
+    digest.update(pixels)
+    return digest.hexdigest()
+
+
+def preserve_gpu_source(image, blob, fallback=None):
+    """Keep a validated GPU primary alongside the editable preview image."""
+    original = bpy.data.images.new(f"{image.name} ADM GPU source", 1, 1)
+    original.pack(data=blob, data_len=len(blob))
+    image["_adm_gpu_source"] = original
+    image["_adm_gpu_pixels"] = _pixel_fingerprint(image)
+    if fallback is not None and fallback != image:
+        image["_adm_gpu_fallback"] = fallback
+
+
+def mark_gpu_source_clean(image):
+    if image.get("_adm_gpu_source") is not None:
+        image["_adm_gpu_pixels"] = _pixel_fingerprint(image)
+
+
+def _preserved_gpu_source(image, color_role, warn):
+    original = image.get("_adm_gpu_source")
+    if original is None:
+        return None
+    if not isinstance(original, bpy.types.Image) or original.packed_file is None:
+        raise TextureExportError(f"image '{image.name}': preserved GPU source is missing")
+    if _pixel_fingerprint(image) != image.get("_adm_gpu_pixels"):
+        warn(f"image '{image.name}': edited pixels cannot use the preserved GPU source; exporting PNG")
+        return None
+    blob = bytes(original.packed_file.data)
+    mime = gputex.mime_of(blob)
+    try:
+        info = gputex.parse(blob, mime, strict=True)
+    except gputex.GpuTextureError as exc:
+        raise TextureExportError(f"image '{image.name}': invalid preserved GPU source: {exc}") from exc
+    if info["srgb"] != color_role:
+        warn(f"image '{image.name}': preserved GPU source color space does not match the texture role; "
+             "exporting PNG")
+        return None
+    return blob, mime
+
+
 def _portable_mime(data):
     if not data:
         return None
@@ -265,8 +312,15 @@ def load_image_file(path, *, normal_map=False):
         raise ValueError(f"GPU texture exceeds the {MAX_GPU_TEXTURE_PIXELS:,}-pixel limit")
     special = info is not None and info["kind"] in ("R8", "R16", "BC4", "BC5")
     if mime != gputex.MIME_KTX2 and not special:
-        img = bpy.data.images.load(path, check_existing=True)
+        img = bpy.data.images.load(path, check_existing=mime is None)
         if mime is None or img.size[0] > 0:
+            if info is not None:
+                try:
+                    gputex.parse(data, mime, strict=True)
+                except gputex.GpuTextureError:
+                    pass
+                else:
+                    preserve_gpu_source(img, data)
             return img
         bpy.data.images.remove(img)
     if data is None:
@@ -292,6 +346,12 @@ def load_image_file(path, *, normal_map=False):
     img.pack()
     if info["kind"] == "R16":
         img["adm_source_precision_bits"] = 16
+    try:
+        gputex.parse(data, mime, strict=True)
+    except gputex.GpuTextureError:
+        pass
+    else:
+        preserve_gpu_source(img, data)
     return img
 
 
@@ -299,10 +359,9 @@ def load_image_file(path, *, normal_map=False):
 # export
 # ================================================================================================
 class MaterialExporter:
-    """``image_format``: PNG (default, everything re-encoded to PNG except PNG sources),
-    AUTO (keep PNG/JPEG source bytes), KTX2 or DDS (GPU primary + mandatory PNG fallback)."""
+    """Export images as PNG, preserved compatible sources, or GPU images with PNG fallback."""
 
-    def __init__(self, builder, warn, image_format="PNG", jpeg_quality=90, gpu_compression="AUTO",
+    def __init__(self, builder, warn, image_format="PRESERVE", jpeg_quality=90, gpu_compression="AUTO",
                  gpu_mipmaps=True, embed_images=True, vertex_controls=False):
         self.b = builder
         self.warn = warn
@@ -422,7 +481,19 @@ class MaterialExporter:
         if key in self._img_cache:
             return self._img_cache[key]
         gpu_mime = GPU_IMAGE_FORMATS.get(self.image_format)
-        if gpu_mime:
+        preserved = (_preserved_gpu_source(image, color_role, self.warn)
+                     if pixels is None and image is not None and self.image_format in ("PRESERVE", "AUTO")
+                     else None)
+        if preserved is not None:
+            blob, mime = preserved
+            primary = self._add_blob(name, blob, mime)
+            fallback_image = image.get("_adm_gpu_fallback") or image
+            if not isinstance(fallback_image, bpy.types.Image):
+                raise TextureExportError(f"image '{image.name}': preserved fallback is invalid")
+            fallback_blob, fallback_mime = self._encode_image_bytes(fallback_image, color_role)
+            fallback = self._add_blob(name, fallback_blob, fallback_mime, fallback_image)
+            entry = (primary, fallback)
+        elif gpu_mime:
             px = pixels if pixels is not None else self._pixels(image, color_role)
             high_precision = image is not None and _has_16bit_source(image)
             scalar_r16 = (high_precision and pixels is None and not color_role
@@ -457,7 +528,7 @@ class MaterialExporter:
     def _image_key(self, image, color_role):
         key = ("img", image.name, image.library.filepath if image.library else "")
         # GPU formats encode the sRGB/UNORM variant, so one image can need two encodings.
-        return key + (color_role,) if self.image_format in GPU_IMAGE_FORMATS else key
+        return key + (color_role,) if self.image_format in (*GPU_IMAGE_FORMATS, "PRESERVE", "AUTO") else key
 
     def _sampler(self, tex_node):
         mag = "NEAREST" if tex_node.interpolation == "Closest" else "LINEAR"
@@ -956,6 +1027,13 @@ def param_def_dict(p, texref):
             d["animatable"] = True
     elif p.type == "BOOL":
         d["default"] = bool(p.default_bool)
+    elif p.type == "ENUM":
+        try:
+            values = json.loads(p.enum_values)
+        except (ValueError, TypeError):
+            values = []
+        d["values"] = values if isinstance(values, list) else []
+        d["default"] = p.default_enum
     else:
         d["default"] = texref(p.default_image, p.default_tex_coord)
     d["description"] = p.description.strip()
@@ -977,7 +1055,7 @@ def param_value_from_prop(typ, v, texref):
     if typ == "BOOL":
         return bool(v.value_bool)
     if typ == "ENUM":
-        return str(v.value_enum)
+        return str(v.value_enum_custom if v.id_data.adm.shader == "CUSTOM" else v.value_enum)
     return texref(v.image, v.tex_coord)
 
 
@@ -1015,11 +1093,57 @@ def _quietly(fn):
 
 
 def import_shader_definitions(scene, doc, resolve_image):
-    """Add the document's embedded shader definitions to ``scene.adm_anim.shaders`` (skip existing)."""
+    """Add embedded definitions, rejecting incompatible existing parameter schemas."""
     shaders = scene.adm_anim.shaders
     for d in doc.get("shaderDefinitions", []) or []:
         name = f"{d['id']}@{d['version']}"
-        if shaders.get(name) is not None:
+        existing = shaders.get(name)
+        if existing is not None:
+            existing_types = {p.name: p.type for p in existing.params}
+            incoming_types = {p["name"]: p["type"] for p in d.get("parameters", [])}
+            if existing_types != incoming_types:
+                raise ValueError(f"custom shader '{name}' has conflicting parameter names or types")
+            existing_enums = {p.name: param_def_dict(p, lambda _img, _uv: None)
+                              for p in existing.params if p.type == "ENUM"}
+            incoming_enums = {p["name"]: p for p in d.get("parameters", []) if p["type"] == "ENUM"}
+            for param_name in existing_enums.keys() | incoming_enums.keys():
+                old = existing_enums.get(param_name)
+                new = incoming_enums.get(param_name)
+                if (old is None or new is None or old["values"] != new["values"]
+                        or old["default"] != new["default"]):
+                    raise ValueError(f"custom shader '{name}' has a conflicting ENUM definition '{param_name}'")
+            for incoming in d.get("parameters", []):
+                old_param = existing.params[incoming["name"]]
+                if incoming["type"] in K.SHADER_NUMERIC_DIMS:
+                    old = param_def_dict(old_param, lambda _img, _uv: None)
+                    for field in ("default", "minimum", "maximum"):
+                        if (field in old) != (field in incoming):
+                            raise ValueError(f"custom shader '{name}' has a conflicting parameter '{incoming['name']}'")
+                        if field in old and not np.array_equal(
+                                np.asarray(old[field], dtype=np.float32),
+                                np.asarray(incoming[field], dtype=np.float32)):
+                            raise ValueError(f"custom shader '{name}' has a conflicting parameter '{incoming['name']}'")
+                    if old.get("animatable", False) != incoming.get("animatable", False):
+                        raise ValueError(f"custom shader '{name}' has a conflicting parameter '{incoming['name']}'")
+                elif incoming["type"] == "BOOL" and old_param.default_bool != incoming["default"]:
+                    raise ValueError(f"custom shader '{name}' has a conflicting parameter '{incoming['name']}'")
+                elif incoming["type"] == "TEXTURE":
+                    ref, image = incoming["default"], old_param.default_image
+                    if (ref is None) != (image is None):
+                        raise ValueError(f"custom shader '{name}' has a conflicting parameter '{incoming['name']}'")
+                    if ref is not None:
+                        candidate = resolve_image(ref)
+                        old_source = image.get("_adm_gpu_source")
+                        new_source = candidate.get("_adm_gpu_source") if candidate is not None else None
+                        same_source = (old_source is None and new_source is None) or (
+                            old_source is not None and new_source is not None
+                            and old_source.packed_file is not None and new_source.packed_file is not None
+                            and bytes(old_source.packed_file.data) == bytes(new_source.packed_file.data))
+                        if (candidate is None or old_param.default_tex_coord != ref.get("texCoord", 0)
+                                or image.colorspace_settings.name != candidate.colorspace_settings.name
+                                or not same_source or _pixel_fingerprint(image) != _pixel_fingerprint(candidate)):
+                            raise ValueError(
+                                f"custom shader '{name}' has a conflicting parameter '{incoming['name']}'")
             continue
         sd = shaders.add()
         sd.shader_id = d["id"]
@@ -1044,6 +1168,9 @@ def import_shader_definitions(scene, doc, resolve_image):
                     _set_vec(pd, "maximum", p["maximum"], n)
             elif p["type"] == "BOOL":
                 pd.default_bool = bool(p["default"])
+            elif p["type"] == "ENUM":
+                pd.enum_values = json.dumps(p["values"], ensure_ascii=False)
+                pd.default_enum = p["default"]
             elif isinstance(p.get("default"), dict):
                 pd.default_image = resolve_image(p["default"])
                 pd.default_tex_coord = p["default"].get("texCoord", 0)
@@ -1066,6 +1193,8 @@ def sync_material_params(mat, sdef):
         v.value_f = p.default_vec[0]
         v.value_vec = p.default_vec
         v.value_bool = p.default_bool
+        if p.type == "ENUM":
+            v.value_enum_custom = p.default_enum
         v.image = p.default_image
         v.tex_coord = p.default_tex_coord
 
@@ -1107,7 +1236,10 @@ def _apply_shader_value(v, typ, val, resolve_image):
     elif typ == "BOOL":
         v.value_bool = bool(val)
     elif typ == "ENUM":
-        v.value_enum = val
+        if v.id_data.adm.shader == "CUSTOM":
+            v.value_enum_custom = val
+        else:
+            v.value_enum = val
     elif isinstance(val, dict):
         v.image = resolve_image(val)
         v.tex_coord = val.get("texCoord", 0)

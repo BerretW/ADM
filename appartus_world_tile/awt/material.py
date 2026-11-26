@@ -37,7 +37,7 @@ MAX_BIOMES = 16
 SURFACES_PER_BIOME = 4
 PAINT_AUTO = 255  # paint value meaning "use the automatic rules"
 PAINT_MAX_SIDE = 4096
-IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.tga *.tif *.tiff *.bmp *.dds *.webp);;All files (*)"
+IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.tga *.tif *.tiff *.bmp *.dds *.ktx2 *.webp);;All files (*)"
 
 
 @dataclass
@@ -499,13 +499,13 @@ class TerrainMaterial:
             from PIL import Image
 
             out = io.BytesIO()
-            Image.fromarray(self.paint, "L").save(out, "PNG", optimize=True)
+            Image.fromarray(self.paint).save(out, "PNG", optimize=True)
             data["paint"] = {"cell": self.paint_cell, "png": base64.b64encode(out.getvalue()).decode("ascii")}
         if self.has_surface_paint():
             from PIL import Image
 
             out = io.BytesIO()
-            Image.fromarray(self.surface_paint, "L").save(out, "PNG", optimize=True)
+            Image.fromarray(self.surface_paint).save(out, "PNG", optimize=True)
             data["surface_paint"] = {
                 "cell": self.surface_paint_cell, "png": base64.b64encode(out.getvalue()).decode("ascii")}
         if self.roads:
@@ -693,7 +693,7 @@ def _eight_bit(image):
 
         values = np.asarray(image, dtype=np.float64)
         peak = 65535.0 if image.mode.startswith("I;16") or values.max() > 255 else 255.0
-        return Image.fromarray(np.clip(values / peak * 255.0 + 0.5, 0, 255).astype(np.uint8), "L")
+        return Image.fromarray(np.clip(values / peak * 255.0 + 0.5, 0, 255).astype(np.uint8))
     has_alpha = "A" in image.getbands() or image.info.get("transparency") is not None
     return image.convert("RGBA" if has_alpha else "RGB")
 

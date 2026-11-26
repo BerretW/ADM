@@ -169,9 +169,59 @@ def main(tmp):
         im = doc["images"][t[which]]
         return read_view(doc, chunks, im["bufferView"]), im["mimeType"], t
 
-    print("== default PNG: everything converted")
+    print("== preserve supported source formats across ADM round-trip", flush=True)
+    for gpu_mime, extension in ((G.MIME_DDS, "dds"), (G.MIME_KTX2, "ktx2")):
+        for kind in ("R8", "R16", "BC4", "BC5", "BC7"):
+            if kind in ("R8", "R16", "BC4"):
+                dtype = np.uint16 if kind == "R16" else np.uint8
+                scalar = np.arange(64, dtype=dtype).reshape(8, 8)
+                if kind == "R16":
+                    scalar *= 1001
+                original, _ = G.encode_scalar(scalar, gpu_mime, kind, mipmaps=True)
+            else:
+                original, _ = G.encode(gradient(8, 8), gpu_mime, kind, srgb=False, mipmaps=True)
+            source_path = os.path.join(tmp, f"source_{kind}.{extension}")
+            with open(source_path, "wb") as stream:
+                stream.write(original)
+            M.set_slot_image(mat, "OCCLUSION", M.load_image_file(source_path))
+            source_data, source_doc, source_chunks = export()
+            emitted, emitted_mime, _ = tex_blob(source_doc, source_chunks, "occlusionTexture")
+            check(emitted == original and emitted_mime == gpu_mime,
+                  f"{kind} {extension}: authoring retains complete GPU source")
+            adm_path = os.path.join(tmp, f"source_{kind}_{extension}.adm")
+            with open(adm_path, "wb") as stream:
+                stream.write(source_data)
+            imported = ModelImporter(bpy.context, adm_path, ImportOptions())
+            imported.run()
+            emitted_data, report = ModelExporter(bpy.context, imported.root, ExportOptions()).export()
+            emitted_doc, emitted_chunks = read_container(emitted_data, K.ADM_MAGIC)
+            emitted, emitted_mime, _ = tex_blob(emitted_doc, emitted_chunks, "occlusionTexture")
+            check(report.ok and emitted == original and emitted_mime == gpu_mime,
+                  f"{kind} {extension}: import and export retain complete GPU source")
+    M.set_slot_image(mat, "OCCLUSION", dds_img)
+
+    color_source, _ = G.encode(gradient(8, 8), G.MIME_KTX2, "BC7", srgb=True, mipmaps=True)
+    color_path = os.path.join(tmp, "color_bc7.ktx2")
+    with open(color_path, "wb") as stream:
+        stream.write(color_source)
+    M.set_slot_image(mat, "BASE_COLOR", M.load_image_file(color_path))
+    color_data, color_doc, color_chunks = export()
+    check(tex_blob(color_doc, color_chunks, "baseColorTexture")[0] == color_source,
+          "BC7 sRGB source bytes are preserved in a color role")
+    color_adm = os.path.join(tmp, "color_bc7.adm")
+    with open(color_adm, "wb") as stream:
+        stream.write(color_data)
+    color_import = ModelImporter(bpy.context, color_adm, ImportOptions())
+    color_import.run()
+    color_data, color_report = ModelExporter(bpy.context, color_import.root, ExportOptions()).export()
+    color_doc, color_chunks = read_container(color_data, K.ADM_MAGIC)
+    check(color_report.ok and tex_blob(color_doc, color_chunks, "baseColorTexture")[0] == color_source,
+          "BC7 sRGB survives ADM import and export")
+    M.set_slot_image(mat, "BASE_COLOR", jpg_img)
+
+    print("== default: preserve compatible GPU and PNG sources")
     data, doc, chunks = export()
-    check(ExportOptions().image_format == "PNG", "PNG is the default")
+    check(ExportOptions().image_format == "PRESERVE", "compatible GPU sources are preserved by default")
     check({im["mimeType"] for im in doc["images"]} == {"image/png"}, "only PNG images embedded")
     check(all("fallbackSource" not in t for t in doc["textures"]), "no fallbackSource for PNG")
     jpg_ref = u8(M.image_pixels(jpg_img))
@@ -270,7 +320,12 @@ def main(tmp):
     root = bpy.data.objects["Box"]
     mat = bpy.data.materials["Formats"]
     M.set_slot_image(mat, "OCCLUSION", image)
-    data, doc, chunks = export()
+    _, saved_doc, saved_chunks = export()
+    with open(path, "rb") as stream:
+        saved_original = stream.read()
+    check(tex_blob(saved_doc, saved_chunks, "occlusionTexture")[0] == saved_original,
+          "authored R16 source bytes survive Blender project save and reload")
+    data, doc, chunks = export(image_format="PNG")
     blob = tex_blob(doc, chunks, "occlusionTexture")[0]
     check(blob[24] == 16, "ADM contains the 16-bit PNG")
     path = os.path.join(tmp, "r16.adm")
@@ -302,12 +357,31 @@ def main(tmp):
         check(np.allclose(M.image_pixels(gpu_image)[..., 0], expected, atol=1e-6),
               f"{fmt} ADM round-trip retains R16 values through fallback")
         M.set_slot_image(mat, "OCCLUSION", gpu_image)
+        preserved_exporter = ModelExporter(bpy.context, root, ExportOptions())
+        preserved_data, preserved_report = preserved_exporter.export()
+        preserved_doc, preserved_chunks = read_container(preserved_data, K.ADM_MAGIC)
+        preserved, preserved_mime, _ = tex_blob(preserved_doc, preserved_chunks, "occlusionTexture")
+        check(preserved == primary and preserved_mime == gpu_mime,
+              f"{fmt} import and default export preserve the original R16 mip chain byte-for-byte "
+              f"(mime={preserved_mime}, warnings={preserved_exporter.warnings})")
         _, second_doc, second_chunks = export(image_format=fmt, gpu_compression="AUTO")
         second, second_mime, _ = tex_blob(second_doc, second_chunks, "occlusionTexture")
         second_info = G.parse(second, second_mime, strict=True)
         check(second_info["kind"] == "R16"
               and np.array_equal(G.decode_scalar_level(second, second_info), values),
               f"{fmt} re-export of imported fallback retains R16 values")
+        M.set_slot_image(mat, "OCCLUSION", image)
+        gpu_image.pixels.foreach_set(np.zeros(len(gpu_image.pixels), dtype=np.float32))
+        gpu_image.update()
+        gpu_image.pack()
+        M.set_slot_image(mat, "OCCLUSION", gpu_image)
+        edited_exporter = ModelExporter(bpy.context, root, ExportOptions())
+        edited_data, edited_report = edited_exporter.export()
+        edited_doc, edited_chunks = read_container(edited_data, K.ADM_MAGIC)
+        _, edited_mime, _ = tex_blob(edited_doc, edited_chunks, "occlusionTexture")
+        check(edited_report.ok and edited_mime == "image/png"
+              and any("edited pixels" in warning for warning in edited_exporter.warnings),
+              f"{fmt} edited and repacked image does not reuse stale GPU bytes")
         M.set_slot_image(mat, "OCCLUSION", image)
     gpu_exporter = ModelExporter(bpy.context, root, ExportOptions(image_format="KTX2", gpu_compression="RGBA8"))
     gpu_data, report = gpu_exporter.export()

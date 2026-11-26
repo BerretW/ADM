@@ -16,6 +16,7 @@ from adm_blender.blender import materials as M
 from adm_blender.blender.export_adm import ExportOptions, ModelExporter
 from adm_blender.blender.import_adm import ImportOptions, ModelImporter
 from adm_blender.core import constants as K, gputex
+from adm_blender.core.buffers import read_view
 from adm_blender.core.container import ChunkCollection, read_container, write_container
 from adm_blender.core.png import encode_png
 from adm_blender.core.validate import validate_adm
@@ -202,6 +203,15 @@ def main():
             print(f"PHASE {fmt}: re-export and re-import", flush=True)
             encoded, report = ModelExporter(bpy.context, importer.root, ExportOptions()).export()
             assert report.ok, report.errors
+            exported_doc, exported_chunks = read_container(encoded, K.ADM_MAGIC)
+            parameters = exported_doc["materials"][0]["shaderParameters"]
+            refs = (exported_doc["materials"][0]["normalTexture"], parameters["layer0_normal"],
+                    parameters["layer0_ao_texture"])
+            for ref in refs:
+                tex = exported_doc["textures"][ref["index"]]
+                source_image = exported_doc["images"][tex["source"]]
+                assert source_image["mimeType"] == mime
+                assert read_view(exported_doc, exported_chunks, source_image["bufferView"]) == blob
             roundtrip_path = os.path.join(tmp, f"roundtrip_{fmt}.adm")
             with open(roundtrip_path, "wb") as stream:
                 stream.write(encoded)
@@ -212,11 +222,18 @@ def main():
             print(f"PHASE {fmt}: save and reload Blender project", flush=True)
             restored.use_fake_user = True
             name = restored.name
+            root_name = again.root.name
             blend_path = os.path.join(tmp, f"roundtrip_{fmt}.blend")
             bpy.ops.wm.save_as_mainfile(filepath=blend_path)
             bpy.ops.wm.open_mainfile(filepath=blend_path)
             np.testing.assert_allclose(M.image_pixels(bpy.data.images[name])[..., 2],
                                        expected_z * 0.5 + 0.5, atol=2 / 255)
+            saved_export, report = ModelExporter(bpy.context, bpy.data.objects[root_name], ExportOptions()).export()
+            assert report.ok, report.errors
+            saved_doc, saved_chunks = read_container(saved_export, K.ADM_MAGIC)
+            ref = saved_doc["materials"][0]["shaderParameters"]["layer0_normal"]
+            source = saved_doc["textures"][ref["index"]]["source"]
+            assert read_view(saved_doc, saved_chunks, saved_doc["images"][source]["bufferView"]) == blob
     print("RESULT: PASS", flush=True)
 
 

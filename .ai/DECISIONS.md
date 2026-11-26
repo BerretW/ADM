@@ -37,3 +37,41 @@ implementation ambiguity. Link each decision to its source and tests.
   creating a separate application. The primary targets are the ADM Blender
   Plugin and Apparatus World Tile Editor; apply relevant work to other existing
   material and shader consumers.
+
+## World Tile preview renderer audit
+
+- The surface preview uses PyVista's VTK PBR actor, with generated tangents
+  for normal maps and separately bound albedo, ORM, normal, and emission
+  textures. The multi-surface preview precomposes maps on the CPU and sends a
+  single material to VTK. The terrain inspection view is a separate path.
+- VTK 9.7.2 on Windows exposes fragment and vertex shader replacements,
+  named texture bindings and custom uniforms. An offscreen experiment sampled
+  a separately bound height texture in a custom fragment replacement. Another
+  experiment ray-marched that texture with explicit gradients and observed
+  different UV offsets at frontal and oblique camera angles. This establishes
+  technical feasibility, not application integration or shader conformance.
+- Built-in PBR code samples albedo, ORM, normals and emission separately. Any
+  per-layer POM implementation must shift each of those map samples consistently,
+  retain stable derivatives for ray samples, and handle missing or degenerate
+  tangent frames. The existing CPU-composited multi-surface maps cannot represent
+  independently view-dependent offsets for multiple layers; implementing that
+  path requires per-layer GPU sampling rather than shifting a single composite.
+- VTK shader replacements depend on generated shader hooks and names; guard
+  against version differences with actual render tests and visible failure
+  diagnostics. Keep effect code and texture/uniform binding separate from UI
+  controls so later effects can extend the pipeline. Retain the existing
+  renderer unless concrete evidence proves it unsuitable; the experiment does
+  not justify replacing the backend.
+- The single-surface preview passes its own view-space position through a vertex
+  varying because VTK omits `vertexVC` in some render passes. A derivative-based
+  tangent frame drives the bounded offset, and the same shifted coordinates are
+  substituted into VTK's albedo, ORM, normal, and emission samples. This is
+  tested on VTK 9.7.2; shader-hook compatibility on other versions remains
+  unverified. The UI reports configuration rather
+  than claiming shader compilation succeeded.
+- The multi-surface final view binds each layer's original-resolution maps
+  separately and computes each parallax ray, map sample and height-adjusted
+  weight in the fragment shader. Weight inspection and displayed mean weights
+  remain CPU estimates at unshifted UVs. Texture-unit exhaustion is reported
+  rather than silently dropping maps; when a Qt context is not yet available,
+  the OpenGL minimum of 16 units is used conservatively.

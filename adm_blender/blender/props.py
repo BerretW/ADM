@@ -282,6 +282,9 @@ class ADMShaderParamDef(PropertyGroup):
     animatable: BoolProperty(name="Animatable", description="Only F32/VEC2/VEC3/VEC4 can be animated")
     default_vec: FloatVectorProperty(name="Default", size=4)
     default_bool: BoolProperty(name="Default")
+    enum_values: StringProperty(name="Values (JSON)", default='["VALUE"]',
+                                description="JSON array of unique, nonempty string values")
+    default_enum: StringProperty(name="Default", default="VALUE")
     default_image: PointerProperty(name="Default Texture", type=bpy.types.Image)
     default_tex_coord: IntProperty(name="UV", min=0, max=1)
     use_minimum: BoolProperty(name="Minimum")
@@ -372,11 +375,10 @@ def _enum_value_items(self, context):
     mat = getattr(self, "id_data", None)
     if not isinstance(mat, bpy.types.Material):
         return _ENUM_UNAVAILABLE
+    if mat.adm.shader == "CUSTOM":
+        return _ENUM_UNAVAILABLE
     key = mat.adm.shader_key()
     schema = K.OFFICIAL_SHADERS.get(key)
-    if schema is None and mat.adm.shader == "CUSTOM" and context is not None and context.scene is not None:
-        from .materials import scene_shader_registry
-        schema = scene_shader_registry(context.scene).get(key)
     if isinstance(schema, dict):
         parameter = schema.get(self.name)
     else:
@@ -413,6 +415,7 @@ class ADMShaderParamValue(PropertyGroup):
                       description="Write this value (otherwise the schema default applies). "
                                   "Enabled automatically when you edit the value")
     value_f: FloatProperty(name="Value", update=_param_value_update)
+    value_enum_custom: StringProperty(name="Value", update=_param_value_update)
     value_vec: FloatVectorProperty(name="Value", size=4, update=_param_value_update)
     value_bool: BoolProperty(name="Value", update=_param_value_update)
     value_enum: EnumProperty(name="Value", items=_enum_value_items, update=_param_value_update)

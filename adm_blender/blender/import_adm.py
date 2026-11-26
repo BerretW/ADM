@@ -23,7 +23,8 @@ from ..core.validate import validate_adm
 from . import convert as cv
 from .colliders import new_collider_object
 from .export_adm import rest_fingerprint
-from .materials import UV_NAMES, apply_shader, build_material, has_profile_preview, import_shader_definitions
+from .materials import (UV_NAMES, apply_shader, build_material, has_profile_preview,
+                        import_shader_definitions, mark_gpu_source_clean, preserve_gpu_source)
 from .props import SKELETON_PROFILES
 
 
@@ -122,7 +123,8 @@ class ModelImporter:
         self.opts = options or ImportOptions()
         self.warnings = []
         self._normal_images = {}
-        self._gpu_kinds = {}
+        self._gpu_sources = {}
+        self._gpu_images = {}
 
     def warn(self, msg):
         if msg not in self.warnings:
@@ -256,6 +258,8 @@ class ModelImporter:
         for mat in self.materials:
             if mat.adm.vertex_controls_enabled:
                 refresh_shader_preview(mat)
+        for image in (*self._gpu_images.values(), *self._normal_images.values()):
+            mark_gpu_source_clean(image)
         self.metadata()
         return self.root
 
@@ -313,7 +317,7 @@ class ModelImporter:
             source = tex["fallbackSource"]
             code = "KTX2_FALLBACK" if mime == "image/ktx2" else "DDS_FALLBACK"
             self.warn(f"{code}: texture {ref['index']} uses the embedded PNG/JPEG fallback "
-                      f"(the {mime} primary is kept only for GPU runtimes)")
+                      f"for Blender preview")
         img = self.images[source]
         if img is None and "fallbackSource" in tex and source == tex["source"]:
             fallback = tex["fallbackSource"]
@@ -324,16 +328,27 @@ class ModelImporter:
             uri = self.doc["images"][source].get("uri")
             self.warn(f"EXTERNAL_IMAGE_MISSING: texture {ref['index']} image is unavailable"
                       + (f" ({uri})" if uri else ""))
+        elif mime in K.GPU_IMAGE_MIMES:
+            texture_index = ref["index"]
+            if texture_index not in self._gpu_images:
+                blob, _kind = self._gpu_source(tex["source"])
+                if blob is not None:
+                    img = img.copy()
+                    if img.packed_file is None:
+                        img.pack()
+                    preserve_gpu_source(img, blob)
+                self._gpu_images[texture_index] = img
+            img = self._gpu_images[texture_index]
         smp = self.doc["samplers"][tex["sampler"]] if "sampler" in tex else None
         return img, smp
 
-    def _gpu_kind(self, image_index):
-        if image_index in self._gpu_kinds:
-            return self._gpu_kinds[image_index]
+    def _gpu_source(self, image_index):
+        if image_index in self._gpu_sources:
+            return self._gpu_sources[image_index]
         image = self.doc["images"][image_index]
         mime = image["mimeType"]
         if mime not in K.GPU_IMAGE_MIMES:
-            return None
+            return None, None
         try:
             if "uri" in image:
                 root = os.path.dirname(os.path.abspath(self.filepath))
@@ -349,10 +364,14 @@ class ModelImporter:
             kind = gputex.parse(blob, mime, strict=True)["kind"]
         except (OSError, ValueError) as exc:
             self.warn(f"GPU_NORMAL_SOURCE: image {image_index} could not be inspected: {exc}; "
-                      "normal fallback may not render correctly")
+                      "the original cannot be preserved and normal fallback may not render correctly")
+            blob = None
             kind = None
-        self._gpu_kinds[image_index] = kind
-        return kind
+        self._gpu_sources[image_index] = (blob, kind)
+        return blob, kind
+
+    def _gpu_kind(self, image_index):
+        return self._gpu_source(image_index)[1]
 
     def resolve_normal_texture(self, ref):
         image, sampler = self.resolve_texture(ref)
@@ -373,6 +392,9 @@ class ModelImporter:
             normal.pixels.foreach_set(pixels.ravel())
             normal.update()
             normal.pack()
+            blob, _kind = self._gpu_source(source)
+            if blob is not None:
+                preserve_gpu_source(normal, blob, fallback=image)
             self._normal_images[texture_index] = normal
         return self._normal_images[texture_index], sampler
 

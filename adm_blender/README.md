@@ -512,10 +512,13 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   The F0 preview has Blender bake coverage but no independent renderer interoperability test. See
   `adm-standard/SPEC_GAPS.md`.
 - Image export (the **Images** option in File > Export > ADM):
-  - **PNG** (default) writes only PNG. JPEG, DDS, KTX2 and other sources are converted, so any
+  - **Keep GPU / PNG** (default) preserves compatible, unedited DDS/KTX2 bytes and their mip
+    levels, with a portable fallback. Other images are converted to PNG, except PNG sources.
+    If you edit an image, export uses the edited pixels instead and reports the conversion.
+  - **PNG** writes only PNG. JPEG, DDS, KTX2 and other sources are converted, so any
     engine can read the file. R16 DDS/KTX2 sources loaded through a texture slot and edited
     16-bit PNG sources retain 16-bit samples in PNG export.
-  - **Keep PNG/JPEG** passes PNG and JPEG source bytes through unchanged and converts the rest to PNG.
+  - **Keep GPU / PNG / JPEG** also passes JPEG source bytes through unchanged.
   - **KTX2 + PNG fallback** and **DDS + PNG fallback** write a GPU image (§8.6: RGBA8, BC1, BC3 or R16,
     sRGB for colour and UNORM for data textures, optional mipmaps) together with the mandatory
     same-size PNG `fallbackSource`. *Compression* `AUTO` picks BC1 for opaque and BC3 for
@@ -526,7 +529,7 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
 - On import, KTX2/DDS primaries resolve to their PNG/JPEG `fallbackSource` (`KTX2_FALLBACK` /
   `DDS_FALLBACK`). BC5 normal maps reconstruct their Z component for core PBR and official shader
   parameters. If an external primary is missing or fails integrity checks, import warns that the
-  normal fallback might render incorrectly. Re-export does not preserve the original GPU bytes.
+  normal fallback might render incorrectly and the original cannot be preserved.
   Use the folder button on a PBR slot or shader texture parameter to open `.ktx2` and `.dds`
   files through the add-on's loader. Official BC5 normal parameters reconstruct Z;
   custom shader parameters have no declared normal role and retain their raw channels.

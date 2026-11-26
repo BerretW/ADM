@@ -25,6 +25,9 @@ py -3 -m venv .venv
 .venv\Scripts\python -m awt export world.awtp --all --build     :: rebuild, then write everything
 ```
 
+For an existing `.venv`, rerun `.venv\Scripts\python -m pip install -e ".[gui]"`
+to update dependencies. The launcher installs them only when it creates `.venv`.
+
 The first run compiles the Numba kernels (a few seconds); the compiled code is cached.
 ADM export uses `adm_blender/core` from this repository (no Blender needed), so keep the tool
 inside the ADM checkout.
@@ -33,9 +36,27 @@ under `source`; use your own heightmap with the command-line examples.
 
 The repository includes `reference_project/advanced_reference.awtp`, a four-tile project with
 three LODs, five surfaces, biome noise, and a road. Its textures are in
-`reference_project/textures` and `../adm-standard/fixtures/advanced-materials`; keep that
-relative directory structure when moving the project. The project includes R8, R16, BC4,
+`reference_project/textures`; copy the `reference_project` folder to move the project.
+The project includes R8, R16, BC4,
 BC5, and BC7 GPU texture sources. Open the project and build its tiles before exporting them.
+
+### Render the advanced ADM reference
+
+From `appartus_world_tile`, with Blender on your PATH and the GUI dependencies installed,
+generate the reference and render both POM and comparison images:
+
+```bat
+blender -b --factory-startup --python ..\adm_blender\tests\build_advanced_material_test_scene.py -- reference.blend
+.venv\Scripts\python tools\render_advanced_reference.py reference.adm pom.png
+.venv\Scripts\python tools\render_advanced_reference.py reference.adm no-pom.png --disable-pom
+```
+
+Compare `pom.png` and `no-pom.png` to see the POM UV offsets. This VTK
+visualization reads the ADM's embedded texture fallbacks and is limited to the
+generated fixture's constant weights, unit UV scales, opaque layers, and neutral
+vertex controls. It approximates the material tint at 8-bit precision; it is
+not a general ADM renderer or an independent conformance test. The Blender
+material preview itself retains POM settings but does not render their offsets.
 
 ## Inputs
 
@@ -90,8 +111,8 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   middle-drag to pan, and use the mouse wheel to zoom. **Material** mode applies albedo,
   normal, AO, metallic, roughness, and emission maps where VTK supports them. Select a map
   from the preview menu to inspect it directly; **Height** shows the selected channel as
-  grayscale. The preview does not render parallax, parallax occlusion, or multi-surface height
-  blending.
+  grayscale. With a height map and a nonzero scale, **Material** mode renders the selected
+  parallax or parallax occlusion mode. It does not show multi-surface height blending.
   The sphere is 1 m in diameter; the plane and relief are 15 × 15 m. **Repeat** controls the
   preview texture scale in metres. The spherical mapping uses the equator and a pole-to-pole
   arc for horizontal and vertical scale, so its texture is distorted near the poles. The
@@ -100,8 +121,11 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   **Compare surface blending** opens a separate two-to-four-layer preview. Set base weights,
   toggle height blending, adjust transition and strength, and select a layer to inspect its
   final weight. Drag to rotate, pan, or zoom; choose a studio, grazing, or soft light. This
-  preview composites albedo, tint, normal, metallic, roughness, and emission maps and
-  approximates AO by darkening the final color. It does not render parallax effects.
+  When parallax is enabled, the final-material view samples each layer's maps independently
+  using its own offset, then applies height blending. The weight views and displayed mean
+  weights use unshifted coordinates. When parallax is disabled, the CPU-composited preview
+  approximates AO by darkening the final color. The renderer reports when the available
+  texture units cannot accommodate the selected maps.
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.

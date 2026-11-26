@@ -31,7 +31,7 @@
      255
     ],
     "repeat_m": 4.0,
-    "albedo": "../../adm-standard/fixtures/advanced-materials/rock/albedo.png",
+    "albedo": "textures/rock/albedo.png",
     "metallic": 0.0,
     "metallic_map": {
      "path": "",
@@ -40,13 +40,13 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/rock/roughness.png",
+     "path": "textures/rock/roughness.png",
      "channel": 0,
      "invert": false
     },
-    "normal": "../../adm-standard/fixtures/advanced-materials/rock/normal.png",
+    "normal": "textures/rock/normal.png",
     "ao_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/rock/ao.png",
+     "path": "textures/rock/ao.png",
      "channel": 0,
      "invert": false
     },
@@ -65,7 +65,7 @@
      255
     ],
     "repeat_m": 4.0,
-    "albedo": "../../adm-standard/fixtures/advanced-materials/cobblestone/albedo.png",
+    "albedo": "textures/cobblestone/albedo.png",
     "metallic": 0.0,
     "metallic_map": {
      "path": "",
@@ -74,13 +74,13 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/cobblestone/roughness.png",
+     "path": "textures/cobblestone/roughness.png",
      "channel": 0,
      "invert": false
     },
-    "normal": "../../adm-standard/fixtures/advanced-materials/cobblestone/normal.png",
+    "normal": "textures/cobblestone/normal.png",
     "ao_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/cobblestone/ao.png",
+     "path": "textures/cobblestone/ao.png",
      "channel": 0,
      "invert": false
     },
@@ -99,7 +99,7 @@
      255
     ],
     "repeat_m": 4.0,
-    "albedo": "../../adm-standard/fixtures/advanced-materials/sand/albedo.png",
+    "albedo": "textures/sand/albedo.png",
     "metallic": 0.0,
     "metallic_map": {
      "path": "",
@@ -108,13 +108,13 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/sand/roughness.png",
+     "path": "textures/sand/roughness.png",
      "channel": 0,
      "invert": false
     },
-    "normal": "../../adm-standard/fixtures/advanced-materials/sand/normal.png",
+    "normal": "textures/sand/normal.png",
     "ao_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/sand/ao.png",
+     "path": "textures/sand/ao.png",
      "channel": 0,
      "invert": false
     },
@@ -133,7 +133,7 @@
      255
     ],
     "repeat_m": 4.0,
-    "albedo": "../../adm-standard/fixtures/advanced-materials/dirt/albedo.png",
+    "albedo": "textures/dirt/albedo.png",
     "metallic": 0.0,
     "metallic_map": {
      "path": "",
@@ -142,18 +142,18 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/dirt/roughness.png",
+     "path": "textures/dirt/roughness.png",
      "channel": 0,
      "invert": false
     },
     "normal": "textures/dirt_normal.ktx2",
     "ao_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/dirt/ao.png",
+     "path": "textures/dirt/ao.png",
      "channel": 0,
      "invert": false
     },
     "height_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/dirt/height.png",
+     "path": "textures/dirt/height.png",
      "channel": 0,
      "invert": false
     },
@@ -176,18 +176,18 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/grass/roughness.png",
+     "path": "textures/grass/roughness.png",
      "channel": 0,
      "invert": false
     },
-    "normal": "../../adm-standard/fixtures/advanced-materials/grass/normal.png",
+    "normal": "textures/grass/normal.png",
     "ao_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/grass/ao.png",
+     "path": "textures/grass/ao.png",
      "channel": 0,
      "invert": false
     },
     "height_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/grass/height.png",
+     "path": "textures/grass/height.png",
      "channel": 0,
      "invert": false
     },

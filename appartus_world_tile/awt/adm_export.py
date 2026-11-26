@@ -77,7 +77,7 @@ def _png_image(rgba: np.ndarray, name: str) -> PreparedImage:
 
     h, w = rgba.shape[:2]
     stream = io.BytesIO()
-    Image.fromarray(np.ascontiguousarray(rgba, dtype=np.uint8), "RGBA").save(stream, "PNG", optimize=True)
+    Image.fromarray(np.ascontiguousarray(rgba, dtype=np.uint8)).save(stream, "PNG", optimize=True)
     data = stream.getvalue()
     return PreparedImage(data, "image/png", hashlib.sha256(data).hexdigest(), w, h, name)
 

@@ -5,12 +5,14 @@ from __future__ import annotations
 import io
 
 import numpy as np
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout,
                                QLabel, QPushButton, QSlider, QVBoxLayout, QWidget)
 
 from ..bake import _linear_to_srgb, _srgb_to_linear
 from ..material import Surface, TerrainMaterial, _eight_bit, normal_preview_array, prepare_texture
 from .material_panel import _mesh_with_tangents
+from .preview_shader import _height_samples
 
 
 def _read_rgba(path: str) -> np.ndarray:
@@ -57,18 +59,12 @@ def compose_preview(surfaces: list[Surface], base_weights: list[float], *, size:
         color *= _srgb_to_linear(np.asarray(surface.color, dtype=np.float64) / 255.0)
         colors.append(color)
         if surface.height_map.path:
-            height_rgba = _sample_repeat(_read_rgba(surface.height_map.path), surface.repeat_m, size)
-            height = height_rgba[..., surface.height_map.channel].astype(np.float64) / 255.0
-            if surface.height_map.invert:
-                height = 1.0 - height
+            height = _sample_repeat(_height_samples(surface.height_map), surface.repeat_m, size)
             heights.append(np.clip(height * surface.height_scale + surface.height_bias, 0.0, 1.0))
         else:
             heights.append(np.full((size, size), 0.5, dtype=np.float64))
         if surface.ao_map.path:
-            ao_rgba = _sample_repeat(_read_rgba(surface.ao_map.path), surface.repeat_m, size)
-            ao = ao_rgba[..., surface.ao_map.channel].astype(np.float64) / 255.0
-            if surface.ao_map.invert:
-                ao = 1.0 - ao
+            ao = _sample_repeat(_height_samples(surface.ao_map), surface.repeat_m, size)
             occlusion.append(1.0 + (ao - 1.0) * surface.ao_strength)
         else:
             occlusion.append(np.ones((size, size), dtype=np.float64))
@@ -181,7 +177,7 @@ class HeightBlendPreview(QDialog):
         self.status = QLabel("Preview composites albedo, tint, normal, metallic, roughness and emission. "
                              "AO is approximated by darkening the color. "
                              "Select a layer to inspect its final weight. "
-                             "Parallax effects are not composited here.")
+                             "Layer weight views use unshifted coordinates.")
         self.status.setWordWrap(True)
         self.plotter = QtInteractor(self)
         self.plotter.set_background("#15181c", top="#3b4652")
@@ -246,6 +242,10 @@ class HeightBlendPreview(QDialog):
             light.intensity = intensity
             self.plotter.add_light(light)
         self.plotter.render()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._render)
 
     def _controls_changed(self):
         count = self.layer_count.currentData()
@@ -313,6 +313,28 @@ class HeightBlendPreview(QDialog):
                 emission_texture.SetUseSRGBColorSpace(True)
                 self._actor.prop.SetEmissiveTexture(emission_texture)
                 self._actor.prop.SetEmissiveFactor(1.0, 1.0, 1.0)
+        configured = False
+        if pbr_maps is not None and self._material.parallax_mode != "NONE":
+            try:
+                from .preview_shader import install_layered_preview
+
+                units = self.plotter.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+                if units == 0:
+                    units = 16
+                install_layered_preview(
+                    self._actor, self._pv, surfaces, weights, self._material,
+                    height_blend=self.height_blend.isChecked(), transition=self.transition.value(),
+                    strength=self.strength.value(), texture_units=units)
+                configured = True
+            except (OSError, ValueError) as exc:
+                self.error.setText(f"Could not configure layered parallax preview: {exc}")
+        self.status.setText(
+            "Per-layer parallax is configured with independent texture sampling. "
+            "Weight views and mean weights use unshifted coordinates."
+            if configured else
+            "Preview composites albedo, tint, normal, metallic, roughness and emission. "
+            "AO is approximated by darkening the color. "
+            "Layer weight views use unshifted coordinates.")
         self.weight_label.setText("Mean final weights: " + ", ".join(
             f"{surface.name} {float(final[i].mean()):.1%}" for i, surface in enumerate(surfaces)))
         self.plotter.render()

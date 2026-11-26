@@ -12,7 +12,7 @@ from PIL import Image
 
 from awt.adm_export import (INDEX_NAME, ExportSettings, _core, changed_tiles, color1, export_tiles, group_masks,
                             prepare_adm_texture, rules_outdated, triangle_masks)
-from awt.material import Biome, BiomeSurface, MapSlot, TerrainMaterial, prepare_texture
+from awt.material import Band, Biome, BiomeSurface, MapSlot, TerrainMaterial, prepare_texture
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields, write_ply
 from awt.project import Project, load_project
@@ -85,6 +85,117 @@ class ExportTest(unittest.TestCase):
             attrs = {name: _accessor(doc, chunks, index) for name, index in prim["attributes"].items()}
             out.append((prim, attrs, _accessor(doc, chunks, prim["indices"]).reshape(-1, 3)))
         return out
+
+    def test_irregular_tile_and_mixed_lod_shader_phase_at_shared_vertices(self):
+        _core()
+        from adm_blender.core.material_math import height_blend_weights
+
+        material = TerrainMaterial()
+        material.biomes = [Biome("mixed", surfaces=[
+            BiomeSurface("grass"),
+            BiomeSurface("rock", slope=Band(5.0, None, 10.0)),
+        ], noise=0.4)]
+        material.surface("grass").repeat_m = 7.0
+        material.surface("rock").repeat_m = 11.0
+        material.height_blend_enabled = True
+        material.terrain_shader_version = "2.1.0"
+        params = BuildParams(input_path=self.src, out_dir=os.path.join(self.tmp.name, "seam_build"),
+                             tile_cells=32, max_errors_m=[0.2, 1.0], spacing_m=2.0)
+        build(params, material)
+        manifest = load_manifest(params.out_dir)
+        settings = ExportSettings(out_dir=os.path.join(self.tmp.name, "seam_adm"))
+        export_tiles(manifest, material, settings, "all")
+
+        observations = {}
+        boundary_edges = []
+        observed_surfaces = set()
+        tile_size = manifest["tile_size_m"]
+        world_top = manifest["bounds_m"][3]
+        for tile in manifest["tiles"]:
+            doc, chunks = _read_adm(os.path.join(settings.out_dir, tile["id"] + ".adm"))
+            translation = np.asarray(doc["nodes"][0]["translation"])
+            for lod in range(len(tile["lods"])):
+                for prim, attrs, faces in self._primitives(doc, chunks, lod):
+                    shader = doc["materials"][prim["material"]]
+                    names = shader["name"].split(" ", 3)[-1].split("+")
+                    scales = shader["shaderParameters"]["uv_scale"]
+                    for position, uv, weights in zip(attrs["POSITION"], attrs["TEXCOORD_0"], attrs["COLOR_1"]):
+                        world = position + translation
+                        key = (round(float(world[0]), 5), round(float(world[2]), 5))
+                        heights = []
+                        for name, scale in zip(names, scales):
+                            phase = uv * scale
+                            expected = np.array([world[0], world_top + world[2]]) / tile_size * scale
+                            np.testing.assert_allclose(np.sin(phase * 2 * np.pi),
+                                                       np.sin(expected * 2 * np.pi), atol=2e-5)
+                            np.testing.assert_allclose(np.cos(phase * 2 * np.pi),
+                                                       np.cos(expected * 2 * np.pi), atol=2e-5)
+                            heights.append(0.5 + 0.25 * np.sin(
+                                (float(phase[0]) + float(phase[1])) * 2 * np.pi
+                                + (0.0 if name == "grass" else 1.0)))
+                        result = height_blend_weights(weights[:len(names)].tolist(), heights)
+                        by_surface = dict(zip(names, result))
+                        observed_surfaces.update(name for name, value in by_surface.items() if value > 0.05)
+                        observations.setdefault(key, []).append((tile["id"], lod, by_surface))
+                    world_positions = attrs["POSITION"] + translation
+                    for face in faces:
+                        for a, b in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+                            if (abs(float(world_positions[a, 0]) - tile_size) < 1e-4
+                                    and abs(float(world_positions[b, 0]) - tile_size) < 1e-4
+                                    and abs(float(world_positions[a, 2] - world_positions[b, 2])) > 1e-5):
+                                boundary_edges.append((tile["id"], lod, names, scales,
+                                                       world_positions[[a, b], 2], attrs["TEXCOORD_0"][[a, b]],
+                                                       attrs["COLOR_1"][[a, b]]))
+
+        compared = 0
+        mixed_lod = 0
+        irregular_compared = 0
+        irregular = {tile["id"] for tile in manifest["tiles"] if tile["size_m"][1] < tile_size}
+        for entries in observations.values():
+            for left in entries:
+                for right in entries:
+                    if left[0] >= right[0]:
+                        continue
+                    for name in ("grass", "rock"):
+                        self.assertAlmostEqual(left[2].get(name, 0), right[2].get(name, 0), delta=0.01)
+                    compared += 1
+                    mixed_lod += left[1] != right[1]
+                    irregular_compared += left[0] in irregular or right[0] in irregular
+        self.assertGreater(compared, 0)
+        self.assertGreater(mixed_lod, 0)
+        self.assertGreater(irregular_compared, 0)
+        self.assertEqual(observed_surfaces, {"grass", "rock"})
+
+        def fragment(edge, z):
+            _, _, names, scales, positions, uvs, colors = edge
+            t = (z - positions[0]) / (positions[1] - positions[0])
+            uv = uvs[0] * (1 - t) + uvs[1] * t
+            weights = colors[0] * (1 - t) + colors[1] * t
+            heights = [0.5 + 0.25 * np.sin(
+                float(np.sum(uv * scale)) * 2 * np.pi + (0.0 if name == "grass" else 1.0))
+                for name, scale in zip(names, scales)]
+            final = height_blend_weights(weights[:len(names)].tolist(), heights)
+            return dict(zip(names, final))
+
+        fragment_comparisons = 0
+        mixed_lod_fragments = 0
+        for i, left in enumerate(boundary_edges):
+            for right in boundary_edges[i + 1:]:
+                if left[0] == right[0]:
+                    continue
+                start = max(min(left[4]), min(right[4]))
+                end = min(max(left[4]), max(right[4]))
+                if end - start <= 1e-5:
+                    continue
+                for fraction in (0.1, 0.5, 0.9):
+                    z = start + (end - start) * fraction
+                    a, b = fragment(left, z), fragment(right, z)
+                    for name in ("grass", "rock"):
+                        self.assertAlmostEqual(a.get(name, 0), b.get(name, 0), delta=0.01)
+                    fragment_comparisons += 1
+                    mixed_lod_fragments += left[1] != right[1]
+        self.assertGreater(fragment_comparisons, 0)
+        self.assertGreater(mixed_lod_fragments, 0)
 
     def test_shader_only_fields_round_trip_without_invalidating_terrain_rules(self):
         material = TerrainMaterial()

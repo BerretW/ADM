@@ -213,7 +213,8 @@ Executed by the reference Blender toolkit, not by an independent implementation:
   - Validator codes `IMAGE_FALLBACK_REQUIRED`, `IMAGE_FALLBACK_SIZE`, `IMAGE_COLORSPACE`.
 - `blender -b --factory-startup --python adm_blender/tests/test_texture_formats.py`: all checks passing.
   - Blender's own DDS reader (OpenImageIO) decodes the toolkit's DDS output identically to the toolkit (RGBA8 exact, BC1/BC3 within 1 LSB). This is the only cross-implementation check.
-  - The PNG default converts JPEG, DDS and KTX2 sources to PNG with identical pixels; *Keep PNG/JPEG* keeps the JPEG bytes.
+  - Explicit PNG export converts JPEG, DDS and KTX2 sources to PNG with identical pixels.
+    The default preserves compatible unedited GPU sources; *Keep GPU / PNG / JPEG* also keeps JPEG bytes.
   - KTX2/DDS export: the correct sRGB/UNORM variant per role, mips, primary vs PNG fallback (RGBA8 exact, BC mean error ≤ 12/255), validator clean, import resolves the fallback.
 
 **Not covered:** validation by the official KTX-Software `ktx validate` tool and GPU upload tests.

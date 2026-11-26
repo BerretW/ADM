@@ -59,18 +59,15 @@ class PipelineTest(unittest.TestCase):
 
     def test_advanced_reference_project_builds_neighboring_tiles(self):
         repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        source = os.path.join(self.tmp.name, "source")
-        project_dir = os.path.join(source, "appartus_world_tile", "reference_project")
-        fixture_dir = os.path.join(source, "adm-standard", "fixtures", "advanced-materials")
+        project_dir = os.path.join(self.tmp.name, "reference_copy")
         os.makedirs(project_dir)
         for name in ("advanced_reference.awtp", "heightmap.png"):
             shutil.copy2(os.path.join(repo, "appartus_world_tile", "reference_project", name), project_dir)
         shutil.copytree(os.path.join(repo, "appartus_world_tile", "reference_project", "textures"),
                         os.path.join(project_dir, "textures"))
-        shutil.copytree(os.path.join(repo, "adm-standard", "fixtures", "advanced-materials"), fixture_dir)
         relocated = os.path.join(self.tmp.name, "relocated")
-        shutil.move(source, relocated)
-        project_path = os.path.join(relocated, "appartus_world_tile", "reference_project", "advanced_reference.awtp")
+        shutil.move(project_dir, relocated)
+        project_path = os.path.join(relocated, "advanced_reference.awtp")
         project = load_project(project_path)
         project.params.out_dir = os.path.join(self.tmp.name, "reference_tiles")
         project.params.threads = 2

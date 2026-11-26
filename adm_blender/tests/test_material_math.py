@@ -74,7 +74,8 @@ class MaterialMathTest(unittest.TestCase):
         offset = parallax_offset((0.4, 0.5), (1, 0, 0.01), 1.0, scale=0.1)
         self.assertLess(offset[0], 0)
         self.assertEqual(parallax_offset((0.4, 0.5), (1, 0, -1), 1.0), (0.0, 0.0))
-        self.assertTrue(all(math.isfinite(value) and abs(value) <= 1 for value in offset))
+        self.assertTrue(all(math.isfinite(value) for value in offset))
+        self.assertAlmostEqual(math.hypot(*offset), 0.1)
 
     def test_pom_interpolates_surface_intersection_and_respects_step_bounds(self):
         offset, steps = parallax_occlusion(
@@ -89,9 +90,15 @@ class MaterialMathTest(unittest.TestCase):
         self.assertGreaterEqual(steps, 5)
         self.assertLessEqual(steps, 16)
         self.assertLess(offset[0], 0.0)
+        self.assertAlmostEqual(math.hypot(*offset), 0.05)
         self.assertEqual(parallax_occlusion(
             (0.5, 0.5), (0.8, 0.0, 0.2), lambda _uv: 0.5, scale=0.0
         ), ((0.0, 0.0), 0))
+
+    def test_pom_uses_unclamped_view_cosine_for_adaptive_steps(self):
+        _, steps = parallax_occlusion((0, 0), (1, 0, 0.001), lambda _uv: 0.0,
+                                     scale=0.1, min_steps=4, max_steps=100)
+        self.assertEqual(steps, 100)
 
 
 if __name__ == "__main__":

@@ -124,6 +124,13 @@ def _normalized_weights(weights: Sequence[float]) -> list[float]:
     return [value / total for value in values]
 
 
+def _bounded_offset(x: float, y: float, scale: float) -> tuple[float, float]:
+    length = math.hypot(x, y)
+    if length > scale:
+        return x * scale / length, y * scale / length
+    return x, y
+
+
 def height_blend_weights(
     weights: Sequence[float],
     heights: Sequence[float],
@@ -192,7 +199,7 @@ def parallax_offset(
         return (0.0, 0.0)
     depth = (height - reference_height) * scale
     denominator = max(vz, minimum_view_z)
-    return (-vx / denominator * depth, -vy / denominator * depth)
+    return _bounded_offset(-vx / denominator * depth, -vy / denominator * depth, scale)
 
 
 def parallax_occlusion(
@@ -222,10 +229,10 @@ def parallax_occlusion(
     if vz <= 0.0 or scale == 0.0:
         return (0.0, 0.0), 0
 
-    cosine = max(minimum_view_z, min(1.0, vz))
+    cosine = min(1.0, vz)
     count = round(min_steps + (max_steps - min_steps) * (1.0 - cosine))
-    ray_u = -vx / cosine * scale
-    ray_v = -vy / cosine * scale
+    denominator = max(minimum_view_z, cosine)
+    ray_u, ray_v = _bounded_offset(-vx / denominator * scale, -vy / denominator * scale, scale)
     previous_depth = 0.0
     initial_height = _unit(sample_height((x, y)), "sampled height")
     previous_delta = -(1.0 - initial_height)

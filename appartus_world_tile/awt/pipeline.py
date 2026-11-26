@@ -389,8 +389,8 @@ def build(
     shade = hillshade(preview_data, params.spacing_m * step, ctx.scale)
     Image.fromarray(shade).save(os.path.join(out_dir, "preview.png"))
     maps = texturing.preview(material, hm.data, ctx.scale, ctx.offset, params.spacing_m, shade=shade)
-    Image.fromarray(maps.biomes, "RGB").save(os.path.join(out_dir, "biomes.png"))
-    Image.fromarray(maps.surfaces, "RGB").save(os.path.join(out_dir, "surfaces.png"))
+    Image.fromarray(maps.biomes).save(os.path.join(out_dir, "biomes.png"))
+    Image.fromarray(maps.surfaces).save(os.path.join(out_dir, "surfaces.png"))
 
     lods = []
     for lod, max_error in enumerate(params.max_errors_m):

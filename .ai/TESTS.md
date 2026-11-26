@@ -1,6 +1,82 @@
 # Mission verification record
 
 ## Completed so far
+- The latest complete World Tile run with isolated Pillow 13 passed 89 tests,
+  including the rendered planar POM seam regression.
+- A limited `pip-audit` of the installed World Tile dependency versions found
+  76 advisory entries for Pillow 11.3.0. The dependency now requires Pillow
+  13.0.0, and all 88 World Tile tests passed with Pillow 13 installed in an
+  isolated session directory. The audited version list, including an isolated
+  tifffile installation, then had no known advisories. This is not a complete
+  lockfile audit: the project does not provide a dependency lockfile, and the
+  shared system Python still has Pillow 11.3.0 installed.
+- Current `build.bat -CheckOnly`: all 33 listed steps passed on Blender 5.2.3.
+  External-asset cases were skipped where files, rights, or a binding target
+  were unavailable. The report records a dirty worktree and is not a release.
+  Shader-profile and ENUM logs contain no enum mismatch or recursion warnings.
+- World Tile's full suite passed 88 tests. Shared GPU codec and material math
+  tests passed 35 tests. `git diff --check` passed with a CRLF notice.
+- The first current check-only build exposed a stale fallback image identity
+  assertion. The corrected fixture checks equal decoded pixels, per-texture
+  identity, and original primary bytes; it passed before the successful build.
+- A subsequent check-only build also passed after adding custom shader
+  parameter-name/type conflict rejection. The World Tile suite is run
+  separately from that build.
+- A later check-only build passed after adding matching and conflicting numeric,
+  boolean and texture-default checks, including altered texture pixels.
+- Blender `test_shader_enums_blender.py`: isolated run passed with a custom
+  ENUM exported, saved, reopened, imported into a scene without its definition,
+  and re-exported after reordering. An incompatible existing definition is
+  rejected explicitly. The regression also checks an invalid definition.
+- Ten targeted World Tile multi-surface and parallax tests passed, including
+  a CPU height-blend regression that distinguishes R16 values 32768 and
+  32769 and rendered VTK parallax/POM comparisons.
+- The complete World Tile suite passed 87 tests before the four-layer test was
+  added. A separate offscreen perspective-camera test then rendered four layers
+  with all seven map types, differing resolutions, inversion, scale and bias;
+  it verified visible POM and explicit rejection at a 16-unit texture budget.
+  The local VTK context reported at least 32 units.
+- Blender's complete shader-profile test passed after the custom ENUM UI fix,
+  exercising the legacy and advanced profiles in a bounded process.
+- The advanced reference ADM scene passed a bounded Blender round trip with
+  all five procedural GPU formats. Complete source blobs match before and after
+  import/export. POM is retained as metadata, not rendered in Blender.
+- An exported two-surface fixture compares interpolated UVs and height-adjusted
+  weights at three positions on overlapping tile edges, including mixed LODs.
+  This is a reference-math check, not a rendered-fragment seam test.
+- A separate offscreen VTK test compares POM pixels at an irregular planar
+  preview-tile seam against an unbroken plane. The adjacent meshes have different
+  density and reversed layer slots, with distinct repeats and height maps. It
+  also confirms a measurable POM difference when scales are disabled. The test
+  uses constant weights; it does not render exported terrain or cover >4 layers.
+- An exploratory VTK render loaded the generated ADM scene and compared its
+  material preview with authored versus zero parallax scales. It changed 48,493
+  8-bit color-channel samples by more than five levels, but hard-coded this
+  fixture's layer weights and defaults and produced a dark image. It does not
+  establish a complete reference renderer or a shippable visual fixture.
+- A later bounded end-to-end test generates the ADM scene in Blender, runs the
+  fixture-specific VTK visualization with and without POM in separate processes,
+  and checks that more than 500 color-channel samples change by over five
+  8-bit levels. The test passed. The tool uses fixture-specific assumptions and
+  PNG fallbacks, not an independent or general-purpose ADM renderer.
+- Offscreen VTK 9.7.2 tests compare two independent layer offsets and height
+  blending with the shared reference math, and render parallax-shifted normal
+  and emission maps in a lit PBR pass. Both lit and unlit passes cover the
+  view-space matrix declaration. 16-bit RGBA PNG fallbacks retain scalar
+  precision in the preview path.
+- Blender `test_texture_formats.py` and `test_bc5_normal_import_blender.py`:
+  isolated, bounded runs pass for unmodified R8/R16/BC4/BC5/BC7 DDS and KTX2
+  source bytes, mip chains, color/data roles, R16 and BC5 save/reload, and
+  edited-then-repacked images. `test_material_slots.py` and
+  `test_import_transaction_blender.py` also pass. Test logs still contain
+  existing Blender dependency-cycle and KTX2 decoder diagnostics.
+- World Tile full unittest discovery: **84 passed**. A separate offscreen VTK
+  plane test compares single-step and POM rendered gradient offsets with the
+  shared reference math at an oblique angle, checks a frontal angle and inverted
+  height, and verifies R16 DDS/KTX2 height samples. The relocated AWTP test
+  copies only its project directory, builds four tiles and exports all five
+  referenced GPU formats. This does not verify multi-layer POM or fragment
+  continuity across terrain seams.
 - `adm_blender.tests.test_material_math`: eight tests cover channel selection,
   AO, height-blend invariants and order, invalid inputs, and parallax/POM math.
 - `adm_blender.tests.test_gputex` covers version-2 KTX2/DDS headers and odd-size
@@ -182,3 +258,19 @@
   diagnostics were still emitted.
 - Another check-only build returned exit 0 while World Tile changes were in
   progress; it is not final frozen-worktree evidence.
+- Real-texture diagnostic: `big_road_mud_01` from local `test_files` produced
+  four validated World Tile ADM exports. Blender imported the textures and baked
+  the layered normal. A 16-by-16 bake was spatially constant at 16 repeats per
+  tile; after evaluating the UV drivers and increasing the bake to 64-by-64,
+  RGB peak-to-peak ranges were approximately `(0.244, 0.501, 0.105)`.
+  This diagnoses sampling aliasing in the small bake, not POM rendering.
+- The Blender BC5 regression passed in a bounded process after adding PBR and
+  shader-parameter DDS/KTX2 opening, custom raw-channel behavior, missing-file
+  reporting, input size limits, save/reload and ADM import/export checks.
+  Dependency-cycle diagnostics remain. The Blender texture-format suite and
+  material-slot suite also passed in separate bounded processes.
+- GPU codec and material-math tests: 34 passed, including rejection of an
+  impossible DDS mip count. The complete World Tile suite passed 82 tests.
+  The new seam check compares reference height-blend output and UV phase at
+  shared vertices for two surfaces, biome noise, partial edge tiles and mixed
+  LODs; it does not prove interpolated-fragment or over-four-surface continuity.

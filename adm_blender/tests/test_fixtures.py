@@ -159,7 +159,8 @@ def main(tmp):
     from adm_blender.core import gputex
     builder = BinBuilder()
     red = np.array([[[255, 0, 0, 255]]], dtype=np.uint8)
-    primary = builder.add_view(gputex.encode(red, gputex.MIME_KTX2, "BC1", srgb=True)[0], chunk_type="IMAG")
+    primary_data = gputex.encode(red, gputex.MIME_KTX2, "BC1", srgb=True)[0]
+    primary = builder.add_view(primary_data, chunk_type="IMAG")
     alternate = builder.add_view(encode_png(1, 1, b"\xff\x00\x00\xff"), chunk_type="IMAG")
     doc = {"asset": {}, "nodes": [{}], "scenes": [{"nodes": [0]}], "scene": 0, "meshes": [],
            "bufferViews": builder.buffer_views, "accessors": [],
@@ -175,7 +176,13 @@ def main(tmp):
     check(importer.images[0] is None, "KTX2 primary left to GPU runtimes, not imported")
     check(importer.images[1] is not None, "portable PNG decoded")
     image, _ = importer.resolve_texture({"index": 0})
-    check(image == importer.images[1], "material resolves portable fallback image")
+    check(image is not None and image != importer.images[1]
+          and tuple(image.size) == tuple(importer.images[1].size)
+          and np.allclose(image.pixels[:], importer.images[1].pixels[:]),
+          "material resolves a per-texture copy of the portable fallback")
+    check(image == importer.resolve_texture({"index": 0})[0]
+          and bytes(image["_adm_gpu_source"].packed_file.data) == primary_data,
+          "fallback copy is reused and retains the original GPU primary")
     check(any(w.startswith("KTX2_FALLBACK") for w in importer.warnings), "fallback explicitly reported")
 
     adm_blender.unregister()

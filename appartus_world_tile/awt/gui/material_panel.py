@@ -60,6 +60,8 @@ class MaterialPreview(QWidget):
 
         self._pv = pv
         self._surface = None
+        self._material = None
+        self._parallax_settings = None
         self._actor = None
         self.mode = QComboBox()
         self.mode.addItems(("Sphere", "Plane", "Terrain relief"))
@@ -103,7 +105,7 @@ class MaterialPreview(QWidget):
         z = 7.5 * (0.32 * np.exp(-((u + 0.3) ** 2 + (v - 0.25) ** 2) * 5)
                    + 0.24 * np.exp(-((u - 0.4) ** 2 + (v + 0.3) ** 2) * 9)
                    + 0.04 * np.sin(u * 12) * np.cos(v * 10))
-        mesh = pv.StructuredGrid(x, y, z).extract_surface().triangulate()
+        mesh = pv.StructuredGrid(x, y, z).extract_surface().triangulate().flip_faces()
         mesh.active_texture_coordinates = (mesh.points[:, :2] + 7.5) / 15
         return mesh
 
@@ -116,6 +118,14 @@ class MaterialPreview(QWidget):
     def set_surface(self, surface: Surface) -> None:
         self._surface = surface
         self._redraw(reset=self._actor is None)
+
+    def set_material(self, material: TerrainMaterial) -> None:
+        settings = (material.parallax_mode, material.parallax_min_steps, material.parallax_max_steps)
+        changed = settings != self._parallax_settings
+        self._material = material
+        self._parallax_settings = settings
+        if changed:
+            self._redraw()
 
     @staticmethod
     def _image_array(path):
@@ -284,9 +294,18 @@ class MaterialPreview(QWidget):
             if emission_texture is not None:
                 self._actor.prop.SetEmissiveTexture(emission_texture)
                 self._actor.prop.SetEmissiveFactor(1.0, 1.0, 1.0)
+        parallax = False
+        if map_mode == "material" and self._material is not None and not error:
+            try:
+                from .preview_shader import install_parallax
+
+                parallax = install_parallax(self._actor, self._pv, surface, self._material)
+            except (OSError, ValueError) as exc:
+                error = f"Could not configure parallax preview: {exc}"
         self.status.setText(error or "Drag to rotate, middle-drag to pan, wheel to zoom. "
                             "Material mode applies supported maps; Height is a diagnostic view. "
-                            "Parallax/POM and layer blending are not rendered.")
+                            + ("Parallax is configured. " if parallax else "Parallax is inactive. ")
+                            + "Layer blending is not rendered in this view.")
         if reset:
             self.plotter.camera_position = "iso"
             self.plotter.reset_camera()

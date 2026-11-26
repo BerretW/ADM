@@ -1,5 +1,34 @@
 # Mission state
 
+- Custom shader ENUM definitions and values now survive ADM import/export and
+  Blender save/reload, including Unicode and reordering. Imports reject an
+  existing conflicting parameter names, types, ENUM values, numeric or boolean
+  defaults, and texture defaults instead of silently reinterpreting or
+  discarding values.
+  Their editor accepts explicit string values and reports values outside the
+  definition. An isolated Blender regression passed on Blender 5.2.3.
+- Multi-surface CPU height blending and AO sampling now use the same
+  precision-preserving scalar decoder as the VTK shader path. A focused R16
+  test distinguishes adjacent 16-bit values in height-derived weights.
+- The generated ADM reference now embeds original procedural R8, R16, BC4,
+  BC5 and BC7 textures; its Blender import/export regression compares their
+  complete source bytes. A fixture-specific VTK visualization reads the ADM and
+  renders actual POM; Blender's own material preview still does not render it.
+- An exported-geometry test now evaluates interpolated two-surface height
+  blend weights along shared irregular-tile edges at mixed LODs. This checks
+  reference math, not actual terrain fragment rendering or >4-surface seams.
+- An exploratory VTK script loaded the generated ADM scene's geometry and
+  texture fallbacks, then rendered its layers with the preview shader. Toggling
+  parallax scales changed 48,493 color-channel samples by more than five
+  8-bit levels. The script assumes this fixture's constant weights and other
+  defaults, and its image is too dark for a useful comparison; it is not a
+  complete or distributable reference renderer.
+- The subsequent fixture-specific VTK tool validates its constant-weight,
+  UV, mask and vertex-control assumptions and explicitly rejects unsupported
+  shader parameters. A generated ADM scene rendered with POM on and off differs
+  at more than 500 color-channel samples. The tool uses embedded PNG fallbacks
+  and is not a general ADM or independent conformance renderer.
+
 ## Baseline
 - Workspace HEAD at intake: `84ea70eae8b5b48f02d1ef41e66c8719a5259de9`.
 - Workspace was clean at intake. No `.ai/` directory existed.
@@ -179,3 +208,39 @@ See `TASKS.md` and `TESTS.md` for current evidence.
   External GPU primaries are size-limited and integrity-checked; unreadable or
   invalid sources produce an explicit warning. Source GPU bytes are still not
   retained through Blender's fallback-based ADM re-export.
+- Real DDS textures from the local, gitignored `test_files` library were scanned,
+  exported by World Tile and imported into Blender. A 16-by-16 bake initially
+  appeared spatially uniform: its 16 texture repeats aligned with the sample grid.
+  At 64-by-64, the real normal map varies across pixels. These user-provided
+  textures are not included in the repository fixtures or distribution.
+- The Blender material panel now exposes the existing texture loader for PBR
+  slots and shader texture parameters. Official BC5 normal parameters reconstruct
+  Z; custom shader parameters retain raw channels because they have no declared
+  normal role. GPU authoring input has byte and decoded-pixel limits, and DDS
+  and KTX2 parsing rejects impossible mip counts before creating level lists.
+- A new exported-geometry regression checks periodic UV phase and reference
+  height-blended weights at shared vertices across different LODs and partial
+  edge tiles, with two surfaces and biome noise. It does not establish continuity
+  at every interpolated fragment or resolve the known over-four-surface case.
+- The World Tile single-surface preview now configures per-fragment parallax and
+  POM with a dedicated view-space varying, including render passes that omit
+  VTK's `vertexVC`. A rendered gradient agrees with reference offsets in a
+  controlled plane test; frontal views and inverted heights are covered.
+  R16 DDS/KTX2 height samples retain 16-bit precision when sent to the shader.
+  Multi-surface POM, other VTK versions, and all material-map combinations
+  remain unverified or unimplemented.
+- The reference AWTP project now contains local copies of its procedural PNG
+  textures. A test copies only the project folder to an unrelated location,
+  builds four tiles and exports them with all five GPU texture formats.
+- Blender now packs validated GPU primaries alongside their preview images and
+  retains them by default when pixels and texture role are unchanged. Edits
+  invalidate the stored primary even after the image is repacked. Explicit PNG
+  or GPU-format export still converts. Isolated tests cover R8, R16, BC4, BC5
+  and BC7 in DDS/KTX2, BC7 sRGB, external-source integrity, mip bytes, and
+  save/reload; they do not establish cross-platform BC7 decoding.
+- The multi-surface final-material view now samples layer maps independently in
+  VTK and computes per-layer parallax/POM and height blending. Offscreen tests
+  compare rendered offsets and height-blend output against reference math and
+  exercise lit emission and normal maps. Weight diagnostics remain unshifted
+  CPU estimates, hardware texture-unit limits can prevent configuration, and
+  terrain-tile fragment seams and VTK versions other than 9.7.2 remain open.

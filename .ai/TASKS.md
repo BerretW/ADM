@@ -16,7 +16,8 @@ checkboxes track verification and delivery, not merely code changes.
 - [ ] Preserve source precision and supported GPU texture bytes; validate codecs
       with independent test vectors, including R16 and mip chains.
   - The built Blender extension decodes BC7 on Windows without an external wheel;
-    other platforms and full source-byte preservation remain unverified.
+    other platforms and the final packaged extension remain unverified. Blender
+    and World Tile targeted tests preserve supported source bytes and R16 values.
 
 ## M3 - Material and shader contracts
 - [x] Define a versioned material-height extension without conflicting with
@@ -48,8 +49,9 @@ checkboxes track verification and delivery, not merely code changes.
       transparent preview limitations.
 - [ ] Add a true multi-surface height blend preview, distinct from single-surface
       preview and fast terrain inspection.
-  - The existing preview omits POM. The multi-surface preview approximates AO
-    and composites normal, metallic, roughness, and emission, but omits parallax.
+  - Single-surface and final-material multi-surface views implement parallax and
+    POM. Multi-surface weight diagnostics remain unshifted CPU estimates;
+    broader map and renderer compatibility needs verification.
 - [x] Add safe, deterministic directory import for texture sets, with explicit
       conflict/missing-map handling; never infer unknown or packed maps.
 
@@ -59,7 +61,11 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Generate tangents for parallax even without normal maps.
 - [ ] Preserve shared textures, passthrough, content hashes, atomic writes,
       validation, Export Changed, and tile seams/LOD behavior.
-  - Final shader output across irregular tile and LOD seams remains unverified.
+  - Two-surface height-blend output at interpolated edge points agrees across
+    irregular tiles and mixed LODs in a reference-math test. A VTK pixel test
+    also compares two planar preview tiles with permuted layer slots and mixed
+    mesh density against a continuous POM reference. Rendered exported terrain,
+    varying weights, and >4-surface conflicts remain open.
 - [x] Ensure material-only edits do not rebuild geometry or vertex weights.
 
 ## M8 - ADM Editor
@@ -78,8 +84,8 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Integrate profiles, nodes, properties, UI, math, import/export, codecs,
       validation, and vertex painting.
 - [ ] Preserve COLOR_0/COLOR_1, precision, and unsupported POM metadata.
-  - POM parameter round-trip is tested. Packaged BC7 decoding is verified on
-    Windows, but complete texture precision and other platforms are not.
+  - POM parameter and supported GPU-source round trips are tested. Packaged BC7
+    decoding is verified on Windows; other platforms remain unverified.
 - [x] Test real node generation and a bake/render of height blending.
 
 ## M10 - Remaining ecosystem
@@ -92,12 +98,12 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Create original procedural Rock, Sand, Dirt, Grass, and Cobblestone maps.
 - [ ] Create an Advanced Terrain ADM scene and a functional multi-tile AWTP sample.
   - The AWTP builds and exports four validated tiles with three LODs and
-    referenced R8/R16/BC4/BC5/BC7 textures. Packaged-path
-    portability was verified with the repository-relative fixture tree relocated;
-    copying the project folder alone does not include its textures. The generated
+    referenced R8/R16/BC4/BC5/BC7 textures. Its project folder can be copied
+    independently, including its textures. The generated
     ADM comparison scene round-trips four advanced profiles with AO, height,
-    parallax and POM metadata; it does not yet cover the required GPU formats or
-    demonstrate parallax/POM rendering.
+    parallax/POM metadata and R8/R16/BC4/BC5/BC7 source bytes. Its
+    fixture-specific VTK visualization renders actual parallax/POM and can
+    disable POM for comparison; Blender's native preview does not render it.
 - [ ] Update specification, registries, profiles, docs, changelog, gaps,
       conformance, and fixture catalog with exact implemented contracts.
 

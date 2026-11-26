@@ -46,7 +46,6 @@ def main(output):
     scene.render.resolution_y = 720
     scene.render.resolution_percentage = 100
 
-    red = make_image("Procedural Red Height", lambda x, y, s: (0.25, 0.25, 0.25, 1.0))
     high = make_image("Procedural High Height", lambda x, y, s:
                       (1.0 if (x // 8 + y // 8) % 2 else 0.55, 0.0, 0.0, 1.0))
     normal = make_image("Procedural Normal", lambda x, y, s:
@@ -54,6 +53,11 @@ def main(output):
     mask = make_image("Procedural Blend Mask", lambda x, y, s: (0.5, 0.5, 0.0, 0.0))
     ao = make_image("Procedural AO", lambda x, y, s:
                     (0.35 if (x // 8 + y // 8) % 2 else 1.0, 0.0, 0.0, 1.0))
+    texture_dir = os.path.join(REPO, "appartus_world_tile", "reference_project", "textures")
+    height_sources = [materials.load_image_file(os.path.join(texture_dir, name))
+                      for name in ("cobblestone_height.ktx2", "rock_height.dds", "sand_height.dds")]
+    gpu_normal = materials.load_image_file(os.path.join(texture_dir, "dirt_normal.ktx2"), normal_map=True)
+    gpu_albedo = materials.load_image_file(os.path.join(texture_dir, "grass_albedo.ktx2"))
 
     root = bpy.data.objects.new("Advanced Material Reference", None)
     root.adm.adm_type = "MODEL"
@@ -86,12 +90,15 @@ def main(output):
         for i in range(count):
             mat.adm.params[f"layer{i}_base_color"].value_vec = (
                 (0.8, 0.12, 0.04, 1.0) if i % 2 == 0 else (0.04, 0.15, 0.8, 1.0))
-            mat.adm.params[f"layer{i}_height_texture"].image = high if i % 2 else red
+            mat.adm.params[f"layer{i}_height_texture"].image = (
+                height_sources[i] if i < len(height_sources) else high)
             mat.adm.params[f"layer{i}_height_scale"].value_f = 1.0
             mat.adm.params[f"layer{i}_height_bias"].value_f = 0.0
             mat.adm.params[f"layer{i}_ao_strength"].value_f = 1.0
             mat.adm.params[f"layer{i}_ao_texture"].image = ao
-            mat.adm.params[f"layer{i}_normal"].image = normal
+            mat.adm.params[f"layer{i}_normal"].image = gpu_normal if i == 0 else normal
+            if i == 0:
+                mat.adm.params[f"layer{i}_texture"].image = gpu_albedo
             mat.adm.params[f"layer{i}_parallax_scale"].value_f = 0.08
         mat.adm.params["height_blend_enabled"].value_bool = height_blend
         mat.adm.params["height_blend_transition"].value_f = 0.2

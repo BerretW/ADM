@@ -1152,7 +1152,7 @@ PROFILE_HINTS = {
 }
 
 
-def _draw_param_row(box, v, prm, typ, label=None):
+def _draw_param_row(box, v, prm, typ, label=None, *, custom=False):
     r = box.row(align=True)
     r.prop(v, "use", text="")
     sub = r.row(align=True)
@@ -1165,7 +1165,9 @@ def _draw_param_row(box, v, prm, typ, label=None):
     elif typ == "BOOL":
         sub.prop(v, "value_bool", text="")
     elif typ == "ENUM":
-        sub.prop(v, "value_enum", text="")
+        sub.prop(v, "value_enum_custom" if custom else "value_enum", text="")
+        if custom and v.use and v.value_enum_custom not in prm.get("values", []):
+            box.label(text="Value must match an entry in the shader definition", icon="ERROR")
     if prm.get("animatable"):
         r.operator("adm.material_key_param", icon="KEYFRAME", text="").name = v.name
 
@@ -1263,7 +1265,7 @@ def _draw_shader_params(layout, p, params):
                         warning.label(text="Map has zero effect", icon="ERROR")
                         warning.operator("adm.material_set_map_factor", text="Set Factor to 1").name = factor_name
             else:
-                _draw_param_row(layout, v, prm, prm.get("type"), label)
+                _draw_param_row(layout, v, prm, prm.get("type"), label, custom=p.shader == "CUSTOM")
 
     if p.shader in ("TERRAIN_4", "TWO_LAYER") and any(name in available for name in ("blend_mask", "uv_scale")):
         header, body = layout.panel("adm_shader_blend_tiling", default_closed=False)
@@ -1526,6 +1528,16 @@ class ADM_PT_shaders(_Side, bpy.types.Panel):
                     _vec_prop(sub, prm, attr, n)
             elif prm.type == "BOOL":
                 col.prop(prm, "default_bool")
+            elif prm.type == "ENUM":
+                col.prop(prm, "enum_values")
+                col.prop(prm, "default_enum")
+                from .materials import param_def_dict
+                from ..core.validate import param_value_error
+                definition = param_def_dict(prm, lambda _image, _uv: None)
+                values = definition["values"]
+                if (not values or any(not isinstance(value, str) or not value for value in values)
+                        or len(values) != len(set(values)) or param_value_error(definition, definition["default"], None)):
+                    col.label(text="Use unique nonempty JSON string values and a matching default", icon="ERROR")
             else:
                 col.template_ID(prm, "default_image", open="image.open")
                 col.prop(prm, "default_tex_coord")

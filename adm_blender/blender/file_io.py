@@ -118,10 +118,13 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
                                               "required to export authored COLOR_1 masks for 2.0.0 profiles")
     vertex_controls_manual: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
     vertex_controls_auto: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
-    image_format: EnumProperty(name="Images", default="PNG", items=[
+    image_format: EnumProperty(name="Images", default="PRESERVE", items=[
+        ("PRESERVE", "Keep GPU / PNG", "Keep compatible, unedited GPU source bytes and PNG sources; "
+                                        "convert other images to PNG"),
         ("PNG", "PNG", "Embed every texture as PNG; JPEG, DDS, KTX2, TGA, EXR… sources are converted. "
                        "Readable by every ADM reader"),
-        ("AUTO", "Keep PNG/JPEG", "Keep PNG/JPEG source bytes unchanged, convert everything else to PNG"),
+        ("AUTO", "Keep GPU / PNG / JPEG", "Keep compatible unedited GPU, PNG, and JPEG source bytes; "
+                                          "convert other images to PNG"),
         ("KTX2", "KTX2 + PNG fallback", "GPU-ready KTX2 (optional capability ADM-TEX-KTX2-1 or -2) plus the "
                                         "mandatory PNG fallback for readers without KTX2"),
         ("DDS", "DDS + PNG fallback", "GPU-ready DDS/DX10 (optional capability ADM-TEX-DDS-1 or -2) plus the "

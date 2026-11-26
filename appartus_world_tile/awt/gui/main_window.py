@@ -727,6 +727,7 @@ class MainWindow(QMainWindow):
             lambda: self.tabs.setCurrentWidget(self.surface_preview))
         self.material_panel.height_blend_preview_requested.connect(self._show_height_blend_preview)
         self.material_panel.surface_selected.connect(self.surface_preview.set_surface)
+        self.surface_preview.set_material(self._material())
         self.surface_preview.set_surface(self._material().surfaces[self.material_panel.surface_list.currentRow()])
         self.side_tabs.currentChanged.connect(self._side_tab_changed)
 
@@ -1128,6 +1129,7 @@ class MainWindow(QMainWindow):
     def _material_changed(self) -> None:
         """Any edit of surfaces, biomes, blending or paint."""
         material = self._material()
+        self.surface_preview.set_material(material)
         self.histogram.set_material(material)
         self._refresh_height_controls()
         self._material_timer.start()

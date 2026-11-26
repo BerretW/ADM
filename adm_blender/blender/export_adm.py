@@ -62,7 +62,7 @@ class ExportOptions:
         self.export_materials = True
         self.embed_textures = True
         self.vertex_controls = False
-        self.image_format = "PNG"  # PNG | AUTO (keep PNG/JPEG) | KTX2 | DDS
+        self.image_format = "PRESERVE"  # PRESERVE | PNG | AUTO | KTX2 | DDS
         self.gpu_compression = "AUTO"  # AUTO | BC1 | BC3 | RGBA8 (KTX2/DDS payload)
         self.gpu_mipmaps = True
         self.validate = True
