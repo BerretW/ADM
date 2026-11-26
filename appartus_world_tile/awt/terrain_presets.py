@@ -86,6 +86,8 @@ def save_preset(root: str, name: str, material: TerrainMaterial, overwrite: bool
 
     prepared_material = copy.deepcopy(material)
     prepared_material.paint = None
+    prepared_material.surface_paint = None
+    prepared_material.roads = []
     prepared_material.validate()
     for surface in prepared_material.surfaces:
         for slot, attr in _texture_paths(surface):
@@ -156,8 +158,8 @@ def load_preset(root: str, key: str) -> TerrainMaterial:
     if os.path.islink(folder) or not _inside(root, folder) or folder == root:
         raise ValueError("Preset folder is outside the preset library")
     document = _document(os.path.join(folder, PRESET_FILE))
-    if "paint" in document["material"]:
-        raise ValueError("Terrain presets cannot contain map-specific biome paint")
+    if any(key in document["material"] for key in ("paint", "surface_paint", "roads")):
+        raise ValueError("Terrain presets cannot contain map-specific paint or roads")
 
     material = TerrainMaterial.from_dict(document["material"], folder)
     for surface in material.surfaces:

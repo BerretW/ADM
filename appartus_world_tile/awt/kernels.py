@@ -14,8 +14,8 @@ The error stored at a vertex ``m`` is the maximum vertical deviation of every
 source sample inside the triangles whose hypotenuse midpoint is ``m`` (the
 diamond of ``m``), maximised with the errors of all descendant vertices.  An
 unsplit triangle therefore never deviates from the heightmap by more than the
-threshold, and because the error array is global, both sides of a tile edge
-split identically, so tiles never crack.
+threshold. Shared boundary splits are propagated through the hierarchy so
+that adjacent tiles also match when they use different LODs.
 """
 
 from __future__ import annotations
@@ -177,7 +177,7 @@ def _vertex(index, verts, nv, gx, gy, ox, oy, stride):
 
 @njit(cache=True, nogil=True)
 def extract_tile(h, scale, offset, w, hgt, t, ti, tj, nonleaf_levels, errors, max_error,
-                 werrors, max_werror, min_leg2):
+                 werrors, max_werror, min_leg2, boundary_splits):
     """Triangulate one tile.
 
     A triangle splits when its height error exceeds ``max_error`` or, for triangles whose legs
@@ -223,7 +223,7 @@ def extract_tile(h, scale, offset, w, hgt, t, ti, tj, nonleaf_levels, errors, ma
         if level < nonleaf_levels:
             mx = (ax + bx) >> 1
             my = (ay + by) >> 1
-            split = errors[my, mx] > max_error
+            split = errors[my, mx] > max_error or (boundary_splits.size > 1 and boundary_splits[my, mx])
             if not split:
                 leg2 = (cx - ax) * (cx - ax) + (cy - ay) * (cy - ay)
                 split = leg2 >= min_leg2 and werrors[my, mx] > max_werror
@@ -250,3 +250,25 @@ def extract_tile(h, scale, offset, w, hgt, t, ti, tj, nonleaf_levels, errors, ma
         if err > measured:
             measured = err
     return verts[:nv].copy(), faces[:nf].copy(), measured
+
+
+@njit(cache=True)
+def propagate_boundary_splits(t, nx, ny, nonleaf_levels, splits):
+    """Make every ancestor of a required boundary split split as well."""
+    for level in range(nonleaf_levels - 2, -1, -1):
+        first = 1 << (level + 1)
+        for tj in range(ny):
+            for ti in range(nx):
+                ox = ti * t
+                oy = tj * t
+                for n in range(first):
+                    ax, ay, bx, by, cx, cy = decode(first + n, t)
+                    ax += ox
+                    bx += ox
+                    cx += ox
+                    ay += oy
+                    by += oy
+                    cy += oy
+                    if (splits[(cy + ay) >> 1, (cx + ax) >> 1]
+                            or splits[(by + cy) >> 1, (bx + cx) >> 1]):
+                        splits[(ay + by) >> 1, (ax + bx) >> 1] = True

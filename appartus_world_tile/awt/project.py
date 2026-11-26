@@ -16,7 +16,7 @@ from .material import TerrainMaterial
 from .pipeline import BuildParams
 
 PROJECT_FORMAT = "apparatus-world-tile-project"
-PROJECT_VERSION = 2
+PROJECT_VERSION = 3
 PROJECT_EXTENSION = ".awtp"
 PROJECT_FILTER = "Apparatus World Tile project (*.awtp)"
 
@@ -65,7 +65,7 @@ class Project:
         version = int(data.get("format_version", 0))
         if version > PROJECT_VERSION:
             raise ValueError(f"Project version {version} is newer than this tool")
-        if version < PROJECT_VERSION:
+        if version < 2:
             raise ValueError(f"Project version {version} uses layer masks; create a new project")
         base = os.path.dirname(os.path.abspath(path)) if path else None
         raw = dict(data.get("build") or {})

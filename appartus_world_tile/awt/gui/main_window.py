@@ -23,6 +23,7 @@ from ..material import PAINT_AUTO, Band, TerrainMaterial
 from ..pipeline import (BuildParams, Cancelled, build, estimate_memory, fit_material, height_transform, hillshade,
                         load_manifest, tile_grid)
 from ..project import PROJECT_EXTENSION, PROJECT_FILTER, Project, load_project
+from ..roads import Road
 from ..terrain_presets import list_presets, load_preset, preset_key, save_preset
 from .map_view import MapView
 from .material_panel import MaterialPanel, swatch
@@ -209,6 +210,8 @@ class MainWindow(QMainWindow):
         self._checker: _ChangeCheck | None = None
         self._changed_ids: list[str] | None = None
         self._check_pending = False
+        self._road_point_index = -1
+        self._road_loading = False
 
         self._make_widgets()
         self._make_menu()
@@ -428,12 +431,15 @@ class MainWindow(QMainWindow):
         self.select_all = QPushButton("Select all")
         self.show_3d = QPushButton("Show selection in 3D")
         self.map_hint = QLabel("Click or drag to select tiles, Shift adds, double-click opens one tile in 3D")
+        self.map_hint.setWordWrap(True)
         self.map_hint.setStyleSheet("color: #9aa3ad")
-        self.paint = QPushButton("Paint biomes")
+        self.paint = QPushButton("Paint")
         self.paint.setCheckable(True)
-        self.paint.setToolTip("Left drag paints the chosen biome, right drag returns to the automatic rules")
+        self.paint.setToolTip("Left drag paints; right drag restores the underlying rules")
+        self.paint_kind = QComboBox()
+        self.paint_kind.addItems(("Biome", "Surface"))
         self.paint_biome = QComboBox()
-        self.paint_biome.setToolTip("Biome to paint")
+        self.paint_biome.setToolTip("Biome or surface to paint")
         self.brush = _spin(0.1, 100000, 50.0, 5, 1, " m")
         self.brush.setToolTip("Brush radius")
         self.clear_paint = QPushButton("Clear paint")
@@ -446,14 +452,49 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.map_mode)
         bar.addWidget(self.select_all)
         bar.addWidget(self.show_3d)
-        bar.addSpacing(16)
-        bar.addWidget(self.paint)
-        bar.addWidget(self.paint_biome)
-        bar.addWidget(QLabel("radius"))
-        bar.addWidget(self.brush)
-        bar.addWidget(self.clear_paint)
         bar.addStretch(1)
         layout.addLayout(bar)
+        paint_bar = QHBoxLayout()
+        paint_bar.setContentsMargins(6, 0, 6, 0)
+        for widget in (self.paint, self.paint_kind, self.paint_biome):
+            paint_bar.addWidget(widget)
+        paint_bar.addStretch(1)
+        layout.addLayout(paint_bar)
+        brush_bar = QHBoxLayout()
+        brush_bar.setContentsMargins(6, 0, 6, 0)
+        for widget in (QLabel("Brush radius"), self.brush, self.clear_paint):
+            brush_bar.addWidget(widget)
+        brush_bar.addStretch(1)
+        layout.addLayout(brush_bar)
+        road_bar = QHBoxLayout()
+        road_bar.setContentsMargins(6, 0, 6, 0)
+        self.road_mode = QPushButton("Edit roads")
+        self.road_mode.setCheckable(True)
+        self.road_list = QComboBox()
+        self.road_new = QPushButton("New road")
+        self.road_delete = QPushButton("Delete road")
+        self.road_surface = QComboBox()
+        self.road_width = _spin(0.1, 100000, 6.0, 1, 1, " m")
+        self.road_shoulder = _spin(0, 100000, 3.0, 1, 1, " m")
+        self.road_height = _spin(-100000, 100000, 0.0, 1, 2, " m")
+        self.road_remove_point = QPushButton("Delete point")
+        for widget in (self.road_mode, self.road_list, self.road_new, self.road_delete):
+            road_bar.addWidget(widget)
+        road_bar.addStretch(1)
+        layout.addLayout(road_bar)
+        road_settings = QHBoxLayout()
+        road_settings.setContentsMargins(6, 0, 6, 0)
+        for widget in (QLabel("Surface"), self.road_surface, QLabel("Width"), self.road_width,
+                       QLabel("Shoulder"), self.road_shoulder):
+            road_settings.addWidget(widget)
+        road_settings.addStretch(1)
+        layout.addLayout(road_settings)
+        point_settings = QHBoxLayout()
+        point_settings.setContentsMargins(6, 0, 6, 0)
+        for widget in (QLabel("Point height"), self.road_height, self.road_remove_point):
+            point_settings.addWidget(widget)
+        point_settings.addStretch(1)
+        layout.addLayout(point_settings)
         layout.addWidget(self.map, 1)
         layout.addWidget(self.map_hint)
 
@@ -507,11 +548,22 @@ class MainWindow(QMainWindow):
         self.map.tileActivated.connect(lambda ix, iy: self._show_tiles({(ix, iy)}, 0))
         self.map.selectionChanged.connect(self._selection_changed)
         self.paint.toggled.connect(self._paint_toggled)
+        self.paint_kind.currentIndexChanged.connect(self._paint_kind_changed)
         self.brush.valueChanged.connect(self._update_brush)
         self.spacing.valueChanged.connect(self._update_brush)
         self.clear_paint.clicked.connect(self._clear_paint)
         self.map.paintStroke.connect(self._paint_stroke)
         self.map.paintFinished.connect(self._paint_finished)
+        self.road_mode.toggled.connect(self._road_toggled)
+        self.road_list.currentIndexChanged.connect(self._road_selected)
+        self.road_new.clicked.connect(self._road_add)
+        self.road_delete.clicked.connect(self._road_delete)
+        self.road_remove_point.clicked.connect(self._road_remove)
+        self.road_surface.currentIndexChanged.connect(self._road_edited)
+        self.road_width.valueChanged.connect(self._road_edited)
+        self.road_shoulder.valueChanged.connect(self._road_edited)
+        self.road_height.valueChanged.connect(self._road_height_edited)
+        self.map.roadPoint.connect(self._road_clicked)
         self.material_panel.fit_requested.connect(self._fit_material)
         self.material_panel.terrain_setup_requested.connect(self._terrain_setup)
         self.material_panel.save_preset_requested.connect(self._save_terrain_preset)
@@ -584,8 +636,12 @@ class MainWindow(QMainWindow):
                        self.material_panel.fit):
             widget.setEnabled(not busy)
         self.paint.setEnabled(not busy and self.hm is not None)
+        self.road_mode.setEnabled(not busy and self.hm is not None)
+        self.road_new.setEnabled(not busy and self.hm is not None)
         if busy and self.paint.isChecked():
             self.paint.setChecked(False)
+        if busy and self.road_mode.isChecked():
+            self.road_mode.setChecked(False)
         self.build_button.setEnabled(not busy and self.hm is not None)
         self.cancel_button.setEnabled(busy)
         self._update_export_buttons()
@@ -666,6 +722,11 @@ class MainWindow(QMainWindow):
             self.export_dir.setText(path)
 
     def _load_source(self, path: str, raw_size: tuple[int, int] | None = None) -> None:
+        material = self._material()
+        if (self._after_source is None and (material.has_paint() or material.has_surface_paint() or material.roads)
+                and QMessageBox.question(self, APP_NAME, "Opening another heightmap clears map-specific paint and "
+                                         "roads. Continue?") != QMessageBox.StandardButton.Yes):
+            return
         def task(progress, cancelled):
             progress(0.1, f"Reading {os.path.basename(path)}…")
             hm = load_heightmap(path, raw_size)
@@ -696,6 +757,9 @@ class MainWindow(QMainWindow):
             self.out_dir.setText(base + "_tiles")
             self.export_dir.setText(base + "_adm")
             self._material().paint = None  # paint belongs to the previous heightmap
+            self._material().surface_paint = None
+            self._material().roads.clear()
+            self._road_refresh()
         self._scale_changed()
         if callback is None:
             self._fit_material()
@@ -766,7 +830,9 @@ class MainWindow(QMainWindow):
         text = f"{cells * sp:,.1f} m per tile, {nx} × {ny} = {nx * ny:,} tiles"
         if self.hm is not None:
             memory = estimate_memory(width, height, cells, self.hm.data.itemsize)
-            text += f", about {memory / 2**30:.2f} GiB working memory"
+            if self._material().roads:
+                memory += width * height * 4
+            text += f", at least {memory / 2**30:.2f} GiB working memory"
         self.tile_info.setText(text)
         if self.manifest is not None and self.manifest["tile_cells"] != cells:
             self.map.set_stats({}, {})
@@ -781,13 +847,16 @@ class MainWindow(QMainWindow):
         material = self._material()
         self.histogram.set_material(material)
         self._material_timer.start()
-        current = self.paint_biome.currentIndex()
+        current = self.paint_biome.currentText()
         self.paint_biome.blockSignals(True)
         self.paint_biome.clear()
-        for biome in material.biomes:
-            self.paint_biome.addItem(swatch(biome.color), biome.name)
-        self.paint_biome.setCurrentIndex(max(0, min(current, self.paint_biome.count() - 1)))
+        choices = material.biomes if self.paint_kind.currentIndex() == 0 else material.surfaces
+        for item in choices:
+            self.paint_biome.addItem(swatch(item.color), item.name)
+        self.paint_biome.setCurrentIndex(max(0, self.paint_biome.findText(current)))
         self.paint_biome.blockSignals(False)
+        self._road_refresh()
+        self._update_tile_info()
         try:
             material.validate_rules()
             problems = [f"{a} and {b} share no surface" for a, b in texturing.unshared_pairs(material)]
@@ -814,7 +883,7 @@ class MainWindow(QMainWindow):
 
     def _update_rebuild_note(self) -> None:
         if self.manifest is not None and rules_outdated(self.manifest, self._material()):
-            self.rebuild_note.setText("Biomes, paint or the surface list changed since these tiles were built. "
+            self.rebuild_note.setText("Biomes, paint, roads or the surface list changed since these tiles were built. "
                                       "Rebuild to update the vertex layers before exporting.")
             self.rebuild_note.show()
         else:
@@ -882,9 +951,10 @@ class MainWindow(QMainWindow):
         name, accepted = QInputDialog.getItem(self, "Load terrain preset", "Terrain preset:", names, 0, False)
         if not accepted:
             return
-        if self._material().has_paint() and QMessageBox.question(
+        material = self._material()
+        if (material.has_paint() or material.has_surface_paint() or material.roads) and QMessageBox.question(
                 self, "Replace terrain setup",
-                "Loading a preset replaces the biome and surface setup and clears map-specific biome paint. Continue?") \
+                "Loading a preset replaces the terrain setup and clears map-specific paint and roads. Continue?") \
                 != QMessageBox.StandardButton.Yes:
             return
         key = presets[names.index(name)][1]
@@ -925,28 +995,39 @@ class MainWindow(QMainWindow):
             if self.hm is None:
                 self.paint.setChecked(False)
                 return
+            self.road_mode.setChecked(False)
             material = self._material()
-            old = material.paint
-            if material.ensure_paint(self.hm.width, self.hm.height) and old is not None and np.any(old != PAINT_AUTO):
+            surface = self.paint_kind.currentIndex() == 1
+            old = material.surface_paint if surface else material.paint
+            changed = (material.ensure_surface_paint(self.hm.width, self.hm.height) if surface
+                       else material.ensure_paint(self.hm.width, self.hm.height))
+            if changed and old is not None and np.any(old != PAINT_AUTO):
                 QMessageBox.information(self, APP_NAME, "The stored paint was made for a heightmap of another "
                                                         "size and was cleared.")
-            if self.map_mode.currentIndex() != BIOMES_MODE:
-                self.map_mode.setCurrentIndex(BIOMES_MODE)
-            self.map_hint.setText("Left drag paints the biome, right drag returns to automatic. "
+            mode = SURFACES_MODE if surface else BIOMES_MODE
+            if self.map_mode.currentIndex() != mode:
+                self.map_mode.setCurrentIndex(mode)
+            self.map_hint.setText("Left drag paints, right drag restores the underlying rules. "
                                   "Turn Paint off to select tiles again.")
         else:
             self.map_hint.setText("Click or drag to select tiles, Shift adds, double-click opens one tile in 3D")
         self.map.set_paint_mode(on)
 
+    def _paint_kind_changed(self) -> None:
+        self.paint.setChecked(False)
+        self._material_changed()
+
     def _paint_stroke(self, points, erase: bool) -> None:
         material = self._material()
-        if material.paint is None:
+        surface = self.paint_kind.currentIndex() == 1
+        paint = material.surface_paint if surface else material.paint
+        if paint is None:
             return
         value = PAINT_AUTO if erase else self.paint_biome.currentIndex()
         if value < 0:
             return
-        cell = material.paint_cell
-        rows, cols = material.paint.shape
+        cell = material.surface_paint_cell if surface else material.paint_cell
+        rows, cols = paint.shape
         radius = self.map._brush / cell
         r = int(math.ceil(radius))
         for col, row in points:
@@ -957,7 +1038,7 @@ class MainWindow(QMainWindow):
                 continue
             yy, xx = np.mgrid[y0:y1, x0:x1]
             disk = (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
-            material.paint[y0:y1, x0:x1][disk] = value
+            paint[y0:y1, x0:x1][disk] = value
         self._field = None
         self._field_timer.start()
 
@@ -968,11 +1049,119 @@ class MainWindow(QMainWindow):
 
     def _clear_paint(self) -> None:
         material = self._material()
-        if not material.has_paint():
+        surface = self.paint_kind.currentIndex() == 1
+        if not (material.has_surface_paint() if surface else material.has_paint()):
             return
-        if QMessageBox.question(self, APP_NAME, "Remove all painted biomes?") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, APP_NAME, "Remove all paint of this type?") != QMessageBox.StandardButton.Yes:
             return
-        material.paint[:] = PAINT_AUTO
+        (material.surface_paint if surface else material.paint)[:] = PAINT_AUTO
+        self._paint_finished()
+
+    def _road_refresh(self) -> None:
+        material = self._material()
+        index = self.road_list.currentIndex()
+        self._road_loading = True
+        self.road_list.clear()
+        for i, road in enumerate(material.roads):
+            self.road_list.addItem(f"Road {i + 1} ({len(road.points)} points)")
+        index = min(max(index, 0), len(material.roads) - 1)
+        self.road_list.setCurrentIndex(index)
+        self.road_surface.clear()
+        self.road_surface.addItems(material.surface_names())
+        road = material.roads[index] if index >= 0 else None
+        if road is not None:
+            self.road_surface.setCurrentIndex(self.road_surface.findText(road.surface))
+            self.road_width.setValue(road.width_m)
+            self.road_shoulder.setValue(road.shoulder_m)
+        self._road_point_index = min(self._road_point_index, len(road.points) - 1) if road else -1
+        if road is not None and self._road_point_index >= 0:
+            self.road_height.setValue(road.points[self._road_point_index][2])
+        for widget in (self.road_surface, self.road_width, self.road_shoulder, self.road_delete):
+            widget.setEnabled(road is not None)
+        self.road_height.setEnabled(road is not None and self._road_point_index >= 0)
+        self.road_remove_point.setEnabled(road is not None and self._road_point_index >= 0)
+        self._road_loading = False
+        self.map.set_roads(material.roads, index, self._road_point_index, self.spacing.value())
+
+    def _road_toggled(self, on: bool) -> None:
+        if on:
+            if self.hm is None:
+                self.road_mode.setChecked(False)
+                return
+            self.paint.setChecked(False)
+            self.map_hint.setText("Select New road, then click to add points. Click a point to edit its height.")
+        else:
+            self.map_hint.setText("Click or drag to select tiles, Shift adds, double-click opens one tile in 3D")
+        self.map.set_road_mode(on)
+
+    def _road_selected(self) -> None:
+        if self._road_loading:
+            return
+        self._road_point_index = -1
+        self._road_refresh()
+
+    def _road_add(self) -> None:
+        if self.hm is None:
+            return
+        material = self._material()
+        material.roads.append(Road(surface=material.surface_names()[0]))
+        self._road_refresh()
+        self.road_list.setCurrentIndex(len(material.roads) - 1)
+        self.road_mode.setChecked(True)
+        self._paint_finished()
+
+    def _road_delete(self) -> None:
+        index = self.road_list.currentIndex()
+        if index < 0:
+            return
+        if QMessageBox.question(self, APP_NAME, "Delete the selected road?") != QMessageBox.StandardButton.Yes:
+            return
+        del self._material().roads[index]
+        self._road_point_index = -1
+        self._paint_finished()
+
+    def _road_remove(self) -> None:
+        index = self.road_list.currentIndex()
+        if index < 0 or self._road_point_index < 0:
+            return
+        del self._material().roads[index].points[self._road_point_index]
+        self._road_point_index = -1
+        self._paint_finished()
+
+    def _road_edited(self) -> None:
+        index = self.road_list.currentIndex()
+        if self._road_loading or index < 0:
+            return
+        road = self._material().roads[index]
+        road.surface = self.road_surface.currentText()
+        road.width_m = self.road_width.value()
+        road.shoulder_m = self.road_shoulder.value()
+        self._paint_finished()
+
+    def _road_height_edited(self) -> None:
+        index = self.road_list.currentIndex()
+        if self._road_loading or index < 0 or self._road_point_index < 0:
+            return
+        self._material().roads[index].points[self._road_point_index][2] = self.road_height.value()
+        self._paint_finished()
+
+    def _road_clicked(self, col: float, row: float) -> None:
+        index = self.road_list.currentIndex()
+        if index < 0 or self.hm is None:
+            self.status.setText("Select New road first.")
+            return
+        road = self._material().roads[index]
+        frame = self.map._frame()
+        radius = 8 * (self.hm.width - 1) / max(frame.width(), 1)
+        for i, point in enumerate(road.points):
+            if (point[0] - col) ** 2 + (point[1] - row) ** 2 <= radius ** 2:
+                self._road_point_index = i
+                self._road_refresh()
+                return
+        scale, offset = self._transform()
+        height = texturing._bilinear.py_func(self.hm.data, col, row) * scale + offset
+        road.points.append([float(col), float(row), float(height)])
+        self._road_point_index = len(road.points) - 1
         self._paint_finished()
 
     def _update_map_image(self) -> None:

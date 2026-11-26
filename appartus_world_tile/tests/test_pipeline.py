@@ -10,6 +10,7 @@ from awt.heightmap import load_heightmap
 from awt.material import PAINT_AUTO, TerrainMaterial, default_biomes
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields
+from awt.roads import Road, rasterize, segments
 from awt.texturing import compile_rules, surface_weights
 
 
@@ -28,7 +29,8 @@ def _world_mesh(manifest, lod=0):
     keys = {}
     faces = []
     for tile in manifest["tiles"]:
-        verts, tri = read_ply(os.path.join(manifest["_dir"], tile["lods"][lod]["file"]))
+        tile_lod = lod[(tile["ix"], tile["iy"])] if isinstance(lod, dict) else lod
+        verts, tri = read_ply(os.path.join(manifest["_dir"], tile["lods"][tile_lod]["file"]))
         ox, oy, _ = tile["origin_m"]
         cols = np.rint((verts["x"] + ox - bx) / sp).astype(int)
         rows = last_y - np.rint((verts["y"] + oy - by) / sp).astype(int)
@@ -125,6 +127,60 @@ class PipelineTest(unittest.TestCase):
         with open(os.path.join(manifest["_dir"], "manifest.json"), encoding="utf-8") as handle:
             self.assertEqual(len(json.load(handle)["lods"]), 1)
 
+    def test_mixed_lods_have_identical_shared_edges(self):
+        data = _terrain(39, 51)
+        for texture_error, errors in ((0.0, [3.0, 0.03, 0.8]), (0.1, [3.0, 0.0, 0.8])):
+            with self.subTest(texture_error=texture_error, errors=errors):
+                manifest = self._build(data, tile_cells=16, max_errors_m=errors,
+                                       texture_error=texture_error, texture_detail_m=1.0, threads=2)
+                tiles = {(tile["ix"], tile["iy"]): tile for tile in manifest["tiles"]}
+                meshes = {}
+                for key, tile in tiles.items():
+                    for lod in range(3):
+                        vertices, faces = read_ply(os.path.join(manifest["_dir"], tile["lods"][lod]["file"]))
+                        meshes[key, lod] = (vertices, faces)
+
+                def boundary(key, lod, axis, coordinate):
+                    tile = tiles[key]
+                    vertices, faces = meshes[key, lod]
+                    x = vertices["x"] + tile["origin_m"][0]
+                    y = vertices["y"] + tile["origin_m"][1]
+                    on_edge = np.isclose((x, y)[axis], coordinate)
+                    segments = set()
+                    for face in faces:
+                        for a, b in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+                            if on_edge[a] and on_edge[b]:
+                                points = []
+                                for index in (a, b):
+                                    points.append((float(x[index]), float(y[index]), float(vertices["z"][index])))
+                                segments.add(tuple(sorted(points)))
+                    return segments
+
+                for (ix, iy), tile in tiles.items():
+                    for delta, axis in (((1, 0), 0), ((0, 1), 1)):
+                        neighbor = (ix + delta[0], iy + delta[1])
+                        if neighbor not in tiles:
+                            continue
+                        coordinate = tile["origin_m"][axis] + tile["size_m"][axis]
+                        edges = [boundary((ix, iy), lod, axis, coordinate) for lod in range(3)]
+                        other_edges = [boundary(neighbor, lod, axis, coordinate) for lod in range(3)]
+                        self.assertTrue(edges[0])
+                        for edge in edges + other_edges:
+                            self.assertEqual(edge, edges[0], f"LOD seam between {(ix, iy)} and {neighbor}")
+
+                self.assertGreater(manifest["lods"][1]["triangles"], manifest["lods"][0]["triangles"])
+                for lod, error in enumerate(errors):
+                    self.assertLessEqual(manifest["lods"][lod]["measured_error_m"], error + 1e-4)
+                    points, faces = _world_mesh(manifest, lod)
+                    self._assert_watertight(points, faces, data.shape[1], data.shape[0])
+                selection = {key: (key[0] + 2 * key[1]) % 3 for key in tiles}
+                points, faces = _world_mesh(manifest, selection)
+                self._assert_watertight(points, faces, data.shape[1], data.shape[0])
+
+        flat = self._build(np.full((33, 33), 3.0, np.float32), tile_cells=16,
+                           max_errors_m=[0.1, 1.0], texture_error=0.0)
+        self.assertTrue(all(lod["triangles"] == 2 for tile in flat["tiles"] for lod in tile["lods"]))
+
     def _assert_watertight(self, points, faces, cols, rows):
         edges = Counter()
         for a, b, c in faces:
@@ -186,6 +242,78 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(dominant(25, 45), {"grass"})
         self.assertEqual(dominant(56, 74), {"rock"})
         self.assertEqual(dominant(90, 96), {"snow"})
+
+    def test_surface_paint_blends_over_biomes_and_can_be_removed(self):
+        data = np.full((33, 49), 10.0, np.float32)
+        material = TerrainMaterial()
+        material.paint_softness_m = 2.0
+        material.ensure_surface_paint(49, 33)
+        soil = material.surface_names().index("soil")
+        material.surface_paint[8:25, 10:30] = soil
+        rules = compile_rules(material, 1.0, 49, 33)
+        weights = surface_weights(rules, data, 1, 0, 1, np.array([3, 10, 20], float),
+                                  np.array([16, 16, 16], float))
+        self.assertAlmostEqual(weights[2, soil], 1.0, places=5)
+        self.assertEqual(weights[0, soil], 0)
+        self.assertGreater(weights[1, soil], 0)
+        self.assertLess(weights[1, soil], 1)
+        self.assertTrue(np.allclose(weights.sum(axis=1), 1))
+        material.remove_surface("soil")
+        self.assertFalse(material.has_surface_paint())
+
+    def test_road_grade_and_surface_cross_tile_boundaries(self):
+        data = np.full((33, 49), 10.0, np.float32)
+        src = os.path.join(self.tmp.name, "road.npy")
+        np.save(src, data)
+        material = TerrainMaterial()
+        material.roads = [Road("gravel", 4.0, 2.0, [[4.0, 16.0, 5.0], [44.0, 16.0, 15.0]])]
+        params = BuildParams(src, os.path.join(self.tmp.name, "road"), tile_cells=16,
+                             max_errors_m=[0.0, 0.5], texture_error=0.1, texture_detail_m=1.0, threads=2)
+        build(params, material)
+        manifest = load_manifest(params.out_dir)
+        self.assertTrue(np.array_equal(np.load(src), data))
+        self.assertEqual(manifest["source"]["height_range_m"], [10.0, 10.0])
+        self.assertEqual(manifest["edited_height_range_m"], [5.0, 15.0])
+        gravel = material.surface_names().index("gravel")
+        found = {}
+        for tile in manifest["tiles"]:
+            verts, _ = read_ply(os.path.join(manifest["_dir"], tile["lods"][0]["file"]))
+            x = verts["x"] + tile["origin_m"][0]
+            y = verts["y"] + tile["origin_m"][1]
+            for col in (16, 32):
+                matches = np.flatnonzero((x == col) & (y == 16))
+                for i in matches:
+                    found.setdefault(col, []).append((float(verts["z"][i]), int(verts[f"w{gravel}"][i])))
+        self.assertEqual(set(found), {16, 32})
+        for col, entries in found.items():
+            for height, weight in entries:
+                self.assertAlmostEqual(height, 5 + (col - 4) / 4, places=4)
+                self.assertGreater(weight, 245)
+        for lod in range(2):
+            points, faces = _world_mesh(manifest, lod)
+            self._assert_watertight(points, faces, data.shape[1], data.shape[0])
+
+    def test_road_raster_is_bounded_and_continuous_across_blocks(self):
+        road = Road("soil", 4, 2, [[0, 100, 0], [300, 100, 10], [519, 100, 20]])
+        pieces = segments(road, 1)
+        self.assertAlmostEqual(pieces[0][0][2], 0)
+        self.assertAlmostEqual(pieces[-1][1][2], 20)
+        boundary = {}
+        for window, distance, height in rasterize(road, 1, 200, 520):
+            self.assertLessEqual(max(distance.shape), 256)
+            for col in (255, 256):
+                if window[1].start <= col < window[1].stop and window[0].start <= 100 < window[0].stop:
+                    row, x = 100 - window[0].start, col - window[1].start
+                    boundary[col] = (float(distance[row, x]), float(height[row, x]))
+        self.assertEqual(set(boundary), {255, 256})
+        self.assertLess(boundary[255][0], 1e-5)
+        self.assertLess(boundary[256][0], 1e-5)
+        self.assertLess(abs(boundary[256][1] - boundary[255][1]), 0.1)
+        i = next(i for i, (_, b) in enumerate(pieces) if np.allclose(b[:2], [300, 100]))
+        before, after = pieces[i], pieces[i + 1]
+        slope_before = (before[1][2] - before[0][2]) / np.linalg.norm(before[1][:2] - before[0][:2])
+        slope_after = (after[1][2] - after[0][2]) / np.linalg.norm(after[1][:2] - after[0][:2])
+        self.assertLess(abs(slope_before - slope_after), 0.001)
 
     def test_paint_places_biome_with_smooth_bridge(self):
         size = 129

@@ -20,6 +20,7 @@ from . import __version__
 from .heightmap import Heightmap, load_heightmap, preview
 from .material import TerrainMaterial
 from .ply import vertex_dtype, write_ply
+from .roads import rasterize
 
 MANIFEST_FORMAT = "apparatus-world-tile"
 MANIFEST_VERSION = 2
@@ -250,6 +251,29 @@ def build(
     hm = heightmap or load_heightmap(params.input_path, params.raw_size)
     timings["load_s"] = time.perf_counter() - started
     ctx = _Context(hm, params)
+    source_hm, source_scale, source_offset = hm, ctx.scale, ctx.offset
+    if material.roads:
+        report(0.02, "Applying road grades")
+        heights = hm.data.astype(np.float32, copy=True)
+        heights *= np.float32(ctx.scale)
+        heights += np.float32(ctx.offset)
+        for road in material.roads:
+            if is_cancelled():
+                raise Cancelled()
+            road.validate(ctx.width, ctx.height)
+            for window, distance, elevation in rasterize(road, params.spacing_m, ctx.height, ctx.width):
+                if is_cancelled():
+                    raise Cancelled()
+                if road.shoulder_m:
+                    alpha = np.clip((road.width_m / 2 + road.shoulder_m - distance) / road.shoulder_m, 0, 1)
+                    alpha = alpha * alpha * (3 - 2 * alpha)
+                else:
+                    alpha = (distance <= road.width_m / 2).astype(np.float32)
+                patch = heights[window]
+                patch += (elevation - patch) * alpha
+        hm = Heightmap(heights, hm.path, 0.0)
+        ctx.hm = hm
+        ctx.scale, ctx.offset = 1.0, 0.0
     rules = texturing.compile_rules(material, params.spacing_m, ctx.width, ctx.height)
     cfg = rules.cfg(ctx.scale, ctx.offset, params.spacing_m)
     field_args = (cfg, rules.brule, rules.bsurf, rules.srule, rules.paint, rules.nsurf)
@@ -284,6 +308,25 @@ def build(
         timings["texture_errors_s"] = time.perf_counter() - phase
     max_werror = min(255, int(math.floor(params.texture_error * 255.0)))
 
+    no_boundary_splits = np.zeros((1, 1), np.bool_)
+    boundary_splits = no_boundary_splits
+    if len(params.max_errors_m) > 1:
+        boundary_splits = np.zeros(errors.shape, np.bool_)
+        for tj in range(ctx.ny):
+            for ti in range(ctx.nx):
+                if is_cancelled():
+                    raise Cancelled()
+                report(0.6, f"Matching LOD boundaries: tile {tj * ctx.nx + ti + 1} of {ctx.nx * ctx.ny}")
+                grid, _, _ = kernels.extract_tile(
+                    hm.data, ctx.scale, ctx.offset, ctx.width, ctx.height, ctx.t, ti, tj,
+                    ctx.levels, errors, min(params.max_errors_m), werrors, max_werror,
+                    min_leg * min_leg if texture_on else math.inf, no_boundary_splits)
+                x0, y0, x1, y1 = ctx.tile_extent(ti, tj)
+                edge = ((grid[:, 0] == x0) | (grid[:, 0] == x1)
+                        | (grid[:, 1] == y0) | (grid[:, 1] == y1))
+                boundary_splits[grid[edge, 1], grid[edge, 0]] = True
+        kernels.propagate_boundary_splits(ctx.t, ctx.nx, ctx.ny, ctx.levels, boundary_splits)
+
     out_dir = os.path.abspath(params.out_dir)
     os.makedirs(os.path.join(out_dir, TILE_DIR), exist_ok=True)
     jobs = [(lod, ti, tj) for lod in range(len(params.max_errors_m))
@@ -299,7 +342,7 @@ def build(
         grid, faces, measured = kernels.extract_tile(
             hm.data, ctx.scale, ctx.offset, ctx.width, ctx.height, ctx.t, ti, tj,
             ctx.levels, errors, float(params.max_errors_m[lod]),
-            werrors, max_werror, leg * leg if texture_on else math.inf)
+            werrors, max_werror, leg * leg if texture_on else math.inf, boundary_splits)
         weights = texturing.quantize(texturing.weights_serial(
             hm.data, *field_args, grid[:, 0].astype(np.float64), grid[:, 1].astype(np.float64)))
         rel = f"{TILE_DIR}/{_tile_id(ti, iy)}_lod{lod}.ply"
@@ -370,11 +413,11 @@ def build(
             "path": os.path.abspath(params.input_path),
             "width": ctx.width,
             "height": ctx.height,
-            "dtype": str(hm.data.dtype),
-            "height_scale": ctx.scale,
-            "height_offset": ctx.offset,
-            "height_range_m": [float(hm.data.min()) * ctx.scale + ctx.offset,
-                               float(hm.data.max()) * ctx.scale + ctx.offset],
+            "dtype": str(source_hm.data.dtype),
+            "height_scale": source_scale,
+            "height_offset": source_offset,
+            "height_range_m": [float(source_hm.data.min()) * source_scale + source_offset,
+                               float(source_hm.data.max()) * source_scale + source_offset],
         },
         "params": source_params,
         "spacing_m": params.spacing_m,
@@ -403,6 +446,8 @@ def build(
         "tiles": tiles,
         "timings": timings,
     }
+    if material.roads:
+        manifest["edited_height_range_m"] = [float(hm.data.min()), float(hm.data.max())]
     keep = {record["file"] for record in results.values()}
     _remove_stale(out_dir, keep)
     temp = os.path.join(out_dir, MANIFEST_NAME + ".tmp")

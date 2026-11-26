@@ -14,6 +14,7 @@ from awt.material import TerrainMaterial, prepare_texture
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields, write_ply
 from awt.project import Project, load_project
+from awt.roads import Road
 from tests.test_pipeline import _terrain
 
 
@@ -130,6 +131,20 @@ class ExportTest(unittest.TestCase):
         bitangent = np.cross(normal, tangent[:, :3]) * tangent[:, 3:]
         self.assertTrue(np.all(bitangent[:, 2] < 0))  # +V of the normal map points north
         self.assertGreater(len(names), 4)
+
+    def test_road_grade_is_exported_in_adm(self):
+        self.material.roads = [Road("gravel", 8.0, 4.0, [[8, 24, 5], [56, 24, 17]])]
+        self.params.max_errors_m = [0.0]
+        self.params.texture_detail_m = 2.0
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        export_tiles(manifest, self.material, self.settings, "all")
+        doc, chunks = _read_adm(os.path.join(self.settings.out_dir, "x001_y001.adm"))
+        root = np.asarray(doc["nodes"][0]["translation"])
+        positions = np.concatenate([attrs["POSITION"] for _, attrs, _ in self._primitives(doc, chunks)]) + root
+        selected = positions[np.isclose(positions[:, 0], 64) & np.isclose(positions[:, 2], -48)]
+        self.assertGreater(len(selected), 0)
+        self.assertTrue(np.allclose(selected[:, 1], 11, atol=1e-4))
 
     def test_surface_sets_cover_triangles(self):
         weights = np.array([[255, 0, 0, 0, 0, 0],
@@ -277,6 +292,9 @@ class ExportTest(unittest.TestCase):
         project.material = self.material
         self.material.ensure_paint(65, 49)
         self.material.paint[3:9, 4:20] = 2
+        self.material.ensure_surface_paint(65, 49)
+        self.material.surface_paint[10:20, 10:20] = self.material.surface_names().index("soil")
+        self.material.roads = [Road("gravel", 5.0, 2.0, [[4, 5, 10], [50, 20, 12]])]
         project.export = self.settings
         project.selection = ["x001_y000"]
         path = os.path.join(self.tmp.name, "world.awtp")
@@ -290,9 +308,15 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(loaded.params, self.params)
         self.assertEqual(loaded.material, self.material)
         self.assertTrue(np.array_equal(loaded.material.paint, self.material.paint))
+        self.assertTrue(np.array_equal(loaded.material.surface_paint, self.material.surface_paint))
+        self.assertEqual(loaded.material.roads, self.material.roads)
         self.assertEqual(loaded.material.rules_digest(), self.material.rules_digest())
         self.assertEqual(loaded.export, self.settings)
         self.assertEqual(loaded.selection, ["x001_y000"])
+        raw["format_version"] = 2
+        raw["material"].pop("surface_paint")
+        raw["material"].pop("roads")
+        self.assertFalse(Project.from_dict(raw).material.roads)
         with self.assertRaises(ValueError):
             Project.from_dict({"format": "something else"})
 

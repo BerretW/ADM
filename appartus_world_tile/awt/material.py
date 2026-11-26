@@ -27,6 +27,8 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
+from .roads import Road
+
 SHADER_ID = "adm.terrain.four_layer"
 SHADER_VERSION = "2.0.0"
 CHANNELS = "RGBA"
@@ -195,6 +197,9 @@ class TerrainMaterial:
     # ``paint_cell`` x ``paint_cell`` heightmap samples.
     paint: np.ndarray | None = field(default=None, repr=False, compare=False)
     paint_cell: int = 1
+    surface_paint: np.ndarray | None = field(default=None, repr=False, compare=False)
+    surface_paint_cell: int = 1
+    roads: list[Road] = field(default_factory=list)
 
     # ------------------------------------------------------------ lookups
     def surface_names(self) -> list[str]:
@@ -231,11 +236,22 @@ class TerrainMaterial:
             for entry in biome.surfaces:
                 if entry.surface == old:
                     entry.surface = new
+        for road in self.roads:
+            if road.surface == old:
+                road.surface = new
 
     def remove_surface(self, name: str) -> None:
         if len(self.surfaces) <= 1:
             raise ValueError("The library needs at least one surface")
+        if any(road.surface == name for road in self.roads):
+            raise ValueError(f"Surface '{name}' is used by a road")
+        index = self.surface_names().index(name)
         self.surfaces.remove(self.surface(name))
+        if self.surface_paint is not None:
+            paint = self.surface_paint
+            hit = paint == index
+            paint[(paint > index) & (paint != PAINT_AUTO)] -= 1
+            paint[hit] = PAINT_AUTO
         fallback = self.surfaces[0].name
         for biome in self.biomes:
             biome.surfaces = [e for e in biome.surfaces if e.surface != name] or [BiomeSurface(fallback)]
@@ -273,6 +289,18 @@ class TerrainMaterial:
 
     def has_paint(self) -> bool:
         return self.paint is not None and bool(np.any(self.paint != PAINT_AUTO))
+
+    def ensure_surface_paint(self, width: int, height: int) -> bool:
+        cell = max(1, math.ceil(max(width, height) / PAINT_MAX_SIDE))
+        shape = (max(1, math.ceil(height / cell)), max(1, math.ceil(width / cell)))
+        if self.surface_paint is not None and self.surface_paint.shape == shape and self.surface_paint_cell == cell:
+            return False
+        self.surface_paint = np.full(shape, PAINT_AUTO, np.uint8)
+        self.surface_paint_cell = cell
+        return True
+
+    def has_surface_paint(self) -> bool:
+        return self.surface_paint is not None and bool(np.any(self.surface_paint != PAINT_AUTO))
 
     @staticmethod
     def fitted_levels(heights_m: np.ndarray) -> dict:
@@ -313,6 +341,9 @@ class TerrainMaterial:
             raise ValueError("Surface names must be unique and not empty")
         if not 1 <= len(self.biomes) <= MAX_BIOMES:
             raise ValueError(f"Use between 1 and {MAX_BIOMES} biomes")
+        for road in self.roads:
+            if road.surface not in names:
+                raise ValueError(f"Road uses unknown surface '{road.surface}'")
         if not (self.slope_radius_m >= 0 and self.paint_softness_m >= 0):
             raise ValueError("Slope radius and paint softness must not be negative")
         for biome in self.biomes:
@@ -359,6 +390,11 @@ class TerrainMaterial:
             "paint": None if not self.has_paint() else
             [self.paint_cell, list(self.paint.shape), hashlib.sha256(self.paint.tobytes()).hexdigest()],
         }
+        if self.has_surface_paint():
+            data["surface_paint"] = [self.surface_paint_cell, list(self.surface_paint.shape),
+                                     hashlib.sha256(self.surface_paint.tobytes()).hexdigest()]
+        if self.roads:
+            data["roads"] = [road.to_dict() for road in self.roads]
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:32]
 
     def fingerprint(self, tile_size_m: float) -> str:
@@ -383,6 +419,15 @@ class TerrainMaterial:
             out = io.BytesIO()
             Image.fromarray(self.paint, "L").save(out, "PNG", optimize=True)
             data["paint"] = {"cell": self.paint_cell, "png": base64.b64encode(out.getvalue()).decode("ascii")}
+        if self.has_surface_paint():
+            from PIL import Image
+
+            out = io.BytesIO()
+            Image.fromarray(self.surface_paint, "L").save(out, "PNG", optimize=True)
+            data["surface_paint"] = {
+                "cell": self.surface_paint_cell, "png": base64.b64encode(out.getvalue()).decode("ascii")}
+        if self.roads:
+            data["roads"] = [road.to_dict() for road in self.roads]
         return data
 
     @classmethod
@@ -433,6 +478,22 @@ class TerrainMaterial:
             with Image.open(io.BytesIO(base64.b64decode(paint["png"]))) as image:
                 material.paint = np.array(image.convert("L"), np.uint8)
             material.paint_cell = max(1, int(paint.get("cell", 1)))
+        paint = data.get("surface_paint")
+        if isinstance(paint, dict) and paint.get("png"):
+            from PIL import Image
+
+            with Image.open(io.BytesIO(base64.b64decode(paint["png"]))) as image:
+                material.surface_paint = np.array(image.convert("L"), np.uint8)
+            material.surface_paint_cell = max(1, int(paint.get("cell", 1)))
+        try:
+            for road in data.get("roads", []):
+                item = Road(surface=str(road["surface"]), width_m=float(road["width_m"]),
+                            shoulder_m=float(road["shoulder_m"]),
+                            points=[[float(v) for v in point] for point in road["points"]])
+                item.validate(1 << 31, 1 << 31, complete=False)
+                material.roads.append(item)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid road data: {exc}") from exc
         return material
 
 

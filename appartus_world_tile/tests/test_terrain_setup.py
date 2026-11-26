@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from awt.material import TerrainMaterial
+from awt.roads import Road
 from awt.terrain_presets import list_presets, load_preset, save_preset
 from awt.terrain_setup import apply_profile
 
@@ -46,6 +47,9 @@ class TerrainSetupTest(unittest.TestCase):
         material.surface("grass").albedo = texture
         material.ensure_paint(8, 8)
         material.paint[0, 0] = 1
+        material.ensure_surface_paint(8, 8)
+        material.surface_paint[0, 0] = 1
+        material.roads = [Road("soil", 4, 2, [[0, 0, 1], [7, 7, 2]])]
 
         folder = save_preset(os.path.join(self.tmp.name, "presets"), "Alpine World", material)
         presets = list_presets(os.path.dirname(folder))
@@ -55,6 +59,8 @@ class TerrainSetupTest(unittest.TestCase):
         self.assertTrue(copied.startswith(os.path.join(folder, "textures")))
         self.assertTrue(os.path.isfile(copied))
         self.assertIsNone(loaded.paint)
+        self.assertIsNone(loaded.surface_paint)
+        self.assertEqual(loaded.roads, [])
         self.assertEqual(loaded.surface_names(), material.surface_names())
         self.assertEqual(loaded.biomes[0].surface_names(), material.biomes[0].surface_names())
 

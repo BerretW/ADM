@@ -26,7 +26,8 @@ import numpy as np
 from numba import njit, prange
 
 from .kernels import _side, decode
-from .material import PAINT_AUTO, SURFACES_PER_BIOME, Band, TerrainMaterial
+from .material import PAINT_AUTO, PAINT_MAX_SIDE, SURFACES_PER_BIOME, Band, TerrainMaterial
+from .roads import rasterize
 
 OPEN = 1.0e30
 _CFG_SCALE, _CFG_OFFSET, _CFG_SPACING, _CFG_RADIUS, _CFG_CELL, _CFG_NCH, _CFG_MAP = range(7)
@@ -70,7 +71,7 @@ def _box_blur(a: np.ndarray, radius: int, axis: int) -> np.ndarray:
     return ((upper - lower) / (2 * radius + 1)).astype(np.float32)
 
 
-def soften_paint(paint: np.ndarray, biomes: list[int], soft: float) -> tuple[np.ndarray, int]:
+def soften_paint(paint: np.ndarray, biomes: list[int], soft: float, max_step: int | None = None) -> tuple[np.ndarray, int]:
     """Smooth shares of the automatic rules and each painted biome; returns ``(field, step)``.
 
     The shares are averaged over ``step`` x ``step`` paint pixels and blurred twice with a box of
@@ -78,6 +79,8 @@ def soften_paint(paint: np.ndarray, biomes: list[int], soft: float) -> tuple[np.
     border fades evenly instead of in steps.
     """
     step = max(1, int(soft // 2))
+    if max_step is not None:
+        step = min(step, max_step)
     rows, cols = paint.shape
     pr, pc = -rows % step, -cols % step
     padded = np.pad(paint, ((0, pr), (0, pc)), mode="edge") if pr or pc else paint
@@ -95,7 +98,9 @@ def soften_paint(paint: np.ndarray, biomes: list[int], soft: float) -> tuple[np.
 def compile_rules(material: TerrainMaterial, spacing_m: float, width: int, height: int) -> Rules:
     material.validate_rules()
     names = material.surface_names()
-    n = len(material.biomes)
+    original_n = len(material.biomes)
+    use_surfaces = material.has_surface_paint() or bool(material.roads)
+    n = original_n + (len(names) if use_surfaces else 0)
     brule = np.zeros((n, 7), np.float64)
     bsurf = np.full((n, SURFACES_PER_BIOME), -1, np.int32)
     srule = np.zeros((n, SURFACES_PER_BIOME, 7), np.float64)
@@ -104,14 +109,50 @@ def compile_rules(material: TerrainMaterial, spacing_m: float, width: int, heigh
         for j, entry in enumerate(biome.surfaces):
             bsurf[k, j] = names.index(entry.surface)
             srule[k, j] = _band_row(entry.height) + _band_row(entry.slope) + [entry.strength]
-    if material.has_paint():
-        cell = material.paint_cell
-        rows, cols = material.paint.shape
-        if rows * cell < height or cols * cell < width or (rows - 1) * cell >= height or (cols - 1) * cell >= width:
-            raise ValueError("The biome paint was made for a heightmap of another size; clear it or repaint")
-        paint = np.where(material.paint >= n, PAINT_AUTO, material.paint).astype(np.uint8)
+    if use_surfaces:
+        for i in range(len(names)):
+            brule[original_n + i, 0] = -1.0
+            bsurf[original_n + i, 0] = i
+    if material.has_paint() or use_surfaces:
+        cell = max(1, math.ceil(max(width, height) / PAINT_MAX_SIDE))
+        rows, cols = math.ceil(height / cell), math.ceil(width / cell)
+        paint = np.full((rows, cols), PAINT_AUTO, np.uint8)
+        if material.has_paint():
+            if material.paint_cell != cell or material.paint.shape != paint.shape:
+                raise ValueError("The biome paint was made for a heightmap of another size; clear it or repaint")
+            paint[:] = np.where(material.paint >= original_n, PAINT_AUTO, material.paint)
+        if material.has_surface_paint():
+            if material.surface_paint_cell != cell or material.surface_paint.shape != paint.shape:
+                raise ValueError("The surface paint was made for a heightmap of another size; clear it or repaint")
+            if np.any((material.surface_paint >= len(names)) & (material.surface_paint != PAINT_AUTO)):
+                raise ValueError("Surface paint references a missing surface")
+            mask = material.surface_paint < len(names)
+            paint[mask] = original_n + material.surface_paint[mask]
         biomes = [int(v) for v in np.unique(paint) if v != PAINT_AUTO]
-        field, step = soften_paint(paint, biomes, material.paint_softness_m / (spacing_m * cell))
+        max_step = None
+        if material.roads:
+            for road in material.roads:
+                road.validate(width, height)
+                if road.width_m < spacing_m * cell:
+                    raise ValueError("Road width is smaller than the surface paint resolution")
+                index = original_n + names.index(road.surface)
+                if index not in biomes:
+                    biomes.append(index)
+            max_step = max(1, int(min(road.width_m for road in material.roads) / (2 * spacing_m * cell)))
+        field, step = soften_paint(paint, biomes, material.paint_softness_m / (spacing_m * cell), max_step)
+        for road in material.roads:
+            for window, distance, _ in rasterize(road, spacing_m, field.shape[1], field.shape[2], cell * step,
+                                                 cell_centres=True):
+                if road.shoulder_m:
+                    alpha = np.clip((road.width_m / 2 + road.shoulder_m - distance) / road.shoulder_m, 0, 1)
+                    alpha = alpha * alpha * (3 - 2 * alpha)
+                else:
+                    alpha = (distance <= road.width_m / 2).astype(np.float32)
+                channel = biomes.index(original_n + names.index(road.surface)) + 1
+                area = field[(slice(None),) + window]
+                faded = area.astype(np.float32) * (1 - alpha)
+                faded[channel] += alpha * 255
+                area[:] = np.clip(np.rint(faded), 0, 255).astype(np.uint8)
         return Rules(brule, bsurf, srule, field, len(names), material.slope_radius_m, float(cell * step), biomes)
     return Rules(brule, bsurf, srule, np.full((1, 1, 1), 255, np.uint8), len(names), material.slope_radius_m,
                  1.0, [])
@@ -280,7 +321,7 @@ def _sample(h, cfg, gx, gy, brule, bsurf, srule, paint, b, pw, sd, se, out):
             if bsurf[e, j] == bsurf[d, i]:
                 shared += 1
                 total += 0.5 * (sd[i] + se[j])
-    if shared == 0:
+    if shared == 0 or brule[d, 0] < 0 or brule[e, 0] < 0:
         for j in range(bsurf.shape[1]):
             if bsurf[d, j] >= 0:
                 out[bsurf[d, j]] += (1.0 - t) * sd[j]
@@ -503,7 +544,10 @@ def preview(material: TerrainMaterial, data: np.ndarray, scale: float, offset: f
     rows, cols = data.shape
     rules = compile_rules(material, spacing, cols, rows)
     step = max(1, int(math.ceil(max(rows, cols) / max_side)))
-    bcolor = _linear([b.color for b in material.biomes])
+    bcolors = [b.color for b in material.biomes]
+    if rules.brule.shape[0] > len(bcolors):
+        bcolors.extend(s.color for s in material.surfaces)
+    bcolor = _linear(bcolors)
     scolor = _linear([s.color for s in material.surfaces])
     biome_rgb, surface_rgb, first, second, second_w = field_preview(
         data, rules.cfg(scale, offset, spacing), rules.brule, rules.bsurf, rules.srule, rules.paint, rules.nsurf,
@@ -524,6 +568,8 @@ def check_neighbours(material: TerrainMaterial, first: np.ndarray, second: np.nd
                                 np.maximum(first[mask], second[mask])], axis=1), axis=0) if mask.any() else []
     problems = []
     for a, b in pairs:
+        if a >= len(material.biomes) or b >= len(material.biomes):
+            continue
         ba, bb = material.biomes[int(a)], material.biomes[int(b)]
         if not set(ba.surface_names()) & set(bb.surface_names()):
             problems.append((ba.name, bb.name))

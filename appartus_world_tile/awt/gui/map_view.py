@@ -7,6 +7,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
 from PySide6.QtWidgets import QToolTip, QWidget
 
+from ..roads import segments
+
 _SELECT = QColor(255, 196, 64)
 _GRID = QColor(120, 210, 255, 150)
 _MARK = QColor(240, 110, 90)
@@ -28,6 +30,7 @@ class MapView(QWidget):
     # Paint mode: (col, row) sample positions along the stroke, erase flag; then the stroke end.
     paintStroke = Signal(object, bool)
     paintFinished = Signal()
+    roadPoint = Signal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,10 +55,21 @@ class MapView(QWidget):
         self._stroke: tuple[float, float] | None = None
         self._erase = False
         self._hover: QPointF | None = None
+        self._road_mode = False
+        self._roads = []
+        self._road_index = -1
+        self._road_point = -1
+        self._spacing = 1.0
+        self._zoom = 1.0
+        self._pan = QPointF()
+        self._pan_start: QPointF | None = None
 
     # ----------------------------------------------------------------- data
     def set_image(self, image: np.ndarray | None, cols: int, rows: int) -> None:
         """``image`` is grayscale (H, W) or RGB (H, W, 3) uint8."""
+        if (cols, rows) != (self._cols, self._rows):
+            self._zoom = 1.0
+            self._pan = QPointF()
         if image is None:
             self._image = None
         else:
@@ -104,6 +118,19 @@ class MapView(QWidget):
         self.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
         self.update()
 
+    def set_road_mode(self, enabled: bool) -> None:
+        self._road_mode = enabled
+        self._drag_start = self._drag_now = None
+        self.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    def set_roads(self, roads, index: int, point: int, spacing: float) -> None:
+        self._roads = roads
+        self._road_index = index
+        self._road_point = point
+        self._spacing = spacing
+        self.update()
+
     def set_brush(self, radius_samples: float) -> None:
         self._brush = max(0.5, float(radius_samples))
         self.update()
@@ -118,10 +145,25 @@ class MapView(QWidget):
         margin = 12
         avail_w = self.width() - 2 * margin
         avail_h = self.height() - 2 * margin
-        scale = min(avail_w / (self._cols - 1), avail_h / (self._rows - 1))
+        scale = min(avail_w / (self._cols - 1), avail_h / (self._rows - 1)) * self._zoom
         w = (self._cols - 1) * scale
         h = (self._rows - 1) * scale
-        return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
+        return QRectF((self.width() - w) / 2 + self._pan.x(), (self.height() - h) / 2 + self._pan.y(), w, h)
+
+    def _zoom_at(self, pos: QPointF, factor: float) -> None:
+        frame = self._frame()
+        if frame.isEmpty() or not frame.contains(pos):
+            return
+        sample = self._sample_at(pos)
+        self._zoom = max(1.0, min(64.0, self._zoom * factor))
+        if self._zoom == 1.0:
+            self._pan = QPointF()
+        else:
+            frame = self._frame()
+            x = frame.left() + sample[0] * frame.width() / (self._cols - 1)
+            y = frame.top() + sample[1] * frame.height() / (self._rows - 1)
+            self._pan += QPointF(pos.x() - x, pos.y() - y)
+        self.update()
 
     def _tile_rect(self, frame: QRectF, ix: int, iy: int) -> QRectF:
         sx = frame.width() / (self._cols - 1)
@@ -199,6 +241,18 @@ class MapView(QWidget):
         painter.setPen(QColor(90, 98, 108))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(frame)
+        sx = frame.width() / (self._cols - 1)
+        sy = frame.height() / (self._rows - 1)
+        for index, road in enumerate(self._roads):
+            painter.setPen(QPen(QColor(255, 215, 75) if index == self._road_index else QColor(200, 150, 70), 2))
+            if len(road.points) >= 2:
+                for a, b in segments(road, self._spacing):
+                    painter.drawLine(QPointF(frame.left() + a[0] * sx, frame.top() + a[1] * sy),
+                                     QPointF(frame.left() + b[0] * sx, frame.top() + b[1] * sy))
+            for point_index, point in enumerate(road.points):
+                selected = index == self._road_index and point_index == self._road_point
+                painter.setBrush(QColor(255, 255, 255) if selected else QColor(255, 180, 50))
+                painter.drawEllipse(QPointF(frame.left() + point[0] * sx, frame.top() + point[1] * sy), 4, 4)
         if self._paint_mode and self._hover is not None:
             radius = self._brush * frame.width() / (self._cols - 1)
             painter.setPen(QPen(QColor(255, 255, 255, 200), 1))
@@ -230,6 +284,16 @@ class MapView(QWidget):
         self.update()
 
     def mousePressEvent(self, event):  # noqa: N802
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._pan_start = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        if self._road_mode:
+            if event.button() == Qt.MouseButton.LeftButton and self._frame().contains(event.position()):
+                sample = self._sample_at(event.position())
+                if sample is not None:
+                    self.roadPoint.emit(*sample)
+            return
         if self._paint_mode:
             if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
                 self._erase = event.button() == Qt.MouseButton.RightButton
@@ -242,6 +306,13 @@ class MapView(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event):  # noqa: N802
+        if self._pan_start is not None:
+            self._pan += event.position() - self._pan_start
+            self._pan_start = event.position()
+            self.update()
+            return
+        if self._road_mode:
+            return
         if self._paint_mode:
             self._hover = event.position()
             if self._stroke is not None:
@@ -261,6 +332,13 @@ class MapView(QWidget):
             QToolTip.hideText()
 
     def mouseReleaseEvent(self, event):  # noqa: N802
+        if event.button() == Qt.MouseButton.MiddleButton and self._pan_start is not None:
+            self._pan_start = None
+            self.setCursor(Qt.CursorShape.CrossCursor if self._road_mode or self._paint_mode
+                           else Qt.CursorShape.ArrowCursor)
+            return
+        if self._road_mode:
+            return
         if self._paint_mode:
             if self._stroke is not None:
                 self._stroke = None
@@ -284,7 +362,7 @@ class MapView(QWidget):
         self.selectionChanged.emit()
 
     def mouseDoubleClickEvent(self, event):  # noqa: N802
-        if self._paint_mode:
+        if self._paint_mode or self._road_mode:
             return
         tile = self._tile_at(event.position())
         if tile:
@@ -292,6 +370,10 @@ class MapView(QWidget):
             self.update()
             self.selectionChanged.emit()
             self.tileActivated.emit(*tile)
+
+    def wheelEvent(self, event):  # noqa: N802
+        self._zoom_at(event.position(), 1.2 ** (event.angleDelta().y() / 120.0))
+        event.accept()
 
     def select_all(self) -> None:
         self.selection = {(ix, iy) for ix in range(self._nx) for iy in range(self._ny)}

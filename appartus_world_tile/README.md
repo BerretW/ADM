@@ -28,6 +28,8 @@ py -3 -m venv .venv
 The first run compiles the Numba kernels (a few seconds); the compiled code is cached.
 ADM export uses `adm_blender/core` from this repository (no Blender needed), so keep the tool
 inside the ADM checkout.
+The standalone World Tile ZIP includes the required ADM core but not the example heightmaps
+under `source`; use your own heightmap with the command-line examples.
 
 ## Inputs
 
@@ -78,9 +80,10 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.
 * **Map tab:** relief, biome weights, surface weights or mesh density per tile. Click or drag
-  to select tiles, Shift adds, double-click opens one tile in 3D. Enable **Paint biomes** to
-  paint the selected biome; right-drag restores automatic placement. **Paint softness** sets
-  how far painted borders fade.
+  to select tiles, Shift adds, double-click opens one tile in 3D. Zoom with the mouse wheel and
+  pan with the middle mouse button. Choose **Biome** or
+  **Surface**, enable **Paint**, and drag to paint; right-drag removes that type of paint.
+  **Paint softness** sets how far painted borders fade.
 * **3D tab:** the built tiles, coloured by height, by biome or surface weights, by tile, or by
   **Material** (surface albedos × tint blended by vertex weights,
   without normal maps). LOD switch, vertical exaggeration, wireframe. The preview keeps
@@ -89,9 +92,28 @@ override those automatic levels. `--texture-error 0` disables transition refinem
 ## Project file (`.awtp`)
 
 JSON with the build parameters (heightmap, scale, tiles, LOD errors, biome rules, paint and
-build folder), the surface/biome material, the export settings and the tile selection. Paths are stored
+build folder), roads, the surface/biome material, the export settings and the tile selection. Paths are stored
 relative to the project file, so the folder can be moved together with its heightmap and
 textures. Reopening a project loads the heightmap and the built tiles from the build folder.
+Version 2 projects can be opened; projects saved by this version use version 3 and
+cannot be opened by older versions of the tool.
+
+## Create a road
+
+1. On the **Map** tab, click **New road**.
+2. Click the map to add at least two control points. Their initial heights come from the source
+   heightmap.
+3. Click a control point and change **Point height** to set its elevation in metres.
+4. Choose the road **Surface**, **Width**, and **Shoulder**. The shoulder blends the road grade
+   and surface into the surrounding terrain.
+5. Rebuild the tiles and export them. The 3D view shows the road after the rebuild.
+
+Select an existing road in the list to edit its points or delete it. **Delete point** removes the
+selected control point. The curved centre line has a smooth elevation profile through the point
+heights. Roads are applied in list order, after surface paint; later roads take priority where
+they overlap. The original heightmap is never modified. The editable terrain remains a heightmap,
+so overhangs and separate bridge geometry need other tools. Surface paint and roads use a paint
+grid of at most 4096 cells per side; a road must be at least one paint cell wide.
 
 ## ADM export
 
@@ -145,16 +167,18 @@ out/
 * Tile `x{ix}_y{iy}`: `ix` grows east, `iy` grows **north** (y000 is the southern row).
 * Units are metres, Z up. Vertices are relative to the tile's `origin_m` (its south-west
   corner), Z is absolute height. `--origin center` puts the terrain centre at 0, 0.
+* All LODs retain matching tile boundaries, so adjacent tiles can use different LODs without
+  cracks. Rebuild the tiles and re-export them to apply this to an existing project.
 * PLY vertices: position, normal (from the full-resolution heightmap, so shading is seamless
   across tiles and LODs), `UVMap` (s, t) and `UVMap_1` (s1, t1).
 
 ### Mesh guarantee
 
 Simplification is a global RTIN (right-triangulated irregular network) over the whole map.
-For every LOD the vertical distance between the mesh and **every** heightmap sample is at
+For every LOD the vertical distance between the mesh and **every** edited heightmap sample is at
 most the LOD's maximum error, measured exactly (not estimated) and reported as
 `measured_error_m`. Neighbouring tiles share identical edge vertices, so there are no cracks
-between tiles of the same LOD. Tile size must be a power of two cells; maps that are not a
+between tiles even when their LODs differ. Tile size must be a power of two cells; maps that are not a
 multiple of it get smaller tiles on the east and south edges.
 
 ### Biomes, surfaces and transitions
@@ -167,8 +191,8 @@ least one surface in common between every pair of biomes that can touch. The GUI
 pairs without a shared surface; these pairs fall back to a direct blend and can show a hard
 texture change.
 
-Automatic placement and hand-painted biome areas are combined in the same weight field.
-Painting overrides automatic placement in the painted area; softening blurs the paint shares
+Automatic placement, hand-painted biome areas, and hand-painted surfaces are combined in the same
+weight field. Surface paint overrides biome paint, and roads override both. Softening blurs paint shares
 to create a gradual boundary. The 2D biome and surface views and the 3D material preview show
 the generated result before export.
 

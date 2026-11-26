@@ -260,7 +260,7 @@ class Viewer3D(QWidget):
                        edge_color="#5a636e", line_width=0.5, specular=0.05)
         if mode == 0 or (mode == MATERIAL_MODE and not self._material_ready()):
             z = self._data["points"][:, 2]
-            lo, hi = self._manifest["source"]["height_range_m"]
+            lo, hi = self._manifest.get("edited_height_range_m", self._manifest["source"]["height_range_m"])
             mesh.point_data["height"] = z
             self._actor = self.plotter.add_mesh(mesh, scalars="height", cmap="gist_earth",
                                                 clim=(lo, hi if hi > lo else lo + 1), **options)

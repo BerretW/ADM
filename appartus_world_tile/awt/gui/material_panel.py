@@ -820,8 +820,19 @@ class MaterialPanel(QWidget):
             return
         name = self._material.surfaces[row].name
         users = [b.name for b in self._material.biomes if name in b.surface_names()]
-        if users and QMessageBox.question(self, "Remove surface", f"'{name}' is used by {', '.join(users)}. "
-                                          "Remove it from those biomes too?") != QMessageBox.StandardButton.Yes:
+        if any(road.surface == name for road in self._material.roads):
+            QMessageBox.warning(self, "Remove surface", f"'{name}' is used by a road. Change the road surface first.")
+            return
+        paint = self._material.surface_paint
+        painted = paint is not None and bool((paint == row).any())
+        impacts = []
+        if users:
+            impacts.append(f"remove it from {', '.join(users)}")
+        if painted:
+            impacts.append("clear its surface paint")
+        if impacts and QMessageBox.question(self, "Remove surface",
+                                           f"Removing '{name}' will {' and '.join(impacts)}. Continue?") \
+                != QMessageBox.StandardButton.Yes:
             return
         try:
             self._material.remove_surface(name)
