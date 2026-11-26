@@ -89,6 +89,22 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   without normal maps). LOD switch, vertical exaggeration, wireframe. The preview keeps
   under 8 M triangles and automatically picks the finest LOD that fits.
 
+## Adjust biome heights visually
+
+1. Open a heightmap and select a **Biome** in the **Terrain** tab's **Texturing** section.
+2. Enable **Automatic** for a paint-only biome if you want to place it by height.
+3. Enable **From** or **To** to set a bounded edge. Drag the upper circle for **From** and the
+   lower circle for **To**, or enter the heights in metres.
+4. Drag either square to set **Fade**, or enter its width in metres. This is the total transition
+   width centred on each limit; both edges share the same width.
+5. Save the project. Rebuild and export the tiles to apply the updated vertex weights.
+
+Unchecked limits remain open. Limits outside the heightmap are editable numerically but have no
+handle on the histogram. The first biome fills the remaining area and has no automatic height
+controls. The graph's coloured bars show the dominant automatic biome on flat ground; the
+selected curve shows its height rule alone. Slope, painted areas, and later biomes taking
+priority can change the final result. Surface-specific rules remain on the **Material** tab.
+
 ## Project file (`.awtp`)
 
 JSON with the build parameters (heightmap, scale, tiles, LOD errors, biome rules, paint and

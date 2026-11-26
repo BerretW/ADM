@@ -8,7 +8,7 @@ import os
 import time
 
 import numpy as np
-from PySide6.QtCore import QSettings, QStandardPaths, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QPointF, QSettings, QStandardPaths, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -116,12 +116,19 @@ def _band_factor(band: Band, value: float) -> float:
 class HeightHistogram(QWidget):
     """Height distribution coloured by the biome that wins on flat ground, with the biome height limits."""
 
+    bandChanged = Signal(object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(70)
+        self.setMinimumHeight(112)
+        self.setMouseTracking(True)
+        self.setToolTip("Drag the selected biome's limit markers or its fade marker. "
+                        "The histogram shows automatic biomes on flat ground.")
         self._counts = None
         self._range = (0.0, 1.0)
         self._material = TerrainMaterial()
+        self._selected = 0
+        self._drag = None
 
     def set_heights(self, heights_m: np.ndarray | None) -> None:
         if heights_m is None or heights_m.size == 0:
@@ -137,6 +144,73 @@ class HeightHistogram(QWidget):
     def set_material(self, material: TerrainMaterial) -> None:
         self._material = material
         self.update()
+
+    def set_selected(self, index: int) -> None:
+        if index != self._selected:
+            self._selected = index
+            self._drag = None
+        self.update()
+
+    def _handles(self) -> dict[str, QPointF]:
+        if self._counts is None or not 0 < self._selected < len(self._material.biomes):
+            return {}
+        biome = self._material.biomes[self._selected]
+        if not biome.auto:
+            return {}
+        lo, hi = self._range
+        width = max(1, self.width() - 12)
+
+        def x(value):
+            return 6 + (value - lo) / (hi - lo) * width
+
+        band = biome.height
+        handles = {}
+        for key, value in (("min", band.min), ("max", band.max)):
+            if value is not None and lo <= value <= hi:
+                handles[key] = QPointF(x(value), self.height() - (24 if key == "min" else 14))
+        for key, edge, direction in (("fade_min", band.min, -1), ("fade_max", band.max, 1)):
+            if edge is not None and lo <= edge + direction * band.fade / 2 <= hi:
+                handles[key] = QPointF(x(edge + direction * band.fade / 2), self.height() - 5)
+        return handles
+
+    def mousePressEvent(self, event):  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        handles = self._handles()
+        if not handles:
+            return
+        name, point = min(handles.items(), key=lambda item: (item[1] - event.position()).manhattanLength())
+        if (point - event.position()).manhattanLength() <= 12:
+            self._drag = name
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+            event.accept()
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        if self._drag is None:
+            self.setCursor(Qt.CursorShape.PointingHandCursor if any(
+                (point - event.position()).manhattanLength() <= 12 for point in self._handles().values())
+                           else Qt.CursorShape.ArrowCursor)
+            return
+        biome = self._material.biomes[self._selected]
+        band = biome.height
+        lo, hi = self._range
+        value = lo + min(1.0, max(0.0, (event.position().x() - 6) / max(1, self.width() - 12))) * (hi - lo)
+        value = round(value, 1)
+        if self._drag == "min":
+            band = Band(min(value, band.max) if band.max is not None else value, band.max, band.fade)
+        elif self._drag == "max":
+            band = Band(band.min, max(value, band.min) if band.min is not None else value, band.fade)
+        else:
+            anchor = band.min if self._drag == "fade_min" else band.max
+            distance = max(0.0, anchor - value if self._drag == "fade_min" else value - anchor)
+            band = Band(band.min, band.max, round(2 * distance, 1))
+        self.bandChanged.emit(band)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._drag is not None:
+            self._drag = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
 
     def _flat_biome(self, height: float):
         """Biome with the largest share at ``height`` on flat ground (automatic rules only)."""
@@ -159,20 +233,20 @@ class HeightHistogram(QWidget):
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Height histogram appears with a heightmap")
             return
         lo, hi = self._range
-        w, h = self.width(), self.height() - 2
+        w, h = self.width(), self.height() - 34
         peak = float(self._counts.max()) or 1.0
         n = len(self._counts)
         for i, value in enumerate(self._counts):
             height = lo + (i + 0.5) / n * (hi - lo)
             color = QColor(*self._flat_biome(height).color)
-            x0 = int(i * w / n)
-            x1 = int((i + 1) * w / n)
+            x0 = int(6 + i * (w - 12) / n)
+            x1 = int(6 + (i + 1) * (w - 12) / n)
             bar = int(value / peak * h)
             painter.fillRect(x0, h - bar + 1, max(1, x1 - x0 - 1), bar, color)
 
         def mark(value, color, style=Qt.PenStyle.SolidLine):
             if lo <= value <= hi:
-                x = (value - lo) / (hi - lo) * w
+                x = 6 + (value - lo) / (hi - lo) * (w - 12)
                 painter.setPen(QPen(color, 1, style))
                 painter.drawLine(int(x), 0, int(x), h)
 
@@ -181,10 +255,30 @@ class HeightHistogram(QWidget):
                 for edge in (biome.height.min, biome.height.max):
                     if edge is not None:
                         mark(edge, QColor(*biome.color).lighter(130), Qt.PenStyle.DashLine)
+        if 0 < self._selected < len(self._material.biomes):
+            biome = self._material.biomes[self._selected]
+            if biome.auto:
+                painter.setPen(QPen(QColor(*biome.color).lighter(170), 2))
+                points = []
+                for i in range(97):
+                    height = lo + (hi - lo) * i / 96
+                    points.append(QPointF(6 + (w - 12) * i / 96,
+                                          h - 4 - _band_factor(biome.height, height) * max(1, h - 20)))
+                for start, end in zip(points, points[1:]):
+                    painter.drawLine(start, end)
         painter.setPen(QColor(150, 158, 168))
         painter.drawText(4, 12, f"{lo:.0f} m")
         text = f"{hi:.0f} m"
         painter.drawText(w - painter.fontMetrics().horizontalAdvance(text) - 4, 12, text)
+        handles = self._handles()
+        for name, point in handles.items():
+            color = QColor(*self._material.biomes[self._selected].color).lighter(150)
+            painter.setPen(QPen(QColor(245, 245, 245), 1))
+            painter.setBrush(QColor(245, 245, 245) if name.startswith("fade") else color)
+            if name.startswith("fade"):
+                painter.drawRect(int(point.x()) - 4, int(point.y()) - 4, 8, 8)
+            else:
+                painter.drawEllipse(point, 5, 5)
 
 
 class MainWindow(QMainWindow):
@@ -212,6 +306,7 @@ class MainWindow(QMainWindow):
         self._check_pending = False
         self._road_point_index = -1
         self._road_loading = False
+        self._height_controls_loading = False
 
         self._make_widgets()
         self._make_menu()
@@ -356,6 +451,32 @@ class MainWindow(QMainWindow):
         group = QGroupBox("Texturing")
         form = QFormLayout(group)
         form.addRow(self.histogram)
+        self.height_biome = QComboBox()
+        self.height_auto = QCheckBox("Automatic")
+        biome_row = QHBoxLayout()
+        biome_row.addWidget(self.height_biome, 1)
+        biome_row.addWidget(self.height_auto)
+        form.addRow("Biome", biome_row)
+        self.height_use_min = QCheckBox("From")
+        self.height_use_max = QCheckBox("To")
+        self.height_band_min = _spin(-20000, 20000, 0, 1, 1, " m")
+        self.height_band_max = _spin(-20000, 20000, 0, 1, 1, " m")
+        self.height_band_fade = _spin(0, 40000, 0, 1, 1, " m")
+        self.height_band_min.setAccessibleName("Biome lower height limit")
+        self.height_band_max.setAccessibleName("Biome upper height limit")
+        self.height_band_fade.setAccessibleName("Biome height fade width")
+        self.height_band_fade.setToolTip("Total transition width, centred on each limit and shared by both edges.")
+        for checkbox, spin in ((self.height_use_min, self.height_band_min),
+                               (self.height_use_max, self.height_band_max)):
+            row = QHBoxLayout()
+            row.addWidget(checkbox)
+            row.addWidget(spin, 1)
+            form.addRow(row)
+        form.addRow("Fade (both edges)", self.height_band_fade)
+        self.height_hint = QLabel("Drag circles for limits; drag the square for fade.")
+        self.height_hint.setWordWrap(True)
+        self.height_hint.setStyleSheet("color: #9aa3ad")
+        form.addRow(self.height_hint)
         form.addRow("Texture error", self.texture_error)
         form.addRow("Texture detail", self.texture_detail)
         legend = QLabel("Biomes and surfaces are set on the Material tab and painted on the map. The build "
@@ -575,6 +696,14 @@ class MainWindow(QMainWindow):
         self.export_selected.clicked.connect(lambda: self._start_export("selected"))
         self.export_all.clicked.connect(lambda: self._start_export("all"))
         self.material_panel.changed.connect(self._material_changed)
+        self.height_biome.currentIndexChanged.connect(self._height_biome_selected)
+        self.height_auto.toggled.connect(self._height_auto_changed)
+        self.height_use_min.toggled.connect(lambda enabled: self._height_limit_changed("min", enabled))
+        self.height_use_max.toggled.connect(lambda enabled: self._height_limit_changed("max", enabled))
+        self.height_band_min.valueChanged.connect(lambda value: self._height_value_changed("min", value))
+        self.height_band_max.valueChanged.connect(lambda value: self._height_value_changed("max", value))
+        self.height_band_fade.valueChanged.connect(lambda value: self._height_value_changed("fade", value))
+        self.histogram.bandChanged.connect(self._height_band_changed)
         for signal in (self.material_panel.changed, self.export_dir.textChanged, self.lod_distance.valueChanged,
                        self.embed.toggled):
             signal.connect(self._schedule_check)
@@ -778,6 +907,7 @@ class MainWindow(QMainWindow):
             return False
         self.hm = None
         self._preview = None
+        self.histogram.set_heights(None)
         self._source_path = manifest["source"]["path"]
         self.source.setText(manifest["source"]["path"])
         self.source_info.setText(f"Tiles from {manifest['_dir']} (heightmap not loaded, "
@@ -812,8 +942,11 @@ class MainWindow(QMainWindow):
             step = max(1, int(np.ceil(max(self.hm.data.shape) / 1024)))
             self._relief = hillshade(self._preview, sp * step, scale)
             self.histogram.set_heights(self._preview * scale + offset)
+            self._height_biome_selected()
             self._field = None
             self._update_map_image()
+        elif self.hm is None:
+            self.histogram.set_heights(None)
         self._update_tile_info()
         self._update_brush()
 
@@ -841,11 +974,123 @@ class MainWindow(QMainWindow):
         return BuildParams(input_path="", out_dir="", height_min_m=self.height_min.value(),
                            height_max_m=self.height_max.value(), remap_float=self.remap.isChecked())
 
+    def _refresh_height_controls(self) -> None:
+        material = self._material()
+        selected = self.height_biome.currentData()
+        selected_name = self.height_biome.currentText()
+        self._height_controls_loading = True
+        self.height_biome.clear()
+        for biome in material.biomes:
+            self.height_biome.addItem(swatch(biome.color), biome.name, biome)
+        index = next((i for i, biome in enumerate(material.biomes) if biome is selected), -1)
+        if index < 0:
+            index = max(0, self.height_biome.findText(selected_name))
+        self.height_biome.setCurrentIndex(index)
+        self._height_controls_loading = False
+        self._height_biome_selected()
+
+    def _height_biome_selected(self) -> None:
+        if self._height_controls_loading:
+            return
+        index = self.height_biome.currentIndex()
+        biomes = self._material().biomes
+        if not 0 <= index < len(biomes):
+            self.histogram.set_selected(-1)
+            return
+        biome = biomes[index]
+        band = biome.height
+        self._height_controls_loading = True
+        self.height_auto.setChecked(biome.auto)
+        self.height_auto.setEnabled(index > 0)
+        self.height_use_min.setChecked(band.min is not None)
+        self.height_use_max.setChecked(band.max is not None)
+        lo, hi = self.histogram._range
+        limits = [lo, hi] + [value for value in (band.min, band.max) if value is not None]
+        for spin in (self.height_band_min, self.height_band_max):
+            spin.setRange(min(-20000, *limits), max(20000, *limits))
+        self.height_band_fade.setMaximum(max(40000, band.fade, 2 * (hi - lo)))
+        self.height_band_min.setValue(band.min if band.min is not None else lo)
+        self.height_band_max.setValue(band.max if band.max is not None else hi)
+        self.height_band_fade.setValue(band.fade)
+        editable = index > 0 and biome.auto
+        for widget in (self.height_use_min, self.height_use_max):
+            widget.setEnabled(editable)
+        self.height_band_min.setEnabled(editable and band.min is not None)
+        self.height_band_max.setEnabled(editable and band.max is not None)
+        self.height_band_fade.setEnabled(editable and not band.is_open())
+        if index == 0:
+            self.height_hint.setText("Fallback biome fills areas left by other automatic biomes.")
+        elif not biome.auto:
+            self.height_hint.setText("Paint-only biome. Enable Automatic to edit its height limits.")
+        elif band.is_open():
+            self.height_hint.setText("Enable From or To to add a height limit.")
+        else:
+            self.height_hint.setText("Upper circle: From; lower circle: To; squares: fade. "
+                                     "Both edges share one fade.")
+        self.histogram.set_selected(index)
+        self._height_controls_loading = False
+
+    def _height_auto_changed(self, enabled: bool) -> None:
+        index = self.height_biome.currentIndex()
+        if self._height_controls_loading or index <= 0:
+            return
+        self._material().biomes[index].auto = enabled
+        self.material_panel.refresh()
+        self.material_panel.changed.emit()
+
+    def _height_limit_changed(self, side: str, enabled: bool) -> None:
+        if self._height_controls_loading:
+            return
+        index = self.height_biome.currentIndex()
+        if index <= 0:
+            return
+        band = self._material().biomes[index].height
+        value = (self.height_band_min if side == "min" else self.height_band_max).value() if enabled else None
+        if value is not None:
+            if side == "min" and band.max is not None:
+                value = min(value, band.max)
+            elif side == "max" and band.min is not None:
+                value = max(value, band.min)
+        self._height_band_changed(Band(value if side == "min" else band.min,
+                                      value if side == "max" else band.max, band.fade))
+
+    def _height_value_changed(self, side: str, value: float) -> None:
+        if self._height_controls_loading:
+            return
+        index = self.height_biome.currentIndex()
+        if index <= 0:
+            return
+        band = self._material().biomes[index].height
+        if side == "min":
+            value = min(value, band.max) if band.max is not None else value
+            updated = Band(value, band.max, band.fade)
+        elif side == "max":
+            value = max(value, band.min) if band.min is not None else value
+            updated = Band(band.min, value, band.fade)
+        else:
+            updated = Band(band.min, band.max, value)
+        self._height_band_changed(updated)
+
+    def _height_band_changed(self, band: Band) -> None:
+        index = self.height_biome.currentIndex()
+        if self._height_controls_loading or index <= 0:
+            return
+        biome = self._material().biomes[index]
+        if not biome.auto:
+            return
+        if band == biome.height:
+            self._height_biome_selected()
+            return
+        biome.height = band
+        self.material_panel.refresh()
+        self.material_panel.changed.emit()
+
     # ---------------------------------------------------------- texturing
     def _material_changed(self) -> None:
         """Any edit of surfaces, biomes, blending or paint."""
         material = self._material()
         self.histogram.set_material(material)
+        self._refresh_height_controls()
         self._material_timer.start()
         current = self.paint_biome.currentText()
         self.paint_biome.blockSignals(True)
