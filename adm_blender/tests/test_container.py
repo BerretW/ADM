@@ -70,12 +70,35 @@ class ContainerTests(unittest.TestCase):
                                     cwd=output, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             expected = {p.relative_to(FIXTURES): p.read_bytes()
-                        for p in FIXTURES.rglob("*") if p.is_file()}
+                        for p in FIXTURES.rglob("*")
+                        if p.is_file() and "advanced-materials" not in p.relative_to(FIXTURES).parts}
             actual = {p.relative_to(output): p.read_bytes() for p in output.rglob("*") if p.is_file()}
             self.assertEqual(actual.keys(), expected.keys())
             for name in expected:
                 with self.subTest(fixture=str(name)):
                     self.assertEqual(actual[name], expected[name])
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is required for material fixtures")
+    def test_advanced_material_fixture_generator(self):
+        from PIL import Image
+
+        source = FIXTURES / "advanced-materials"
+        script = FIXTURES.parent / "tools" / "generate_advanced_material_references.py"
+        with tempfile.TemporaryDirectory(prefix="adm_material_fixture_") as tmp:
+            output = Path(tmp)
+            result = subprocess.run([sys.executable, str(script), "--output-dir", str(output)],
+                                    cwd=output, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            expected = {p.relative_to(source) for p in source.rglob("*") if p.is_file()}
+            actual = {p.relative_to(output) for p in output.rglob("*") if p.is_file()}
+            self.assertEqual(actual, expected)
+            for name in expected:
+                with self.subTest(fixture=str(name)):
+                    if name.suffix == ".png":
+                        with Image.open(source / name) as a, Image.open(output / name) as b:
+                            self.assertEqual((a.mode, a.size, a.tobytes()), (b.mode, b.size, b.tobytes()))
+                    else:
+                        self.assertEqual((source / name).read_bytes(), (output / name).read_bytes())
 
     def test_interactive_fixture_is_independent_of_zlib_backend(self):
         script = FIXTURES.parent / "tools" / "build_interactive_fixture.py"

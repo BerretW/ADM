@@ -45,6 +45,7 @@ def compose_preview(surfaces: list[Surface], base_weights: list[float], *, size:
     base = np.broadcast_to(weights[:, None, None], (len(surfaces), size, size))
     colors = []
     heights = []
+    occlusion = []
     for surface in surfaces:
         if surface.albedo:
             color = _sample_repeat(_read_rgba(surface.albedo), surface.repeat_m, size)[..., :3]
@@ -60,6 +61,14 @@ def compose_preview(surfaces: list[Surface], base_weights: list[float], *, size:
             heights.append(np.clip(height * surface.height_scale + surface.height_bias, 0.0, 1.0))
         else:
             heights.append(np.full((size, size), 0.5, dtype=np.float64))
+        if surface.ao_map.path:
+            ao_rgba = _sample_repeat(_read_rgba(surface.ao_map.path), surface.repeat_m, size)
+            ao = ao_rgba[..., surface.ao_map.channel].astype(np.float64) / 255.0
+            if surface.ao_map.invert:
+                ao = 1.0 - ao
+            occlusion.append(1.0 + (ao - 1.0) * surface.ao_strength)
+        else:
+            occlusion.append(np.ones((size, size), dtype=np.float64))
     final = base.copy()
     if height_blend and strength > 0:
         height_stack = np.stack(heights)
@@ -71,6 +80,8 @@ def compose_preview(surfaces: list[Surface], base_weights: list[float], *, size:
                           where=denominator[None, ...] > 0)
         final = base * (1.0 - strength) + aware * strength
     color = sum(weight[..., None] * layer for weight, layer in zip(final, colors))
+    ao = sum(weight * layer for weight, layer in zip(final, occlusion))
+    color *= ao[..., None]
     rgb = np.clip(color + 0.5, 0, 255).astype(np.uint8)
     return rgb, final
 
@@ -118,8 +129,9 @@ class HeightBlendPreview(QDialog):
         self.lighting.addItem("Soft", "soft")
         self.weight_label = QLabel()
         self.weight_label.setWordWrap(True)
-        self.status = QLabel("Preview composites albedo and tint. Select a layer to inspect its final weight. "
-                             "AO, normal, emission and parallax effects are not composited here.")
+        self.status = QLabel("Preview composites albedo, tint and an approximate AO darkening. "
+                             "Select a layer to inspect its final weight. "
+                             "Normal, emission and parallax effects are not composited here.")
         self.status.setWordWrap(True)
         self.plotter = QtInteractor(self)
         self.plotter.set_background("#15181c", top="#3b4652")

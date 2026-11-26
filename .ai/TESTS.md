@@ -74,3 +74,49 @@
 - Blender node, round-trip, codec, and rendered/baked shader tests.
 - Consumer-by-consumer compatibility checks and repository CI/build matrix.
 - Dependency audit and validation of untrusted texture inputs.
+
+## ENUM and build investigation, 2026-11-26
+- Baseline `adm.terrain.four_layer@2.1.0` isolated test: stopped after the
+  45-second bound; repeated recursion and RNA enum warnings occurred during
+  configuration. The Blender process consumed CPU and did not reach export.
+- Blender 5.2.3: 47 isolated profile scenarios completed; 46 passed initially.
+  The remaining `adm.surface.two_layer@1.1.0` exposed an advanced-profile
+  data-texture color-space bug. After repair, all four advanced profiles passed
+  isolated import/export tests, including enum and texture color-space checks.
+- Complete shader-profile test: passed in 30 seconds; enum save/load and repeated
+  version-switch regression: passed; Cycles preview test: passed in 100 seconds.
+  The bake measured `(0.01798621, 0, 0.98201376)` against the reference
+  `(0.01798621, 0, 0.98201379)`. The tests emitted no enum mismatch or recursion
+  warnings. Existing Blender dependency-cycle warnings remain.
+- First check-only build: Python tests failed because the separate procedural
+  reference generator was not included in the original fixture rebuild check.
+  Both generators now have separate passing tests.
+- Second check-only build was interrupted while printing preview dependency-cycle
+  diagnostics. It passed Python, standard, shader registry, fixture, and Blender
+  profile checks before interruption; it did not produce a final report.
+- A subsequent `build.bat -CheckOnly` completed with exit 0: 30 steps passed,
+  2,070 cases passed, 10 cases skipped, and none failed. The skipped external
+  asset cases lacked local files or rights/binding approval. The shader profile
+  and preview processes exited 0 in 31.2 and 122.6 seconds, respectively.
+  Full dependency-cycle diagnostics remain in `dist/blender-test-logs/`.
+- World Tile: 67 tests passed, including a reference project build producing four
+  neighbouring tiles with three LODs and existing material texture paths.
+  Core GPU-texture and material-math tests: 31 passed.
+- The reference project also exported four ADM tiles with export validation
+  enabled; this does not verify portability outside the repository.
+- The advanced Blender scene generator saved a `.blend` successfully in a
+  separate process (36.9 seconds, exit 0). Its first render was too dark to
+  demonstrate the intended comparisons. Its packed procedural images contained
+  black pixels because setting their color space after writing pixels reset the
+  image. Setting color space first preserved test pixels across save/reload.
+  The corrected scene regenerated (30.1 seconds), reopened, and rendered
+  successfully (2.8 seconds). Creating vertex colors before the shader nodes
+  made the classic/height comparison visible for all four profiles. The
+  complete required reference ADM scene remains unverified.
+- `test_advanced_scene_images_blender.py` passed in 2.4 seconds and is included
+  in subsequent builds; it was added after the reported check-only build.
+- The bounded runner terminated a test Blender child at a 0.1-second timeout,
+  captured separate logs, and returned the expected exit code 124.
+- Three targeted World Tile multi-surface preview tests passed, including AO
+  channel, inversion, strength, missing-map and zero-weight behavior.
+- After that change, the complete World Tile suite passed: 68 tests, no skips.

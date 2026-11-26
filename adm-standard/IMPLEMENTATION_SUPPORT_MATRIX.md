@@ -6,23 +6,27 @@ represented as complete renderer conformance.
 
 | Consumer | AO | Height | Height Blend | Parallax | POM | GPU Formats | Round-trip |
 |---|---|---|---|---|---|---|---|
-| ADM Blender material preview | Full | Partial | Full | Fallback | Fallback | Partial | Full |
-| ADM Blender import/export | Full metadata | Full metadata | Full node math | Partial preview | Partial preview | Full codecs | Full typed parameters |
-| Apparatus World Tile material preview | Full | Full | Unsupported | Unsupported | Unsupported | Partial | Full |
-| Apparatus World Tile multi-surface preview | Fallback | Full | Full weight result | Unsupported | Unsupported | Partial | Full weight controls |
-| Apparatus World Tile 3D terrain material mode | Fallback | Fallback | Unsupported | Unsupported | Unsupported | Partial | Full export data |
-| Apparatus World Tile ADM export | Full | Full | Full metadata | Full metadata | Full metadata | Full primary/fallback | Full where profile 2.1 accepts data |
-| ADM independent validator | Full contract | Full contract | Full invariant math | Full contract | Full contract | Full header/payload validation | Full serialization validation |
-| Shared ADM GPU codec | Not applicable | Full R8/R16/BC4 | Not applicable | Not applicable | Not applicable | Full R8/R16/BC4/BC5/BC7 primary | Byte-preserving supported inputs |
-| ADM CLI/reference tools | Full data validation | Full data validation | Full reference math tests | Contract validation | Contract validation | Partial independent CLI decoding | Full document validation |
+| ADM Blender material preview | Fallback | Partial | Partial | Unsupported | Unsupported | Partial | Not applicable |
+| ADM Blender import/export | Partial | Partial | Partial | Partial | Partial | Partial | Partial |
+| World Tile single-surface preview | Partial | Partial | Not applicable | Unsupported | Unsupported | Partial | Not applicable |
+| World Tile multi-surface preview | Partial | Partial | Partial | Unsupported | Unsupported | Partial | Not applicable |
+| World Tile 3D terrain material mode | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | Partial | Not applicable |
+| World Tile ADM export | Partial | Partial | Partial | Partial | Partial | Partial | Partial |
+| ADM validators | Partial | Partial | Partial | Partial | Partial | Partial | Not applicable |
+| Shared ADM GPU codec | Not applicable | Partial | Not applicable | Not applicable | Not applicable | Partial | Partial |
+| ADM CLI/reference tools | Partial | Partial | Partial | Partial | Partial | Partial | Partial |
 
 ## Explicit limitations
 
-- Blender preview AO is implemented in the preview node graph where supported; POM is
-  represented as metadata plus a conservative preview approximation.
-- World Tile still cannot claim AO, normal, emission, parallax or POM in its CPU
-  multi-surface composition unless the corresponding real renderer path is implemented.
+- Blender approximates layer AO by darkening the preview color. It retains parallax
+  and POM parameters, but does not preview their UV offsets.
+- World Tile's CPU multi-surface composition approximates AO by darkening the
+  final color. It does not render normal, emission, parallax, or POM effects.
 - Portable PBR fallback textures preserve only data representable in portable PBR and must
   be labeled as a fallback, never as layered shader conformance.
 - DDS/KTX2 primary bytes are preserved only when the source role and color space match.
+- BC7 decoding requires `texture2ddecoder`; the Blender extension does not declare a
+  bundled wheel. Standalone package availability remains unverified.
+- Validators check contracts and references; they do not render or prove visual
+  conformance. The reference math is not a renderer.
 - Independent implementation certification requires separate render/reference comparisons.

@@ -445,6 +445,7 @@ try {
         "test_shader_enums_blender.py",
         "test_shader_profiles.py",
         "test_shader_preview.py",
+        "test_advanced_scene_images_blender.py",
         "test_lod_generator.py",
         "test_texture_formats.py",
         "test_component_animation_blender.py",
@@ -463,9 +464,17 @@ try {
                 $env:ADM_QA_METRICS = "1"
             }
             $testPath = ".\adm_blender\tests\$test"
-            Invoke-Step -Name "Blender: $test" -Executable $blenderExe -Arguments @(
-                "-b", "--factory-startup", "--python-exit-code", "1", "--python", $testPath
-            )
+            if ($test -in @("test_shader_enums_blender.py", "test_shader_profiles.py",
+                           "test_shader_preview.py")) {
+                Invoke-Step -Name "Blender: $test" -Executable $pythonExe -Arguments @(
+                    ".\tools\run_blender_test.py", $blenderExe, $testPath, "240"
+                )
+            }
+            else {
+                Invoke-Step -Name "Blender: $test" -Executable $blenderExe -Arguments @(
+                    "-b", "--factory-startup", "--python-exit-code", "1", "--python", $testPath
+                )
+            }
         }
     }
     finally {

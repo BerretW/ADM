@@ -7,9 +7,11 @@ from collections import Counter
 import numpy as np
 
 from awt.heightmap import load_heightmap
+from awt.adm_export import export_tiles
 from awt.material import PAINT_AUTO, Band, Biome, BiomeSurface, TerrainMaterial, default_biomes
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields
+from awt.project import load_project
 from awt.roads import Road, rasterize, segments
 from awt.texturing import compile_rules, surface_weights
 
@@ -53,6 +55,27 @@ class PipelineTest(unittest.TestCase):
         params = BuildParams(input_path=src, out_dir=os.path.join(self.tmp.name, "out"), **kwargs)
         build(params)
         return load_manifest(params.out_dir)
+
+    def test_advanced_reference_project_builds_neighboring_tiles(self):
+        project_path = os.path.join(os.path.dirname(__file__), "..", "reference_project", "advanced_reference.awtp")
+        project = load_project(project_path)
+        project.params.out_dir = os.path.join(self.tmp.name, "reference_tiles")
+        project.params.threads = 2
+        self.assertEqual(len(project.material.surfaces), 5)
+        self.assertTrue(project.material.height_blend_enabled)
+        self.assertTrue(project.material.roads)
+        self.assertTrue(all(os.path.isfile(path) for path in project.material.textures()))
+        self.assertTrue(all(surface.roughness_map.path for surface in project.material.surfaces))
+        build(project.params, project.material)
+        manifest = load_manifest(project.params.out_dir)
+        self.assertEqual(len(manifest["tiles"]), 4)
+        self.assertTrue(all(len(tile["lods"]) == 3 for tile in manifest["tiles"]))
+        project.export.out_dir = os.path.join(self.tmp.name, "reference_adm")
+        project.export.validate = True
+        result = export_tiles(manifest, project.material, project.export, "all")
+        self.assertEqual(len(result["written"]), 4)
+        self.assertTrue(all(os.path.isfile(os.path.join(project.export.out_dir, f"{tile}.adm"))
+                            for tile in result["written"]))
 
     def test_biome_noise_varies_surfaces_without_changing_old_rules(self):
         data = np.zeros((65, 65), np.float32)

@@ -6,9 +6,11 @@ Run:
 
 import os
 import sys
+from itertools import product
 
 import bpy
 import numpy as np
+from mathutils import Vector
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO)
@@ -18,13 +20,14 @@ import adm_blender
 
 def make_image(name, fn, size=64):
     image = bpy.data.images.new(name, size, size, alpha=True, float_buffer=True)
+    image.colorspace_settings.name = "Non-Color"
     px = np.zeros((size * size * 4,), dtype=np.float32)
     for y in range(size):
         for x in range(size):
             i = (y * size + x) * 4
             px[i:i + 4] = fn(x, y, size)
     image.pixels.foreach_set(px)
-    image.colorspace_settings.name = "Non-Color"
+    image.update()
     image.pack()
     return image
 
@@ -47,6 +50,7 @@ def main(output):
                       (1.0 if (x // 8 + y // 8) % 2 else 0.55, 0.0, 0.0, 1.0))
     normal = make_image("Procedural Normal", lambda x, y, s:
                         (0.5 + x / s * 0.1, 0.5 + y / s * 0.1, 1.0, 1.0))
+    mask = make_image("Procedural Blend Mask", lambda x, y, s: (0.5, 0.5, 0.0, 0.0))
 
     profiles = (
         (K.SHADER_TERRAIN_4[0], K.SHADER_PROFILE_LAYERED_HEIGHT_V1),
@@ -54,11 +58,14 @@ def main(output):
         (K.SHADER_TWO_LAYER[0], K.SHADER_PROFILE_LAYERED_HEIGHT_V1),
         (K.SHADER_LAYERED[0], K.SHADER_PROFILE_LAYERED_HEIGHT_V2),
     )
-    for index, (shader_id, version) in enumerate(profiles):
+    for (index, (shader_id, version)), height_blend in product(enumerate(profiles), (False, True)):
         kind = K.OFFICIAL_SHADER_KINDS[(shader_id, version)]
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.7, location=((index - 1.5) * 1.8, 0.0, 0.7))
+        bpy.ops.mesh.primitive_uv_sphere_add(
+            radius=0.7, location=((index - 1.5) * 1.8, 1.0 if height_blend else -1.0, 0.7))
         obj = bpy.context.object
-        obj.name = f"{shader_id}@{version}"
+        obj.name = f"{shader_id}@{version} {'Height' if height_blend else 'Classic'}"
+        attr = obj.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
+        attr.data.foreach_set("color", np.tile((0.5, 0.5, 0.0, 0.0), len(attr.data)).ravel())
         mat = bpy.data.materials.new(obj.name)
         obj.data.materials.append(mat)
         materials.convert_to_adm_material(mat)
@@ -66,20 +73,22 @@ def main(output):
         mat.adm.shader_version = version
         mat.adm.vertex_controls_enabled = True
         count = K.SHADER_LAYERED_HEIGHT_COUNTS[(shader_id, version)]
+        if mat.adm.params.get("blend_mask") is not None:
+            mat.adm.params["blend_mask"].image = mask
         for i in range(count):
+            mat.adm.params[f"layer{i}_base_color"].value_vec = (
+                (0.8, 0.12, 0.04, 1.0) if i % 2 == 0 else (0.04, 0.15, 0.8, 1.0))
             mat.adm.params[f"layer{i}_height_texture"].image = high if i % 2 else red
             mat.adm.params[f"layer{i}_height_scale"].value_f = 1.0
             mat.adm.params[f"layer{i}_height_bias"].value_f = 0.0
             mat.adm.params[f"layer{i}_ao_strength"].value_f = 1.0
             mat.adm.params[f"layer{i}_normal"].image = normal
-        mat.adm.params["height_blend_enabled"].value_bool = True
+        mat.adm.params["height_blend_enabled"].value_bool = height_blend
         mat.adm.params["height_blend_transition"].value_f = 0.2
         mat.adm.params["height_blend_strength"].value_f = 1.0
         mat.adm.params["parallax_mode"].value_enum = "PARALLAX_OCCLUSION"
         mat.adm.params["parallax_min_steps"].value_f = 8
         mat.adm.params["parallax_max_steps"].value_f = 32
-        attr = obj.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
-        attr.data.foreach_set("color", np.tile((0.25, 0.25, 0.25, 0.25), len(attr.data)).ravel())
         materials.refresh_shader_preview(mat)
 
     bpy.ops.mesh.primitive_plane_add(size=12.0, location=(0.0, 0.0, 0.0))
@@ -87,7 +96,8 @@ def main(output):
     bpy.context.object.data.energy = 2000
     bpy.ops.object.camera_add(location=(0.0, -8.0, 5.0))
     camera = bpy.context.object
-    camera.rotation_euler = (0.55, 0.0, 0.0)
+    camera.data.lens = 35
+    camera.rotation_euler = (Vector((0.0, 0.0, 0.7)) - camera.location).to_track_quat("-Z", "Y").to_euler()
     scene.camera = camera
     scene.render.filepath = "//ADM_Advanced_Material_Test_Scene.png"
 

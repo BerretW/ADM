@@ -9,7 +9,7 @@
   "height_min_m": 0.0,
   "height_max_m": 500.0,
   "remap_float": false,
-  "tile_cells": 256,
+  "tile_cells": 128,
   "max_errors_m": [
    1.0,
    4.0,
@@ -40,7 +40,7 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "",
+     "path": "../../adm-standard/fixtures/advanced-materials/rock/roughness.png",
      "channel": 0,
      "invert": false
     },
@@ -74,7 +74,7 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "",
+     "path": "../../adm-standard/fixtures/advanced-materials/cobblestone/roughness.png",
      "channel": 0,
      "invert": false
     },
@@ -108,7 +108,7 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "",
+     "path": "../../adm-standard/fixtures/advanced-materials/sand/roughness.png",
      "channel": 0,
      "invert": false
     },
@@ -142,7 +142,7 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "",
+     "path": "../../adm-standard/fixtures/advanced-materials/dirt/roughness.png",
      "channel": 0,
      "invert": false
     },
@@ -176,7 +176,7 @@
     },
     "roughness": 0.82,
     "roughness_map": {
-     "path": "",
+     "path": "../../adm-standard/fixtures/advanced-materials/grass/roughness.png",
      "channel": 0,
      "invert": false
     },

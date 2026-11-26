@@ -10,11 +10,12 @@
   working World Tile biome surface noise / terrain-material workflows.
 
 ## Current milestone
-M2 GPU formats, M3 material/shader contracts, M4 shared reference behavior,
-M6 World Tile authoring and texture-set import, and M7 World Tile advanced
-export are implemented and verified. Per user clarification, M8 requires
-integration into existing authoring tools, not creation of a standalone ADM
-Editor. Continue with Blender integration, then the remaining consumers.
+The mission remains incomplete. Blender shader ENUM recursion is fixed and its
+focused tests pass. World Tile material/POM previews, advanced reference assets,
+seam shader evaluation, distributed codec verification, and the final full build
+remain open. A check-only build passed with documented external-asset skips;
+final distribution packaging remains blocked by the open mission work.
+See `TASKS.md` and `TESTS.md` for current evidence.
 
 ## Work log
 - 2026-11-26: Audited mission outline and repository status. Copied the supplied
@@ -108,5 +109,27 @@ Editor. Continue with Blender integration, then the remaining consumers.
   continued with the independent Blender milestone.
 
 ## Blockers
-- None identified yet. Scope is large; continue milestone-by-milestone and
-  record any real blocker with evidence rather than claiming completion.
+- No external blocker has been established for the remaining mission work.
+- Mission completion remains blocked by the open implementation and verification
+  work in `TASKS.md`; a passing check-only build is not a release.
+
+## 2026-11-26 ENUM diagnosis
+- The `value_enum` items callback read `self.value_enum`, recursively invoking
+  itself; repeated `RecursionError` and RNA warnings caused sustained CPU use
+  and uncontrolled output. An isolated process was stopped after a timeout.
+- Dynamic ENUM items now retain their strings and explicit stable numeric values.
+  Unknown stored integers remain visibly invalid rather than being reinterpreted.
+  Shader-switch callbacks guard nested rebuilds, and advanced texture imports
+  restore linear data texture color spaces.
+- Four advanced profile import/export scenarios, all 47 isolated profile
+  scenarios, the full profile test, the Blender project save/load enum test,
+  and a Cycles height-blending bake passed in targeted runs. See `TESTS.md`.
+- The prior checklist incorrectly marked missing preview and reference work as
+  complete; those items have been reopened.
+- The subsequent bounded check-only build completed successfully (30 steps,
+  2,070 reported passing cases, 10 skips, Blender 5.2.3 LTS). The preview
+  test completed in 122.6 seconds. Blender still emitted dependency-cycle
+  diagnostics, retained in the test logs; these are not claimed as resolved.
+- World Tile's multi-surface preview now approximates weighted per-layer AO by
+  darkening the composed color, honoring map channel, inversion and strength.
+  Normal, emission, parallax and POM remain unsupported in this preview.

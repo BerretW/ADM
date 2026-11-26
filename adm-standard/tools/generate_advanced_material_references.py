@@ -8,6 +8,7 @@ The generated PNG files contain deterministic noise and have no third-party asse
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -98,6 +99,10 @@ def generate(name: str, seed: int, albedo: tuple[int, int, int]) -> dict:
 
 
 def main() -> None:
+    global OUT
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, default=OUT)
+    OUT = parser.parse_args().output_dir
     OUT.mkdir(parents=True, exist_ok=True)
     materials = [
         generate("rock", 11, (105, 104, 96)),

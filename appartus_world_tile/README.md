@@ -94,7 +94,8 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   **Compare surface blending** opens a separate two-to-four-layer preview. Set base weights,
   toggle height blending, adjust transition and strength, and select a layer to inspect its
   final weight. Drag to rotate, pan, or zoom; choose a studio, grazing, or soft light. This
-  preview composites albedo and tint; it does not render AO, normal, emission, or parallax effects.
+  preview composites albedo and tint and approximates AO by darkening the final color. It does
+  not render normal, emission, or parallax effects.
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.

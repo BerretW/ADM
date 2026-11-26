@@ -117,6 +117,22 @@ class TerrainWizardTest(unittest.TestCase):
                                          height_blend=True, transition=0.01)
             self.assertTrue((one_hot[1] == 0).all())
 
+    def test_multi_surface_preview_uses_weighted_ao_channel_inversion_and_strength(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "ao.png")
+            Image.new("RGBA", (4, 4), (0, 64, 255, 255)).save(path)
+            occluded = Surface("occluded", color=[200, 200, 200], repeat_m=15,
+                               ao_map=MapSlot(path, channel=1, invert=True), ao_strength=0.5)
+            clear = Surface("clear", color=[200, 200, 200], repeat_m=15)
+            rgb, weights = compose_preview([occluded, clear], [1, 1], size=4)
+            expected = round(200 * (1 - 0.5 * 0.5 * 64 / 255))
+            np.testing.assert_array_equal(rgb, np.full((4, 4, 3), expected, dtype=np.uint8))
+            np.testing.assert_allclose(weights[:, 0, 0], (0.5, 0.5))
+            rgb, _ = compose_preview([occluded, clear], [0, 1], size=4)
+            self.assertTrue(np.all(rgb == 200))
+
     def test_multi_surface_preview_dialog_renders_and_switches_weight_view(self):
         preview = HeightBlendPreview(TerrainMaterial())
         self.addCleanup(preview.close)
