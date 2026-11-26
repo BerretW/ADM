@@ -66,16 +66,24 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   roughness factors/maps with channel and invert, and normal map) plus biomes that select and
   blend those surfaces. The six starter biomes are lowland, forest, shore, water, mountains
   and rocky terrain. Each biome can be placed automatically by height/slope bands or painted
-  manually; its surface list can also limit individual surfaces by height and slope.
+  manually; its surface list can also limit individual surfaces by height and slope. Use
+  **Surface noise** on each biome to vary its surfaces spatially.
   **Terrain setup wizard** starts from current rules or a temperate, alpine, coastal/island or
   arid profile, then lets you edit each biome's height/slope limits and choose albedo images
   for its shared surfaces. **Save preset** copies the material setup and its textures into the
   AWT user-data folder; **Load preset** restores it. Presets do not include map-specific paint.
+  Presets with surface noise use version 2 and are not supported by older tool versions.
   Neighbouring biomes should share at least one surface so the transition uses a common
   texture rather than changing abruptly. Texture repeat is rounded to a whole number per tile,
-  so textures continue across tiles. The selected surface has a lit **Sphere** and tiled
-  **Plane** preview; **Show blended terrain** opens the 3D terrain with all current biome
-  rules applied.
+  so textures continue across tiles. The **Surface** tab on the right shows the selected
+  surface on an interactive **Sphere**, **Plane**, or **Terrain relief**. Drag to rotate,
+  middle-drag to pan, and use the mouse wheel to zoom. The preview shows albedo, tint, and
+  scalar metallic and roughness; it does not show metallic, roughness, or normal maps.
+  The sphere is 1 m in diameter; the plane and relief are 15 × 15 m. **Repeat** controls the
+  preview texture scale in metres. The spherical mapping uses the equator and a pole-to-pole
+  arc for horizontal and vertical scale, so its texture is distorted near the poles. The
+  preview uses the exact repeat; built tiles round repeats to align their boundaries.
+  **Show blended terrain** opens the 3D terrain with all current biome rules applied.
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.
@@ -93,9 +101,9 @@ override those automatic levels. `--texture-error 0` disables transition refinem
 
 1. Open a heightmap and select a **Biome** in the **Terrain** tab's **Texturing** section.
 2. Enable **Automatic** for a paint-only biome if you want to place it by height.
-3. Enable **From** or **To** to set a bounded edge. Drag the upper circle for **From** and the
-   lower circle for **To**, or enter the heights in metres.
-4. Drag either square to set **Fade**, or enter its width in metres. This is the total transition
+3. Enable **From** or **To** to set a bounded edge. Drag **FROM** or **TO** in the graph, or
+   enter the heights in metres. You can also drag another biome's dashed boundary to select it.
+4. Drag **FADE** to set the transition, or enter its width in metres. This is the total transition
    width centred on each limit; both edges share the same width.
 5. Save the project. Rebuild and export the tiles to apply the updated vertex weights.
 
@@ -111,8 +119,8 @@ JSON with the build parameters (heightmap, scale, tiles, LOD errors, biome rules
 build folder), roads, the surface/biome material, the export settings and the tile selection. Paths are stored
 relative to the project file, so the folder can be moved together with its heightmap and
 textures. Reopening a project loads the heightmap and the built tiles from the build folder.
-Version 2 projects can be opened; projects saved by this version use version 3 and
-cannot be opened by older versions of the tool.
+Version 2 and 3 projects can be opened. Projects with biome surface noise use version 4 and
+cannot be opened by older versions of the tool; projects without noise use version 3.
 
 ## Create a road
 
@@ -207,6 +215,14 @@ least one surface in common between every pair of biomes that can touch. The GUI
 pairs without a shared surface; these pairs fall back to a direct blend and can show a hard
 texture change.
 
+Set **Surface noise** for an individual biome to blend its assigned surfaces into a smooth
+spatial pattern with a 20 m scale. At 0% its original rules are unchanged; higher values
+increase the variation and can introduce biome surfaces outside their height and slope bands.
+The effect requires at least two surfaces in the biome. It also works for painted biomes but
+does not alter direct surface paint or roads. The pattern uses world-scale coordinates, so it
+matches at tile and LOD boundaries. The 2D surface view updates from the rules; rebuild the tiles
+to update the 3D terrain and exported vertex weights.
+
 Automatic placement, hand-painted biome areas, and hand-painted surfaces are combined in the same
 weight field. Surface paint overrides biome paint, and roads override both. Softening blurs paint shares
 to create a gradual boundary. The 2D biome and surface views and the 3D material preview show
@@ -216,7 +232,9 @@ Optional **Texture error** refinement subdivides triangles where interpolated ve
 would differ from the texture field by more than the chosen threshold. **Texture detail**
 limits how short a new triangle edge may be. Set Texture error to 0 to disable refinement.
 This can add geometry around texture transitions without changing the configured terrain LOD
-height-error bound. At three-biome junctions, the pairwise blend rule can leave small
+height-error bound. Fine surface noise can be missed on coarse meshes or low-resolution
+heightmaps. To capture more of it, lower **Texture error** and **Texture detail** or increase
+the heightmap resolution. At three-biome junctions, the pairwise blend rule can leave small
 discontinuities; inspect these areas in the previews.
 
 * `UVMap` (UV0) runs 0..1 across each full tile. Set the layer textures' `uv_scale` to an

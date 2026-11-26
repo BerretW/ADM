@@ -10,7 +10,7 @@ from PIL import Image
 
 from awt.adm_export import (INDEX_NAME, ExportSettings, _core, changed_tiles, color1, export_tiles, group_masks,
                             prepare_adm_texture, rules_outdated, triangle_masks)
-from awt.material import TerrainMaterial, prepare_texture
+from awt.material import Biome, BiomeSurface, TerrainMaterial, prepare_texture
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields, write_ply
 from awt.project import Project, load_project
@@ -63,6 +63,25 @@ class ExportTest(unittest.TestCase):
             attrs = {name: _accessor(doc, chunks, index) for name, index in prim["attributes"].items()}
             out.append((prim, attrs, _accessor(doc, chunks, prim["indices"]).reshape(-1, 3)))
         return out
+
+    def test_biome_noise_requires_rebuild_and_is_exported(self):
+        self.material.biomes = [Biome("plain", surfaces=[BiomeSurface("grass"), BiomeSurface("soil")])]
+        np.save(self.src, np.zeros((33, 33), np.float32))
+        self.params.max_errors_m = [0.2]
+        self.params.texture_detail_m = 2.0
+        build(self.params, self.material)
+        before = load_manifest(self.params.out_dir)
+        self.material.biomes[0].noise = 1
+        self.assertTrue(rules_outdated(before, self.material))
+        self.assertTrue(export_tiles(before, self.material, self.settings, "all")["warnings"])
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        self.assertFalse(rules_outdated(manifest, self.material))
+        self.assertFalse(export_tiles(manifest, self.material, self.settings, "all")["warnings"])
+        doc, chunks = _read_adm(os.path.join(self.settings.out_dir, "x000_y000.adm"))
+        colors = np.concatenate([attrs["COLOR_1"] for _, attrs, _ in self._primitives(doc, chunks)])
+        self.assertGreater(float(np.ptp(colors[:, 0])), 0.1)
+        self.assertTrue(np.any(colors[:, 1] > 0))
 
     def test_tiles_validate_and_keep_world_placement(self):
         result = export_tiles(self.manifest, self.material, self.settings, "all")

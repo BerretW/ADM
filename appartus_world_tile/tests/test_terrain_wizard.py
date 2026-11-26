@@ -1,4 +1,5 @@
 import os
+import math
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -28,6 +29,33 @@ class TerrainWizardTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_biome_noise_slider_updates_and_saves_project(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        window.material_panel.biome_list.setCurrentRow(0)
+        editor = window.material_panel.biome_editor
+        window._dirty = False
+        window._field = object()
+        editor.noise.setValue(65)
+        self.assertEqual(window._material().biomes[0].noise, 0.65)
+        self.assertEqual(editor.noise_value.text(), "65%")
+        self.assertTrue(window._dirty)
+        self.assertIsNone(window._field)
+        window.material_panel.biome_list.setCurrentRow(1)
+        self.assertEqual(editor.noise.value(), 0)
+        window.material_panel.biome_list.setCurrentRow(0)
+        self.assertEqual(editor.noise.value(), 65)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "world.awtp")
+            self.assertTrue(window._write_project(path))
+            loaded = load_project(path)
+            self.assertEqual(loaded.to_dict()["format_version"], 4)
+            self.assertEqual(loaded.material.biomes[0].noise, 0.65)
+            window._open_project_file(path)
+            window.material_panel.biome_list.setCurrentRow(0)
+            self.assertEqual(window.material_panel.biome_editor.noise.value(), 65)
 
     def test_duplicate_biome_surface_can_be_fixed_in_the_wizard(self):
         material = TerrainMaterial()
@@ -195,3 +223,181 @@ class TerrainWizardTest(unittest.TestCase):
         window.material_panel.changed.emit()
         self.assertIs(window.height_biome.currentData(), biome)
         self.assertEqual(window.histogram._selected, 2)
+
+    def test_histogram_fade_handle_remains_usable_at_range_edge(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        window.histogram.resize(400, 180)
+        window.histogram.set_heights(np.linspace(0, 60, 100))
+        biome = window._material().biomes[3]
+        biome.auto = True
+        biome.height = Band(None, 1.2, 8)
+        window.height_biome.setCurrentIndex(3)
+        point = window.histogram._handles()["fade_max"].toPoint()
+        self.assertGreater(point.x(), window.histogram._handles()["max"].x())
+        destination = QPoint(round(6 + 8 / 60 * (window.histogram.width() - 12)), point.y())
+        QTest.mousePress(window.histogram, Qt.MouseButton.LeftButton, pos=point)
+        QTest.mouseMove(window.histogram, destination)
+        QTest.mouseRelease(window.histogram, Qt.MouseButton.LeftButton, pos=destination)
+        self.assertAlmostEqual(biome.height.fade, 13.6, delta=0.4)
+        self.assertIsNone(biome.height.min)
+
+    def test_dragging_a_biome_boundary_selects_and_edits_it(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        window.histogram.resize(400, 180)
+        window.histogram.set_heights(np.linspace(0, 100, 100))
+        biome = window._material().biomes[2]
+        biome.auto = True
+        biome.height = Band(40, None, 4)
+        start = QPoint(round(6 + 0.4 * (window.histogram.width() - 12)), 95)
+        end = QPoint(round(6 + 0.55 * (window.histogram.width() - 12)), 95)
+        QTest.mousePress(window.histogram, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(window.histogram, end)
+        QTest.mouseRelease(window.histogram, Qt.MouseButton.LeftButton, pos=end)
+        self.assertIs(window.height_biome.currentData(), biome)
+        self.assertAlmostEqual(biome.height.min, 55, delta=0.3)
+
+    def test_large_surface_preview_tracks_selection_edits_and_mesh_modes(self):
+        from PIL import Image
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        window.side_tabs.setCurrentIndex(1)
+        self.assertIs(window.tabs.currentWidget(), window.surface_preview)
+        panel = window.material_panel
+        panel.surface_list.setCurrentRow(1)
+        surface = window._material().surfaces[1]
+        self.assertIs(window.surface_preview._surface, surface)
+        panel.surface_editor.roughness.factor.setValue(0.35)
+        self.assertAlmostEqual(window.surface_preview._actor.prop.roughness, 0.35)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "albedo.png")
+            Image.new("RGB", (16, 16), (90, 140, 50)).save(path)
+            panel.surface_editor.albedo._set(path)
+            for index in range(3):
+                window.surface_preview.mode.setCurrentIndex(index)
+                actor = window.surface_preview._actor
+                mesh = actor.mapper.dataset
+                self.assertGreater(mesh.n_points, 100)
+                self.assertIsNotNone(mesh.active_texture_coordinates)
+                self.assertIsNotNone(actor.texture)
+                if index:
+                    self.assertGreater(mesh.active_texture_coordinates.max(), 1)
+        window.tabs.setCurrentIndex(0)
+        panel.surface_editor.show_preview.click()
+        self.assertIs(window.tabs.currentWidget(), window.surface_preview)
+
+    def test_surface_preview_renders_albedo_on_all_shapes(self):
+        import pyvista as pv
+        from PIL import Image
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        surface = window._material().surfaces[0]
+        surface.color = [255, 255, 255]
+        surface.metallic = 0
+        surface.roughness = 0.8
+        with tempfile.TemporaryDirectory() as directory:
+            png = os.path.join(directory, "red.png")
+            dds = os.path.join(directory, "red.dds")
+            Image.new("RGB", (16, 16), (240, 30, 30)).save(png)
+            Image.new("RGBA", (16, 16), (240, 30, 30, 255)).save(dds)
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            for path in (png, dds):
+                surface.albedo = path
+                window.surface_preview.set_surface(surface)
+                for mode in range(3):
+                    with self.subTest(path=path, mode=mode):
+                        window.surface_preview.mode.setCurrentIndex(mode)
+                        plotter.clear()
+                        plotter.add_actor(window.surface_preview._actor, reset_camera=False)
+                        plotter.view_xy()
+                        plotter.reset_camera()
+                        plotter.show(auto_close=False)
+                        center = plotter.screenshot(return_img=True)[80:120, 80:120, :3].mean(axis=(0, 1))
+                        self.assertGreater(center[0], center[1] * 2, center)
+            white = os.path.join(directory, "white.png")
+            Image.new("RGB", (16, 16), (255, 255, 255)).save(white)
+            surface.albedo = white
+            surface.color = [40, 240, 40]
+            window.surface_preview.set_surface(surface)
+            plotter.clear()
+            plotter.add_actor(window.surface_preview._actor, reset_camera=False)
+            plotter.view_xy()
+            plotter.reset_camera()
+            plotter.show(auto_close=False)
+            center = plotter.screenshot(return_img=True)[80:120, 80:120, :3].mean(axis=(0, 1))
+            self.assertGreater(center[1], center[0] * 2, center)
+
+            surface.albedo = ""
+            surface.color = [40, 40, 240]
+            window.surface_preview.set_surface(surface)
+            plotter.clear()
+            plotter.add_actor(window.surface_preview._actor, reset_camera=False)
+            plotter.view_xy()
+            plotter.reset_camera()
+            plotter.show(auto_close=False)
+            center = plotter.screenshot(return_img=True)[80:120, 80:120, :3].mean(axis=(0, 1))
+            self.assertGreater(center[2], center[1] * 2, center)
+
+    def test_surface_preview_repeat_uses_physical_dimensions(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        preview = window.surface_preview
+        editor = window.material_panel.surface_editor
+        for repeat in (1.0, 3.0):
+            editor.repeat.setValue(repeat)
+            for mode in range(3):
+                with self.subTest(repeat=repeat, mode=mode):
+                    preview.mode.setCurrentIndex(mode)
+                    mesh = preview._actor.mapper.dataset
+                    widths = np.ptp(mesh.active_texture_coordinates, axis=0)
+                    expected = ((math.pi / repeat, math.pi / (2 * repeat)) if mode == 0 else
+                                (15 / repeat, 15 / repeat))
+                    np.testing.assert_allclose(widths, expected, rtol=1e-5)
+                    bounds = mesh.bounds
+                    self.assertAlmostEqual(bounds[1] - bounds[0], 1 if mode == 0 else 15, places=2)
+                    self.assertAlmostEqual(bounds[3] - bounds[2], 1 if mode == 0 else 15, places=2)
+                    self.assertIn("1 m diameter", preview.scale_info.text())
+                    self.assertIn("15 × 15 m", preview.scale_info.text())
+                    self.assertIn(f"Repeat: {repeat:g} m", preview.scale_info.text())
+
+    def test_surface_preview_repeat_changes_rendered_pattern(self):
+        import pyvista as pv
+        from PIL import Image
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        surface = window._material().surfaces[0]
+        surface.color = [255, 255, 255]
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "stripes.png")
+            pixels = np.zeros((32, 32, 3), dtype=np.uint8)
+            pixels[:, :16] = 255
+            Image.fromarray(pixels).save(path)
+            surface.albedo = path
+            preview = window.surface_preview
+            preview.mode.setCurrentIndex(1)
+            plotter = pv.Plotter(off_screen=True, window_size=(300, 300))
+            self.addCleanup(plotter.close)
+            counts = []
+            for repeat in (5.0, 1.0):
+                surface.repeat_m = repeat
+                preview.set_surface(surface)
+                plotter.clear()
+                plotter.add_actor(preview._actor, reset_camera=False)
+                plotter.view_xy()
+                plotter.reset_camera()
+                plotter.show(auto_close=False)
+                row = plotter.screenshot(return_img=True)[150, 70:230, :3].mean(axis=1)
+                counts.append(np.count_nonzero(np.diff(row > 80)))
+            self.assertGreater(counts[1], counts[0] * 2, counts)

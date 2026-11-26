@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import io
+import math
 import os
 
-from PySide6.QtCore import QSettings, QRectF, Qt, Signal
-from PySide6.QtGui import (QColor, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPixmap,
-                           QRadialGradient)
+import numpy as np
+from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-                               QMessageBox, QPushButton, QToolButton, QVBoxLayout, QWidget)
+                               QMessageBox, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget)
 
 from ..material import (CHANNELS, IMAGE_FILTER, MAX_BIOMES, MAX_SURFACES, SURFACES_PER_BIOME, Band, Biome,
                         BiomeSurface, MapSlot, Surface, TerrainMaterial, prepare_texture)
@@ -34,101 +35,108 @@ def _thumbnail(path: str) -> QPixmap | None:
         return None
 
 
-class SurfacePreview(QWidget):
-    """Lit sphere or tiled plane showing the selected surface albedo."""
+class MaterialPreview(QWidget):
+    """Interactive 3D preview of a single surface."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._surface: Surface | None = None
-        self._texture = QPixmap()
-        self._error = ""
-        self._mode = 0
-        self.setMinimumHeight(132)
-        self.setMaximumHeight(160)
+        import pyvista as pv
+        from pyvistaqt import QtInteractor
 
-    def set_mode(self, mode: int) -> None:
-        self._mode = mode
-        self.update()
+        self._pv = pv
+        self._surface = None
+        self._actor = None
+        self.mode = QComboBox()
+        self.mode.addItems(("Sphere", "Plane", "Terrain relief"))
+        self.reset = QPushButton("Reset view")
+        self.scale_info = QLabel()
+        self.scale_info.setWordWrap(True)
+        self.status = QLabel("Albedo, tint and scalar metallic/roughness; texture maps and normals are not shown.")
+        self.status.setWordWrap(True)
+        self.plotter = QtInteractor(self)
+        self.plotter.set_background("#15181c", top="#3b4652")
+        self.plotter.enable_trackball_style()
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("Surface preview"))
+        bar.addWidget(self.mode)
+        bar.addWidget(self.reset)
+        bar.addStretch(1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(bar)
+        layout.addWidget(self.scale_info)
+        layout.addWidget(self.plotter.interactor, 1)
+        layout.addWidget(self.status)
+        self.mode.currentIndexChanged.connect(self._shape_changed)
+        self.reset.clicked.connect(self.plotter.reset_camera)
+
+    def _mesh(self):
+        pv = self._pv
+        if self.mode.currentIndex() == 0:
+            return pv.Sphere(theta_resolution=96, phi_resolution=64).texture_map_to_sphere(inplace=False)
+        if self.mode.currentIndex() == 1:
+            return pv.Plane(i_size=15, j_size=15, i_resolution=32, j_resolution=32)
+        u, v = np.meshgrid(np.linspace(-1, 1, 100), np.linspace(-1, 1, 100))
+        x, y = u * 7.5, v * 7.5
+        z = 7.5 * (0.32 * np.exp(-((u + 0.3) ** 2 + (v - 0.25) ** 2) * 5)
+                   + 0.24 * np.exp(-((u - 0.4) ** 2 + (v + 0.3) ** 2) * 9)
+                   + 0.04 * np.sin(u * 12) * np.cos(v * 10))
+        mesh = pv.StructuredGrid(x, y, z).extract_surface().triangulate()
+        mesh.active_texture_coordinates = (mesh.points[:, :2] + 7.5) / 15
+        return mesh
+
+    def _shape_changed(self) -> None:
+        self._redraw(reset=True)
 
     def set_surface(self, surface: Surface) -> None:
         self._surface = surface
-        self._texture = QPixmap()
-        self._error = ""
-        if surface.albedo:
-            try:
-                prepared = prepare_texture(surface.albedo)
-                from PIL import Image, ImageChops
+        self._redraw(reset=self._actor is None)
 
-                with Image.open(io.BytesIO(prepared.data)) as image:
-                    rgb = image.convert("RGB")
-                    tint = Image.new("RGB", rgb.size, tuple(surface.color))
-                    rgb = ImageChops.multiply(rgb, tint)
-                    rgb.thumbnail((256, 256), Image.Resampling.LANCZOS)
-                    qimage = QImage(rgb.tobytes(), rgb.width, rgb.height, 3 * rgb.width,
-                                    QImage.Format.Format_RGB888).copy()
-                    self._texture = QPixmap.fromImage(qimage)
-            except (OSError, ValueError) as error:
-                self._error = str(error)
-        self.update()
-
-    def paintEvent(self, event):  # noqa: N802
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        painter.fillRect(self.rect(), QColor("#1b1f24"))
+    def _redraw(self, reset: bool = False) -> None:
         if self._surface is None:
             return
-        bounds = self.rect().adjusted(10, 8, -10, -8)
-        if self._mode == 0:
-            side = min(bounds.height(), bounds.width() * 0.48)
-            disc = QRectF(bounds.center().x() - side * 0.5, bounds.center().y() - side * 0.5, side, side)
-            path = QPainterPath()
-            path.addEllipse(disc)
-            painter.save()
-            painter.setClipPath(path)
-            if self._texture.isNull():
-                painter.fillRect(disc, QColor(*self._surface.color))
-            else:
-                painter.drawPixmap(disc.toRect(), self._texture)
-            light = QRadialGradient(disc.left() + side * 0.3, disc.top() + side * 0.24, side * 0.85)
-            light.setColorAt(0.0, QColor(255, 255, 255, 65 if self._surface.roughness > 0.7 else 110))
-            light.setColorAt(0.32, QColor(255, 255, 255, 12))
-            light.setColorAt(1.0, QColor(0, 0, 0, 140))
-            painter.fillRect(disc, light)
-            highlight = 34 + round(100 * self._surface.metallic * (1.0 - self._surface.roughness))
-            painter.setBrush(QColor(255, 255, 255, highlight))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(QRectF(disc.left() + side * 0.23, disc.top() + side * 0.13,
-                                       side * 0.22, side * 0.11))
-            painter.restore()
-        else:
-            rect = QRectF(bounds.left() + bounds.width() * 0.08, bounds.top() + bounds.height() * 0.12,
-                          bounds.width() * 0.84, bounds.height() * 0.76)
-            path = QPainterPath()
-            path.moveTo(rect.left() + rect.width() * 0.1, rect.top())
-            path.lineTo(rect.right(), rect.top())
-            path.lineTo(rect.right() - rect.width() * 0.1, rect.bottom())
-            path.lineTo(rect.left(), rect.bottom())
-            path.closeSubpath()
-            painter.save()
-            painter.setClipPath(path)
-            if self._texture.isNull():
-                painter.fillPath(path, QColor(*self._surface.color))
-            else:
-                tile = self._texture.scaled(max(24, int(rect.width() / 4)),
-                                            max(24, int(rect.height() / 3)),
-                                            Qt.AspectRatioMode.IgnoreAspectRatio,
-                                            Qt.TransformationMode.SmoothTransformation)
-                painter.drawTiledPixmap(rect.toRect(), tile)
-            shade = QLinearGradient(rect.topLeft(), rect.bottomRight())
-            shade.setColorAt(0.0, QColor(255, 255, 255, 34))
-            shade.setColorAt(1.0, QColor(0, 0, 0, 74))
-            painter.fillPath(path, shade)
-            painter.restore()
-        if self._error:
-            painter.setPen(QColor("#e07a6a"))
-            painter.drawText(bounds.adjusted(4, 4, -4, -4), Qt.AlignmentFlag.AlignBottom
-                             | Qt.AlignmentFlag.AlignHCenter, self._error[:110])
+        surface = self._surface
+        texture = None
+        error = ""
+        repeat = surface.repeat_m
+        self.scale_info.setText(f"Sphere: 1 m diameter | Plane and relief: 15 × 15 m | Repeat: {repeat:g} m")
+        if not math.isfinite(repeat) or repeat <= 0:
+            error = f"Surface '{surface.name}': texture repeat must be positive and finite."
+        if surface.albedo:
+            try:
+                from PIL import Image, ImageChops
+
+                prepared = prepare_texture(surface.albedo)
+                with Image.open(io.BytesIO(prepared.data)) as image:
+                    rgb = image.convert("RGB")
+                    rgb.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    rgb = ImageChops.multiply(rgb, Image.new("RGB", rgb.size, tuple(surface.color)))
+                    texture = self._pv.numpy_to_texture(np.array(rgb))
+                    texture.repeat = True
+                    texture.SetUseSRGBColorSpace(True)
+            except (OSError, ValueError) as exc:
+                error = f"Could not load albedo: {exc}"
+        if self._actor is not None:
+            self.plotter.remove_actor(self._actor, reset_camera=False, render=False)
+        mesh = self._mesh()
+        if math.isfinite(repeat) and repeat > 0:
+            scale = (math.pi / repeat, math.pi / (2 * repeat)) if self.mode.currentIndex() == 0 else (
+                15 / repeat, 15 / repeat)
+            mesh.active_texture_coordinates *= scale
+        self._actor = self.plotter.add_mesh(
+            mesh, texture=texture, color="white" if texture else tuple(c / 255 for c in surface.color),
+            pbr=True, metallic=surface.metallic, roughness=surface.roughness, reset_camera=False, render=False)
+        if texture is not None:
+            self._actor.prop.SetTexture("albedoTex", texture)
+        self.status.setText(error or "Drag to rotate, middle-drag to pan, wheel to zoom. "
+                            "Albedo, tint and scalar metallic/roughness only; maps and normals are not shown.")
+        if reset:
+            self.plotter.camera_position = "iso"
+            self.plotter.reset_camera()
+        self.plotter.render()
+
+    def shutdown(self) -> None:
+        self.plotter.close()
 
 
 class TexturePicker(QWidget):
@@ -295,6 +303,7 @@ class SurfaceEditor(QGroupBox):
 
     changed = Signal()
     terrain_requested = Signal()
+    large_preview_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__("Surface", parent)
@@ -325,26 +334,20 @@ class SurfaceEditor(QGroupBox):
         form.addRow("Metallic", self.metallic)
         form.addRow("Roughness", self.roughness)
         form.addRow("Normal", self.normal)
-        self.preview_mode = QComboBox()
-        self.preview_mode.addItems(("Sphere", "Plane"))
-        self.preview_mode.setToolTip("Preview the selected surface on a lit sphere or tiled plane")
         self.show_terrain = QPushButton("Show blended terrain")
         self.show_terrain.setToolTip("Open the 3D terrain preview with the current biome blending")
-        self.preview = SurfacePreview()
+        self.show_preview = QPushButton("Show large preview")
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Preview"))
-        row.addWidget(self.preview_mode)
-        row.addStretch(1)
+        row.addWidget(self.show_preview)
         row.addWidget(self.show_terrain)
         layout.addLayout(row)
-        layout.addWidget(self.preview)
         for widget in (self.tint, self.albedo, self.metallic, self.roughness, self.normal):
             widget.changed.connect(self.changed)
         self.repeat.valueChanged.connect(self.changed)
-        self.preview_mode.currentIndexChanged.connect(self.preview.set_mode)
         self.show_terrain.clicked.connect(self.terrain_requested)
+        self.show_preview.clicked.connect(self.large_preview_requested)
 
     def set_surface(self, surface: Surface) -> None:
         self.setTitle(f"Surface: {surface.name}")
@@ -354,7 +357,6 @@ class SurfaceEditor(QGroupBox):
         self.metallic.set_values(surface.metallic, surface.metallic_map)
         self.roughness.set_values(surface.roughness, surface.roughness_map)
         self.normal.set_path(surface.normal)
-        self.preview.set_surface(surface)
 
     def apply(self, surface: Surface) -> None:
         surface.color = self.tint.rgb()
@@ -508,6 +510,15 @@ class BiomeEditor(QGroupBox):
         self.auto.setToolTip("Use the height and slope rule below; otherwise the biome appears only where painted")
         self.height = _height_band()
         self.slope = _slope_band()
+        self.noise = QSlider(Qt.Orientation.Horizontal)
+        self._noise_edited = False
+        self.noise.setRange(0, 100)
+        self.noise.setToolTip("Blend this biome's surfaces with smooth 20 m variation. "
+                              "At least two surfaces are required; noise can add surfaces outside their bands.")
+        self.noise_value = QLabel("0%")
+        self.noise_hint = QLabel()
+        self.noise_hint.setWordWrap(True)
+        self.noise_hint.setStyleSheet("color: #9aa3ad")
         self.rows = [BiomeSurfaceRow(i) for i in range(SURFACES_PER_BIOME)]
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -518,6 +529,11 @@ class BiomeEditor(QGroupBox):
         form.addRow("Map colour", row)
         form.addRow("Height", self.height)
         form.addRow("Slope", self.slope)
+        noise_row = QHBoxLayout()
+        noise_row.addWidget(self.noise, 1)
+        noise_row.addWidget(self.noise_value)
+        form.addRow("Surface noise", noise_row)
+        form.addRow(self.noise_hint)
         layout.addLayout(form)
         for row_widget in self.rows:
             layout.addWidget(row_widget)
@@ -526,6 +542,16 @@ class BiomeEditor(QGroupBox):
         self.auto.toggled.connect(self._auto_toggled)
         self.height.changed.connect(self.changed)
         self.slope.changed.connect(self.changed)
+        self.noise.valueChanged.connect(self._noise_changed)
+
+    def _noise_changed(self, value: int) -> None:
+        self.noise_value.setText(f"{value}%")
+        self._noise_edited = True
+        self.changed.emit()
+
+    def _noise_hint(self, biome: Biome) -> None:
+        self.noise_hint.setText("Add another surface to use noise." if len(biome.surfaces) < 2 else
+                                "Noise mixes biome surfaces, including outside their height and slope bands.")
 
     def _auto_toggled(self) -> None:
         self.height.setEnabled(self.auto.isChecked())
@@ -540,6 +566,12 @@ class BiomeEditor(QGroupBox):
         self.auto.blockSignals(False)
         self.height.set_band(biome.height)
         self.slope.set_band(biome.slope)
+        self.noise.blockSignals(True)
+        self.noise.setValue(round(biome.noise * 100))
+        self.noise.blockSignals(False)
+        self._noise_edited = False
+        self.noise_value.setText(f"{self.noise.value()}%")
+        self._noise_hint(biome)
         self.height.setEnabled(biome.auto)
         self.slope.setEnabled(biome.auto)
         for i, row in enumerate(self.rows):
@@ -550,15 +582,21 @@ class BiomeEditor(QGroupBox):
         biome.auto = self.auto.isChecked()
         biome.height = self.height.band()
         biome.slope = self.slope.band()
+        if self._noise_edited:
+            biome.noise = self.noise.value() / 100.0
+            self._noise_edited = False
         entries = [entry for entry in (row.entry() for row in self.rows) if entry is not None]
         if entries:
             biome.surfaces = entries
+        self._noise_hint(biome)
 
 
 class MaterialPanel(QWidget):
     """Edits a :class:`TerrainMaterial` in place; ``changed`` fires after every edit."""
 
     changed = Signal()
+    surface_selected = Signal(object)
+    surface_preview_requested = Signal()
     fit_requested = Signal()
     terrain_preview_requested = Signal()
     terrain_setup_requested = Signal()
@@ -656,6 +694,7 @@ class MaterialPanel(QWidget):
         self.biome_list.currentRowChanged.connect(self._show_biome)
         self.surface_editor.changed.connect(self._surface_edited)
         self.surface_editor.terrain_requested.connect(self.terrain_preview_requested)
+        self.surface_editor.large_preview_requested.connect(self.surface_preview_requested)
         self.biome_editor.changed.connect(self._biome_edited)
         self.add_surface.clicked.connect(self._add_surface)
         self.rename_surface.clicked.connect(self._rename_surface)
@@ -724,6 +763,7 @@ class MaterialPanel(QWidget):
         self.surface_editor.set_surface(self._material.surfaces[row])
         self._loading = False
         self._update_repeat_info()
+        self.surface_selected.emit(self._material.surfaces[row])
 
     def _show_biome(self, row: int) -> None:
         if self._loading or not 0 <= row < len(self._material.biomes):
@@ -754,7 +794,7 @@ class MaterialPanel(QWidget):
             return
         surface = self._material.surfaces[row]
         self.surface_editor.apply(surface)
-        self.surface_editor.preview.set_surface(surface)
+        self.surface_selected.emit(surface)
         self.surface_list.item(row).setIcon(swatch(surface.color))
         self._update_repeat_info()
         self._emit()

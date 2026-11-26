@@ -8,7 +8,7 @@ import os
 import time
 
 import numpy as np
-from PySide6.QtCore import QPointF, QSettings, QStandardPaths, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, QSettings, QStandardPaths, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -26,7 +26,7 @@ from ..project import PROJECT_EXTENSION, PROJECT_FILTER, Project, load_project
 from ..roads import Road
 from ..terrain_presets import list_presets, load_preset, preset_key, save_preset
 from .map_view import MapView
-from .material_panel import MaterialPanel, swatch
+from .material_panel import MaterialPanel, MaterialPreview, swatch
 from .terrain_wizard import TerrainSetupWizard
 from .viewer3d import MATERIAL_MODE, TRIANGLE_BUDGET, Viewer3D, triangle_count
 
@@ -117,10 +117,11 @@ class HeightHistogram(QWidget):
     """Height distribution coloured by the biome that wins on flat ground, with the biome height limits."""
 
     bandChanged = Signal(object)
+    biomeSelected = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(112)
+        self.setMinimumHeight(180)
         self.setMouseTracking(True)
         self.setToolTip("Drag the selected biome's limit markers or its fade marker. "
                         "The histogram shows automatic biomes on flat ground.")
@@ -167,28 +168,53 @@ class HeightHistogram(QWidget):
         handles = {}
         for key, value in (("min", band.min), ("max", band.max)):
             if value is not None and lo <= value <= hi:
-                handles[key] = QPointF(x(value), self.height() - (24 if key == "min" else 14))
+                handles[key] = QPointF(x(value), 30 if key == "min" else 55)
         for key, edge, direction in (("fade_min", band.min, -1), ("fade_max", band.max, 1)):
-            if edge is not None and lo <= edge + direction * band.fade / 2 <= hi:
-                handles[key] = QPointF(x(edge + direction * band.fade / 2), self.height() - 5)
+            if edge is not None and lo <= edge <= hi:
+                outer = edge + direction * band.fade / 2
+                inner = edge - direction * band.fade / 2
+                value = outer if lo <= outer <= hi else min(hi, max(lo, inner))
+                handles[key] = QPointF(x(value), self.height() - (20 if key == "fade_min" else 42))
         return handles
 
     def mousePressEvent(self, event):  # noqa: N802
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        handles = self._handles()
-        if not handles:
+        if self._counts is None:
             return
-        name, point = min(handles.items(), key=lambda item: (item[1] - event.position()).manhattanLength())
-        if (point - event.position()).manhattanLength() <= 12:
-            self._drag = name
-            self.setCursor(Qt.CursorShape.SizeHorCursor)
-            event.accept()
+        handles = self._handles()
+        pos = event.position()
+        def distance(item):
+            point = item[1]
+            left = max(1, min(self.width() - 43, point.x() - 21))
+            return (0 if left <= pos.x() <= left + 42 and abs(pos.y() - point.y()) <= 10
+                    else (point - pos).manhattanLength())
+
+        nearest = min(handles.items(), key=distance) if handles else None
+        if nearest and distance(nearest) <= 18:
+            name = nearest[0]
+        else:
+            lo, hi = self._range
+            boundaries = []
+            for index, biome in enumerate(self._material.biomes[1:], 1):
+                if biome.auto:
+                    for side, value in (("min", biome.height.min), ("max", biome.height.max)):
+                        if value is not None and lo <= value <= hi:
+                            x = 6 + (value - lo) / (hi - lo) * max(1, self.width() - 12)
+                            if abs(x - pos.x()) <= 6:
+                                boundaries.append((abs(x - pos.x()), index != self._selected, -index, side))
+            if not boundaries:
+                return
+            _, _, index, name = min(boundaries)
+            self.biomeSelected.emit(-index)
+        self._drag = name
+        self.setCursor(Qt.CursorShape.SizeHorCursor)
+        event.accept()
 
     def mouseMoveEvent(self, event):  # noqa: N802
         if self._drag is None:
             self.setCursor(Qt.CursorShape.PointingHandCursor if any(
-                (point - event.position()).manhattanLength() <= 12 for point in self._handles().values())
+                (point - event.position()).manhattanLength() <= 18 for point in self._handles().values())
                            else Qt.CursorShape.ArrowCursor)
             return
         biome = self._material.biomes[self._selected]
@@ -202,7 +228,7 @@ class HeightHistogram(QWidget):
             band = Band(band.min, max(value, band.min) if band.min is not None else value, band.fade)
         else:
             anchor = band.min if self._drag == "fade_min" else band.max
-            distance = max(0.0, anchor - value if self._drag == "fade_min" else value - anchor)
+            distance = abs(anchor - value)
             band = Band(band.min, band.max, round(2 * distance, 1))
         self.bandChanged.emit(band)
 
@@ -233,7 +259,7 @@ class HeightHistogram(QWidget):
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Height histogram appears with a heightmap")
             return
         lo, hi = self._range
-        w, h = self.width(), self.height() - 34
+        w, h = self.width(), self.height() - 4
         peak = float(self._counts.max()) or 1.0
         n = len(self._counts)
         for i, value in enumerate(self._counts):
@@ -273,12 +299,15 @@ class HeightHistogram(QWidget):
         handles = self._handles()
         for name, point in handles.items():
             color = QColor(*self._material.biomes[self._selected].color).lighter(150)
+            painter.setPen(QPen(QColor(245, 245, 245, 210), 1, Qt.PenStyle.DashLine))
+            painter.drawLine(QPointF(point.x(), 0), QPointF(point.x(), h))
+            label = {"min": "FROM", "max": "TO", "fade_min": "FADE", "fade_max": "FADE"}[name]
+            rect = QRectF(max(1, min(w - 43, point.x() - 21)), point.y() - 10, 42, 20)
             painter.setPen(QPen(QColor(245, 245, 245), 1))
-            painter.setBrush(QColor(245, 245, 245) if name.startswith("fade") else color)
-            if name.startswith("fade"):
-                painter.drawRect(int(point.x()) - 4, int(point.y()) - 4, 8, 8)
-            else:
-                painter.drawEllipse(point, 5, 5)
+            painter.setBrush(QColor(38, 42, 48) if name.startswith("fade") else color.darker(130))
+            painter.drawRoundedRect(rect, 3, 3)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
 
 
 class MainWindow(QMainWindow):
@@ -620,9 +649,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.map_hint)
 
         self.viewer = Viewer3D()
+        self.surface_preview = MaterialPreview()
         self.tabs = QTabWidget()
         self.tabs.addTab(map_tab, "Map")
         self.tabs.addTab(self.viewer, "3D")
+        self.tabs.addTab(self.surface_preview, "Surface")
 
         splitter = QSplitter()
         splitter.addWidget(side)
@@ -690,6 +721,11 @@ class MainWindow(QMainWindow):
         self.material_panel.save_preset_requested.connect(self._save_terrain_preset)
         self.material_panel.load_preset_requested.connect(self._load_terrain_preset)
         self.material_panel.terrain_preview_requested.connect(self._show_material_on_terrain)
+        self.material_panel.surface_preview_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self.surface_preview))
+        self.material_panel.surface_selected.connect(self.surface_preview.set_surface)
+        self.surface_preview.set_surface(self._material().surfaces[self.material_panel.surface_list.currentRow()])
+        self.side_tabs.currentChanged.connect(self._side_tab_changed)
 
         self.browse_export.clicked.connect(self._choose_export)
         self.export_changed.clicked.connect(lambda: self._start_export("changed"))
@@ -704,6 +740,7 @@ class MainWindow(QMainWindow):
         self.height_band_max.valueChanged.connect(lambda value: self._height_value_changed("max", value))
         self.height_band_fade.valueChanged.connect(lambda value: self._height_value_changed("fade", value))
         self.histogram.bandChanged.connect(self._height_band_changed)
+        self.histogram.biomeSelected.connect(self.height_biome.setCurrentIndex)
         for signal in (self.material_panel.changed, self.export_dir.textChanged, self.lod_distance.valueChanged,
                        self.embed.toggled):
             signal.connect(self._schedule_check)
@@ -1025,8 +1062,7 @@ class MainWindow(QMainWindow):
         elif band.is_open():
             self.height_hint.setText("Enable From or To to add a height limit.")
         else:
-            self.height_hint.setText("Upper circle: From; lower circle: To; squares: fade. "
-                                     "Both edges share one fade.")
+            self.height_hint.setText("Drag FROM, TO or FADE in the graph. Both edges share one fade.")
         self.histogram.set_selected(index)
         self._height_controls_loading = False
 
@@ -1214,6 +1250,10 @@ class MainWindow(QMainWindow):
     def _show_material_on_terrain(self) -> None:
         self.viewer.color.setCurrentIndex(MATERIAL_MODE)
         self.tabs.setCurrentWidget(self.viewer)
+
+    def _side_tab_changed(self, index: int) -> None:
+        if index == 1:
+            self.tabs.setCurrentWidget(self.surface_preview)
 
     def _refresh_field(self) -> None:
         self._field = None
@@ -1543,6 +1583,7 @@ class MainWindow(QMainWindow):
             self._worker.wait()
         if self._checker is not None:
             self._checker.wait()
+        self.surface_preview.shutdown()
         self.viewer.shutdown()
         super().closeEvent(event)
 

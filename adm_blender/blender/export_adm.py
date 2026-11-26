@@ -30,7 +30,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm, validate_adm_resolved
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.29 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.32 (ADM 1.0)"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry

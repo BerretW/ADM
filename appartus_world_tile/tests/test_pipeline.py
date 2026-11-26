@@ -7,7 +7,7 @@ from collections import Counter
 import numpy as np
 
 from awt.heightmap import load_heightmap
-from awt.material import PAINT_AUTO, TerrainMaterial, default_biomes
+from awt.material import PAINT_AUTO, Band, Biome, BiomeSurface, TerrainMaterial, default_biomes
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields
 from awt.roads import Road, rasterize, segments
@@ -53,6 +53,119 @@ class PipelineTest(unittest.TestCase):
         params = BuildParams(input_path=src, out_dir=os.path.join(self.tmp.name, "out"), **kwargs)
         build(params)
         return load_manifest(params.out_dir)
+
+    def test_biome_noise_varies_surfaces_without_changing_old_rules(self):
+        data = np.zeros((65, 65), np.float32)
+        material = TerrainMaterial()
+        material.biomes = [Biome("plain", surfaces=[BiomeSurface("grass"),
+                            BiomeSurface("soil", slope=Band(20.0, None, 0.0))])]
+        original_digest = material.rules_digest()
+        material_dict = material.to_dict(None)
+        self.assertNotIn("noise", material_dict["biomes"][0])
+        self.assertEqual(TerrainMaterial.from_dict(material_dict, None).rules_digest(), original_digest)
+        x, y = np.meshgrid(np.arange(65), np.arange(65))
+        def sample():
+            return surface_weights(compile_rules(material, 1, 65, 65), data, 1, 0, 1, x.ravel(), y.ravel())
+        baseline = sample()
+        grass, soil = (material.surface_names().index(name) for name in ("grass", "soil"))
+        self.assertTrue(np.all(baseline[:, grass] == 1))
+        material.biomes[0].noise = 1.0
+        varied = sample()
+        self.assertGreater(float(np.ptp(varied[:, soil])), 0.3)
+        self.assertGreater(float(varied[:, soil].mean()), 0.1)
+        self.assertTrue(np.allclose(varied.sum(axis=1), 1))
+        self.assertTrue(np.array_equal(varied, sample()))
+        self.assertNotEqual(material.rules_digest(), original_digest)
+        material.biomes[0].noise = 0.5
+        self.assertTrue(np.allclose(sample(), (baseline + varied) / 2))
+        material.biomes[0].noise = 0
+        self.assertTrue(np.array_equal(baseline, sample()))
+        self.assertEqual(material.rules_digest(), original_digest)
+
+    def test_noise_preserves_painted_surface_and_single_surface_biome(self):
+        data = np.zeros((33, 33), np.float32)
+        material = TerrainMaterial()
+        material.biomes = [Biome("plain", surfaces=[BiomeSurface("grass"), BiomeSurface("soil")], noise=1)]
+        material.ensure_surface_paint(33, 33)
+        gravel = material.surface_names().index("gravel")
+        material.surface_paint[:, :] = gravel
+        rules = compile_rules(material, 1, 33, 33)
+        x = np.arange(33, dtype=float)
+        weights = surface_weights(rules, data, 1, 0, 1, x, x)
+        self.assertTrue(np.all(weights[:, gravel] == 1))
+        material.surface_paint = None
+        material.biomes[0].surfaces = [BiomeSurface("grass")]
+        rules = compile_rules(material, 1, 33, 33)
+        weights = surface_weights(rules, data, 1, 0, 1, x, x)
+        self.assertTrue(np.all(weights[:, material.surface_names().index("grass")] == 1))
+
+    def test_noise_is_independent_for_manually_painted_biomes(self):
+        data = np.zeros((33, 33), np.float32)
+        material = TerrainMaterial()
+        entries = [BiomeSurface("grass"), BiomeSurface("soil", slope=Band(20.0, None, 0.0))]
+        material.biomes = [Biome("plain", surfaces=entries),
+                           Biome("painted", surfaces=entries, auto=False)]
+        material.paint_softness_m = 0
+        material.ensure_paint(33, 33)
+        material.paint[:, 17:] = 1
+        x, y = np.array([8., 24.]), np.array([16., 16.])
+        def sample():
+            return surface_weights(compile_rules(material, 1, 33, 33), data, 1, 0, 1, x, y)
+        baseline = sample()
+        material.biomes[1].noise = 1
+        painted = sample()
+        np.testing.assert_array_equal(painted[0], baseline[0])
+        self.assertFalse(np.array_equal(painted[1], baseline[1]))
+        material.biomes[0].noise = 1
+        both = sample()
+        self.assertFalse(np.array_equal(both[0], painted[0]))
+        np.testing.assert_array_equal(both[1], painted[1])
+        material.paint_softness_m = 4
+        x, y = np.array([16.]), np.array([16.])
+        mixed = sample()
+        material.biomes[0].noise = 0
+        self.assertFalse(np.allclose(sample(), mixed))
+        material.biomes[0].noise = 1
+        material.biomes[1].noise = 0
+        self.assertFalse(np.allclose(sample(), mixed))
+
+    def test_noise_rejects_out_of_range_and_nonfinite_values(self):
+        material = TerrainMaterial()
+        for value in (-0.1, 1.1, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                material.biomes[0].noise = value
+                with self.assertRaisesRegex(ValueError, "noise must be 0..1"):
+                    material.validate_rules()
+                with self.assertRaisesRegex(ValueError, "noise must be 0..1"):
+                    TerrainMaterial.from_dict(material.to_dict(None), None)
+
+    def test_noise_build_keeps_matching_weights_between_tiles_and_lods(self):
+        data = np.zeros((33, 65), np.float32)
+        source = os.path.join(self.tmp.name, "noise.npy")
+        np.save(source, data)
+        material = TerrainMaterial()
+        material.biomes = [Biome("plain", surfaces=[BiomeSurface("grass"), BiomeSurface("soil")], noise=1)]
+        params = BuildParams(source, os.path.join(self.tmp.name, "noise"), tile_cells=32,
+                             max_errors_m=[0.1, 2.0], texture_error=0.1, texture_detail_m=2, threads=2)
+        build(params, material)
+        manifest = load_manifest(params.out_dir)
+        self.assertGreater(manifest["lods"][0]["triangles"], 4)
+        seam, owners = {}, {}
+        for tile in manifest["tiles"]:
+            for lod in range(2):
+                verts, _ = read_ply(os.path.join(manifest["_dir"], tile["lods"][lod]["file"]))
+                weights = np.column_stack([verts[f] for f in weight_fields(verts)])
+                self.assertTrue(np.all(weights.sum(axis=1) == 255))
+                x = verts["x"] + tile["origin_m"][0]
+                y = verts["y"] + tile["origin_m"][1]
+                for i in np.flatnonzero(np.isclose(x, 32)):
+                    key = float(y[i])
+                    if key in seam:
+                        np.testing.assert_array_equal(seam[key], weights[i])
+                    else:
+                        seam[key] = weights[i]
+                    owners.setdefault(key, set()).add((tile["id"], lod))
+        self.assertGreater(sum(len(entries) == 4 for entries in owners.values()), 2)
 
     def test_error_bound_watertight_and_area(self):
         data = _terrain(97, 130)  # 129 x 96 cells: not a multiple of the tile size

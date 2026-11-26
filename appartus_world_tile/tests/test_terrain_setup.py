@@ -50,6 +50,7 @@ class TerrainSetupTest(unittest.TestCase):
         material.ensure_surface_paint(8, 8)
         material.surface_paint[0, 0] = 1
         material.roads = [Road("soil", 4, 2, [[0, 0, 1], [7, 7, 2]])]
+        material.biomes[0].noise = 0.65
 
         folder = save_preset(os.path.join(self.tmp.name, "presets"), "Alpine World", material)
         presets = list_presets(os.path.dirname(folder))
@@ -63,6 +64,9 @@ class TerrainSetupTest(unittest.TestCase):
         self.assertEqual(loaded.roads, [])
         self.assertEqual(loaded.surface_names(), material.surface_names())
         self.assertEqual(loaded.biomes[0].surface_names(), material.biomes[0].surface_names())
+        self.assertEqual(loaded.biomes[0].noise, 0.65)
+        with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["version"], 2)
 
     def test_preset_rejects_texture_paths_outside_its_directory(self):
         root = os.path.join(self.tmp.name, "presets")

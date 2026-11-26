@@ -98,6 +98,7 @@ class Biome:
     auto: bool = True  # placed by its height/slope rule; otherwise only where painted
     height: Band = field(default_factory=Band)
     slope: Band = field(default_factory=Band)
+    noise: float = 0.0  # spatial variation between the biome's surfaces, 0..1
 
     def surface_names(self) -> list[str]:
         return [entry.surface for entry in self.surfaces]
@@ -347,6 +348,8 @@ class TerrainMaterial:
         if not (self.slope_radius_m >= 0 and self.paint_softness_m >= 0):
             raise ValueError("Slope radius and paint softness must not be negative")
         for biome in self.biomes:
+            if not 0.0 <= biome.noise <= 1.0:
+                raise ValueError(f"Biome '{biome.name}': noise must be 0..1")
             used = biome.surface_names()
             if not 1 <= len(used) <= SURFACES_PER_BIOME:
                 raise ValueError(f"Biome '{biome.name}' needs one to four surfaces")
@@ -465,9 +468,12 @@ class TerrainMaterial:
                 entries = [BiomeSurface(str(e["surface"]), _band_from(e.get("height")), _band_from(e.get("slope")),
                                         float(e.get("strength", 1.0)))
                            for e in raw.get("surfaces", []) if isinstance(e, dict) and e.get("surface")]
+                noise = float(raw.get("noise", 0.0))
+                if not 0.0 <= noise <= 1.0:
+                    raise ValueError(f"Biome '{raw['name']}': noise must be 0..1")
                 material.biomes.append(Biome(str(raw["name"]), _color(raw.get("color"), [128, 128, 128]), entries,
                                              bool(raw.get("auto", True)), _band_from(raw.get("height")),
-                                             _band_from(raw.get("slope"))))
+                                             _band_from(raw.get("slope")), noise))
         material.slope_radius_m = float(data.get("slope_radius_m", material.slope_radius_m))
         material.paint_softness_m = float(data.get("paint_softness_m", material.paint_softness_m))
         material.double_sided = bool(data.get("double_sided", False))
@@ -515,12 +521,15 @@ def _surface_dict(surface: Surface, base_dir: str | None) -> dict:
 
 
 def _biome_dict(biome: Biome) -> dict:
-    return {
+    result = {
         "name": biome.name, "color": list(biome.color), "auto": biome.auto,
         "height": _band_dict(biome.height), "slope": _band_dict(biome.slope),
         "surfaces": [{"surface": e.surface, "height": _band_dict(e.height), "slope": _band_dict(e.slope),
                       "strength": e.strength} for e in biome.surfaces],
     }
+    if biome.noise != 0.0:
+        result["noise"] = biome.noise
+    return result
 
 
 def srgb_to_linear(value: float) -> float:

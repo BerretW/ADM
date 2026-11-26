@@ -37,7 +37,7 @@ _CFG_SCALE, _CFG_OFFSET, _CFG_SPACING, _CFG_RADIUS, _CFG_CELL, _CFG_NCH, _CFG_MA
 class Rules:
     """A material compiled to arrays for the kernels."""
 
-    brule: np.ndarray  # (N, 7) auto, hmin, hmax, hfade, smin, smax, sfade
+    brule: np.ndarray  # (N, 8) auto, hmin, hmax, hfade, smin, smax, sfade, noise
     bsurf: np.ndarray  # (N, 4) global surface index, -1 = unused
     srule: np.ndarray  # (N, 4, 7) hmin, hmax, hfade, smin, smax, sfade, strength
     # (1 + C, rows, cols) uint8 shares 0..255 of the softened paint: channel 0 = automatic,
@@ -101,11 +101,11 @@ def compile_rules(material: TerrainMaterial, spacing_m: float, width: int, heigh
     original_n = len(material.biomes)
     use_surfaces = material.has_surface_paint() or bool(material.roads)
     n = original_n + (len(names) if use_surfaces else 0)
-    brule = np.zeros((n, 7), np.float64)
+    brule = np.zeros((n, 8), np.float64)
     bsurf = np.full((n, SURFACES_PER_BIOME), -1, np.int32)
     srule = np.zeros((n, SURFACES_PER_BIOME, 7), np.float64)
     for k, biome in enumerate(material.biomes):
-        brule[k] = [1.0 if biome.auto else 0.0] + _band_row(biome.height) + _band_row(biome.slope)
+        brule[k] = [1.0 if biome.auto else 0.0] + _band_row(biome.height) + _band_row(biome.slope) + [biome.noise]
         for j, entry in enumerate(biome.surfaces):
             bsurf[k, j] = names.index(entry.surface)
             srule[k, j] = _band_row(entry.height) + _band_row(entry.slope) + [entry.strength]
@@ -263,8 +263,24 @@ def _paint_weights(paint, cfg, gx, gy, pw):
     return auto / total
 
 
+@njit(cache=True, inline="always")
+def _noise_value(x, y, seed):
+    value = math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453123
+    return value - math.floor(value)
+
+
+@njit(cache=True, inline="always")
+def _noise(x, y, seed):
+    ix, iy = math.floor(x), math.floor(y)
+    u, v = x - ix, y - iy
+    u, v = u * u * (3 - 2 * u), v * v * (3 - 2 * v)
+    a = _noise_value(ix, iy, seed) * (1 - u) + _noise_value(ix + 1, iy, seed) * u
+    b = _noise_value(ix, iy + 1, seed) * (1 - u) + _noise_value(ix + 1, iy + 1, seed) * u
+    return a * (1 - v) + b * v
+
+
 @njit(cache=True)
-def _inner(k, z, slope, bsurf, srule, slots):
+def _inner(k, z, slope, gx, gy, spacing, brule, bsurf, srule, slots):
     """Surface weights of biome ``k`` into ``slots[0..3]`` (base surface keeps the remainder)."""
     remaining = 1.0
     for j in range(bsurf.shape[1] - 1, 0, -1):
@@ -276,6 +292,19 @@ def _inner(k, z, slope, bsurf, srule, slots):
         slots[j] = remaining * f
         remaining -= slots[j]
     slots[0] = remaining
+    intensity = brule[k, 7]
+    if intensity > 0.0 and bsurf[k, 1] >= 0:
+        total = 0.0
+        x, y = gx * spacing / 20.0, gy * spacing / 20.0
+        for j in range(bsurf.shape[1]):
+            if bsurf[k, j] >= 0:
+                value = _noise(x, y, k * SURFACES_PER_BIOME + j)
+                total += value * value * value + 0.03
+        for j in range(bsurf.shape[1]):
+            if bsurf[k, j] >= 0:
+                value = _noise(x, y, k * SURFACES_PER_BIOME + j)
+                varied = (value * value * value + 0.03) / total
+                slots[j] = (1.0 - intensity) * slots[j] + intensity * varied
 
 
 @njit(cache=True)
@@ -303,7 +332,7 @@ def _sample(h, cfg, gx, gy, brule, bsurf, srule, paint, b, pw, sd, se, out):
         if k != d and (e < 0 or b[k] > b[e]):
             e = k
     out[:] = 0.0
-    _inner(d, z, slope, bsurf, srule, sd)
+    _inner(d, z, slope, gx, gy, cfg[_CFG_SPACING], brule, bsurf, srule, sd)
     be = 0.0 if e < 0 else b[e]
     if be <= 1e-6:
         for j in range(bsurf.shape[1]):
@@ -311,7 +340,7 @@ def _sample(h, cfg, gx, gy, brule, bsurf, srule, paint, b, pw, sd, se, out):
                 out[bsurf[d, j]] += sd[j]
         return d, e, 0.0
     t = be / (b[d] + be)
-    _inner(e, z, slope, bsurf, srule, se)
+    _inner(e, z, slope, gx, gy, cfg[_CFG_SPACING], brule, bsurf, srule, se)
     shared = 0
     total = 0.0
     for i in range(bsurf.shape[1]):
