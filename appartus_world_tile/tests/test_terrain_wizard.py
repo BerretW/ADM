@@ -13,7 +13,8 @@ try:
     from awt.gui.main_window import MainWindow
     from awt.gui.height_blend_preview import compose_preview
     from awt.gui.height_blend_preview import HeightBlendPreview
-    from awt.gui.material_panel import MaterialPanel
+    from awt.gui.height_blend_preview import _compose_pbr_maps, _read_rgba
+    from awt.gui.material_panel import MaterialPanel, MaterialPreview
     from awt.gui.terrain_wizard import TerrainSetupWizard
 except ImportError:
     QApplication = None
@@ -22,10 +23,11 @@ except ImportError:
     MaterialPanel = None
     compose_preview = None
     HeightBlendPreview = None
+    _compose_pbr_maps = None
 
 import numpy as np
 
-from awt.material import Band, MapSlot, Surface, TerrainMaterial
+from awt.material import Band, MapSlot, Surface, TerrainMaterial, normal_preview_array
 from awt.heightmap import Heightmap
 from awt.project import load_project
 
@@ -117,6 +119,56 @@ class TerrainWizardTest(unittest.TestCase):
                                          height_blend=True, transition=0.01)
             self.assertTrue((one_hot[1] == 0).all())
 
+    def test_sixteen_bit_height_preview_normalizes_values(self):
+        from awt.adm_export import _core
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "height.png")
+            values = np.array([[0, 32768, 65535]], dtype=np.uint16)
+            Image.fromarray(values).save(path)
+            for pixels in (_read_rgba(path), MaterialPreview._image_array(path)):
+                np.testing.assert_array_equal(pixels[0, :, 0], [0, 128, 255])
+            _core()
+            from adm_blender.core import gputex
+            for mime, extension in ((gputex.MIME_DDS, ".dds"), (gputex.MIME_KTX2, ".ktx2")):
+                data, _ = gputex.encode_scalar(values, mime, "R16", mipmaps=False)
+                path = os.path.join(directory, "height" + extension)
+                with open(path, "wb") as handle:
+                    handle.write(data)
+                for pixels in (_read_rgba(path), MaterialPreview._image_array(path)):
+                    np.testing.assert_allclose(pixels[0, :, 0], [0, 128, 255], atol=1)
+                    self.assertTrue(np.all(pixels[..., 1:3] == 0))
+
+    def test_bc5_normal_preview_reconstructs_positive_z(self):
+        from awt.adm_export import _core, prepare_adm_texture
+        from PIL import Image
+        import io
+
+        _core()
+        from adm_blender.core import gputex
+
+        pixels = np.full((4, 4, 4), [180, 95, 235, 255], dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            for mime, extension in ((gputex.MIME_DDS, ".dds"), (gputex.MIME_KTX2, ".ktx2")):
+                with self.subTest(mime=mime):
+                    blob, _ = gputex.encode(pixels, mime, "BC5", mipmaps=False)
+                    path = os.path.join(directory, "normal" + extension)
+                    with open(path, "wb") as handle:
+                        handle.write(blob)
+                    with Image.open(io.BytesIO(prepare_adm_texture(path, "normal").fallback.data)) as image:
+                        self.assertTrue(np.all(np.asarray(image)[..., 2] == 0))
+                    preview = normal_preview_array(path)
+                    xy = preview[..., :2].astype(float) / 127.5 - 1
+                    z = preview[..., 2].astype(float) / 127.5 - 1
+                    decoded = gputex.decode(blob, strict=True)[0]
+                    np.testing.assert_allclose(preview[..., :2], decoded[..., :2], atol=1)
+                    np.testing.assert_allclose(np.sum(xy * xy, axis=-1) + z * z, 1, atol=0.02)
+                    self.assertTrue(np.all(z > 0.5))
+                    surface = Surface("normal", normal=path, repeat_m=15)
+                    _, blended, _ = _compose_pbr_maps([surface], np.ones((1, 4, 4)))
+                    self.assertTrue(np.all(blended[..., 2] > 192))
+
     def test_multi_surface_preview_uses_weighted_ao_channel_inversion_and_strength(self):
         from PIL import Image
 
@@ -127,11 +179,43 @@ class TerrainWizardTest(unittest.TestCase):
                                ao_map=MapSlot(path, channel=1, invert=True), ao_strength=0.5)
             clear = Surface("clear", color=[200, 200, 200], repeat_m=15)
             rgb, weights = compose_preview([occluded, clear], [1, 1], size=4)
-            expected = round(200 * (1 - 0.5 * 0.5 * 64 / 255))
+            from awt.bake import _linear_to_srgb, _srgb_to_linear
+
+            expected = round(float(_linear_to_srgb(
+                _srgb_to_linear(np.array(200 / 255)) * (1 - 0.5 * 0.5 * 64 / 255))) * 255)
             np.testing.assert_array_equal(rgb, np.full((4, 4, 3), expected, dtype=np.uint8))
             np.testing.assert_allclose(weights[:, 0, 0], (0.5, 0.5))
             rgb, _ = compose_preview([occluded, clear], [0, 1], size=4)
             self.assertTrue(np.all(rgb == 200))
+
+    def test_multi_surface_preview_composes_material_maps(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = {}
+            for name, color in (("normal", (255, 128, 128)), ("emission", (255, 0, 0)),
+                                ("packed", (0, 128, 64))):
+                path = os.path.join(directory, name + ".png")
+                Image.new("RGB", (4, 4), color).save(path)
+                paths[name] = path
+            mapped = Surface("mapped", repeat_m=15, normal=paths["normal"], emission=paths["emission"],
+                             roughness=0.8, roughness_map=MapSlot(paths["packed"], channel=1, invert=True),
+                             metallic=0.4, metallic_map=MapSlot(paths["packed"], channel=2))
+            plain = Surface("plain", repeat_m=15, roughness=0.4, metallic=0.2)
+            _, weights = compose_preview([mapped, plain], [1, 1], size=4)
+            orm, normal, emission = _compose_pbr_maps([mapped, plain], weights)
+            expected_roughness = round((0.5 * 0.8 * (1 - 128 / 255) + 0.5 * 0.4) * 255)
+            expected_metallic = round((0.5 * 0.4 * 64 / 255 + 0.5 * 0.2) * 255)
+            np.testing.assert_array_equal(orm[0, 0], (255, expected_roughness, expected_metallic))
+            self.assertGreater(normal[0, 0, 0], 200)
+            self.assertGreater(normal[0, 0, 2], 200)
+            self.assertGreater(emission[0, 0, 0], 180)
+            self.assertEqual(int(emission[0, 0, 1]), 0)
+            _, one_hot = compose_preview([mapped, plain], [0, 1], size=4)
+            orm, normal, emission = _compose_pbr_maps([mapped, plain], one_hot)
+            np.testing.assert_array_equal(orm[0, 0], (255, 102, 51))
+            np.testing.assert_array_equal(normal[0, 0], (128, 128, 255))
+            np.testing.assert_array_equal(emission[0, 0], (0, 0, 0))
 
     def test_multi_surface_preview_dialog_renders_and_switches_weight_view(self):
         preview = HeightBlendPreview(TerrainMaterial())
@@ -144,6 +228,60 @@ class TerrainWizardTest(unittest.TestCase):
         preview.lighting.setCurrentIndex(1)
         self.assertIsNotNone(preview._actor)
         self.assertFalse(preview.error.text())
+
+    def test_multi_surface_preview_renders_composed_emission_and_normal(self):
+        import pyvista as pv
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            normal = os.path.join(directory, "normal.png")
+            emission = os.path.join(directory, "emission.png")
+            Image.new("RGB", (4, 4), (128, 128, 255)).save(normal)
+            Image.new("RGB", (4, 4), (255, 0, 0)).save(emission)
+            material = TerrainMaterial()
+            material.surfaces[0].normal = normal
+            material.surfaces[0].emission = emission
+            material.surfaces[0].color = [0, 0, 0]
+            material.surfaces[1].color = [0, 0, 0]
+            preview = HeightBlendPreview(material)
+            self.addCleanup(preview.close)
+            preview.surface[1].setCurrentIndex(1)
+            self.assertFalse(preview.error.text())
+            self.assertIsNotNone(preview._actor.prop.GetTexture("materialTex"))
+            self.assertIsNotNone(preview._actor.prop.GetTexture("normalTex"))
+            self.assertIsNotNone(preview._actor.prop.GetTexture("emissiveTex"))
+            self.assertIsNotNone(preview._actor.mapper.dataset.GetPointData().GetTangents())
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            plotter.remove_all_lights()
+            plotter.add_light(pv.Light(position=(0, 0, 10), focal_point=(0, 0, 0),
+                                      light_type="scene light"))
+            plotter.add_actor(preview._actor, reset_camera=False)
+            plotter.view_xy()
+            plotter.reset_camera()
+            plotter.show(auto_close=False)
+            color = plotter.screenshot(return_img=True)[80:120, 80:120, :3].mean(axis=(0, 1))
+            self.assertGreater(color[0], 50, color)
+            self.assertGreater(color[0], color[1] * 2, color)
+            material.surfaces[0].emission = ""
+            for surface in material.surfaces[:2]:
+                surface.color = [100, 100, 100]
+            brightness = []
+            for name, normal_color in (("flat", (128, 128, 255)), ("side", (255, 128, 128))):
+                path = os.path.join(directory, name + ".png")
+                Image.new("RGB", (4, 4), normal_color).save(path)
+                material.surfaces[0].normal = path
+                preview.weight[0].setValue(100)
+                preview.weight[1].setValue(0)
+                preview._render()
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(0, 0, 10), focal_point=(0, 0, 0),
+                                          light_type="scene light"))
+                plotter.add_actor(preview._actor, reset_camera=False)
+                plotter.render()
+                brightness.append(plotter.screenshot(return_img=True)[80:120, 80:120, :3].mean())
+            self.assertGreater(brightness[0] - brightness[1], 10.0, brightness)
 
     def test_duplicate_biome_surface_can_be_fixed_in_the_wizard(self):
         material = TerrainMaterial()
@@ -465,6 +603,83 @@ class TerrainWizardTest(unittest.TestCase):
                     preview.map_mode.setCurrentIndex(preview.map_mode.findData(mode))
                     self.assertIsNotNone(preview._actor.texture)
                     self.assertNotIn("No ", preview.status.text())
+
+    def test_surface_preview_uses_neutral_orm_channels_for_missing_maps(self):
+        from PIL import Image
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        surface = window._material().surfaces[0]
+        surface.roughness = 0.4
+        surface.metallic = 0.3
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "ao.png")
+            Image.new("RGB", (4, 4), (128, 128, 128)).save(path)
+            surface.ao_map = MapSlot(path)
+            preview = window.surface_preview
+            preview.set_surface(surface)
+            orm, _, _ = preview._pbr_maps(surface)
+            pixels = orm.to_array()
+            self.assertTrue(np.all(pixels[..., 0] == 128))
+            self.assertTrue(np.all(pixels[..., 1:3] == 255))
+            self.assertAlmostEqual(preview._actor.prop.GetRoughness(), 0.4)
+            self.assertAlmostEqual(preview._actor.prop.GetMetallic(), 0.3)
+
+    def test_surface_preview_uses_linear_tint_and_ao_strength(self):
+        from PIL import Image
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        surface = window._material().surfaces[0]
+        surface.color = [128, 128, 128]
+        surface.ao_strength = 0.0
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "map.png")
+            Image.new("RGB", (4, 4), (128, 128, 128)).save(path)
+            surface.albedo = path
+            surface.ao_map = MapSlot(path)
+            preview = window.surface_preview
+            preview.set_surface(surface)
+            self.assertTrue(np.all(preview._actor.texture.to_array()[..., :3] == 61))
+            self.assertTrue(np.all(preview._map_texture(surface, "albedo").to_array()[..., :3] == 61))
+            self.assertTrue(np.all(preview._map_texture(surface, "ao").to_array()[..., :3] == 255))
+
+    def test_surface_preview_normal_map_changes_render_and_has_tangents(self):
+        import pyvista as pv
+        from PIL import Image
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        surface = window._material().surfaces[0]
+        surface.color = [100, 100, 100]
+        surface.metallic = 0.0
+        surface.roughness = 0.8
+        preview = window.surface_preview
+        plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+        self.addCleanup(plotter.close)
+        plotter.set_background("black")
+        with tempfile.TemporaryDirectory() as directory:
+            results = []
+            for name, normal in (("flat", (128, 128, 255)), ("side", (255, 128, 128))):
+                path = os.path.join(directory, name + ".png")
+                Image.new("RGB", (4, 4), normal).save(path)
+                surface.normal = path
+                preview.set_surface(surface)
+                for mode in range(3):
+                    preview.mode.setCurrentIndex(mode)
+                    mesh = preview._actor.mapper.dataset
+                    self.assertIsNotNone(mesh.GetPointData().GetTangents())
+                preview.mode.setCurrentIndex(1)
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(0, 0, 10), focal_point=(0, 0, 0),
+                                          light_type="scene light"))
+                plotter.add_actor(preview._actor, reset_camera=False)
+                plotter.view_xy()
+                plotter.reset_camera()
+                plotter.show(auto_close=False)
+                plotter.render()
+                results.append(plotter.screenshot(return_img=True)[80:120, 80:120, :3].mean())
+            self.assertGreater(results[0] - results[1], 10.0, results)
 
     def test_surface_preview_repeat_uses_physical_dimensions(self):
         window = MainWindow()

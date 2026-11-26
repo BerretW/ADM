@@ -69,6 +69,17 @@ def advanced_gpu_fixture(mime, kind, srgb=False, width=5, height=3):
 
 @unittest.skipIf(np is None, "numpy required")
 class CodecTests(unittest.TestCase):
+    def test_bc5_normal_reconstruction_normalizes_out_of_disk_samples(self):
+        samples = np.array([[[0.5, 0.5, 0.0, 1.0], [1.0, 1.0, 0.0, 0.5]]], dtype=np.float32)
+        decoded = G.reconstruct_bc5_normal(samples)
+        np.testing.assert_allclose(decoded[0, 0], [0.5, 0.5, 1.0, 1.0], atol=1e-6)
+        vectors = decoded[..., :3] * 2 - 1
+        np.testing.assert_allclose(np.linalg.norm(vectors, axis=-1), 1.0, atol=1e-6)
+        self.assertAlmostEqual(float(decoded[0, 1, 2]), 0.5)
+        self.assertAlmostEqual(float(decoded[0, 1, 3]), 0.5)
+        with self.assertRaises(ValueError):
+            G.reconstruct_bc5_normal(np.full((1, 1, 4), np.nan))
+
     def test_version_two_gpu_formats_parse_exact_odd_dimension_sizes(self):
         cases = (("R8", False), ("R16", False), ("BC4", False), ("BC5", False),
                  ("BC7", False), ("BC7", True))
@@ -87,6 +98,14 @@ class CodecTests(unittest.TestCase):
         struct.pack_into("<I", blob, 16, 1)
         with self.assertRaisesRegex(G.GpuTextureError, "typeSize must be 2 for R16"):
             G.parse(blob, G.MIME_KTX2)
+
+    def test_dds_rejects_excessive_mip_count_before_allocating_levels(self):
+        blob = bytearray(advanced_gpu_fixture(G.MIME_DDS, "BC5"))
+        flags, = struct.unpack_from("<I", blob, 8)
+        struct.pack_into("<I", blob, 8, flags | 0x20000)
+        struct.pack_into("<I", blob, 28, 0xFFFFFFFF)
+        with self.assertRaisesRegex(G.GpuTextureError, "level count"):
+            G.parse(blob, G.MIME_DDS, strict=False)
 
     def test_round_trip_every_container_format_and_colorspace(self):
         img = gradient()
@@ -184,6 +203,20 @@ class CodecTests(unittest.TestCase):
         encoded = G.encode_level(pixels, "BC7")
         self.assertEqual(len(encoded), 16)
         self.assertEqual(encoded[0] & 0x7F, 0x40)
+
+    def test_repackage_ktx_as_dds_preserves_bc7_mips(self):
+        blob, _ = G.encode(gradient(alpha=True), G.MIME_KTX2, "BC7", srgb=True, mipmaps=True)
+        original = G.parse(blob, G.MIME_KTX2)
+        wrapped = G.repackage_bc7_as_dds(blob)
+        converted = G.parse(wrapped, G.MIME_DDS)
+        self.assertEqual((converted["kind"], converted["srgb"]), ("BC7", True))
+        self.assertEqual(len(original["levels"]), len(converted["levels"]))
+        for src, dst in zip(original["levels"], converted["levels"]):
+            self.assertEqual(src[2:], dst[2:])
+            self.assertEqual(blob[src[0]:src[0] + src[1]], wrapped[dst[0]:dst[0] + dst[1]])
+        non_bc7, _ = G.encode(gradient(), G.MIME_KTX2, "BC1", mipmaps=False)
+        with self.assertRaisesRegex(G.GpuTextureError, "requires BC7"):
+            G.repackage_bc7_as_dds(non_bc7)
 
     def test_bc4_bc5_match_independent_decoder(self):
         try:

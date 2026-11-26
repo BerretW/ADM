@@ -48,11 +48,13 @@
         "adm-standard/tools/test_shader_vertex_masks.py",
         "adm_blender/tests/test_shader_math.py",
         "adm_blender/tests/test_shader_preview.py",
+        "adm_blender/tests/test_advanced_reference_blender.py",
         "adm-standard/tools/generate_advanced_material_references.py"
       ],
       "verifiedChecks": [
         "The mask expectation file provides reference vectors for registered COLOR_1 profiles.",
-        "Procedural Rock, Cobblestone, Sand, Dirt, and Grass maps are generated without third-party assets."
+        "Procedural Rock, Cobblestone, Sand, Dirt, and Grass maps are generated without third-party assets.",
+        "The generated advanced ADM comparison scene imports and re-exports four advanced profiles with layer AO, height, and parallax metadata."
       ],
       "notTested": [
         "A single measured material fixture covering every listed PBR, COLOR_0, tint and emission behavior.",
@@ -230,10 +232,13 @@
       "expectations": [],
       "referenceTests": [
         "adm_blender/tests/test_terrain_workflow.py",
-        "appartus_world_tile/tools/generate_reference_project.py"
+        "appartus_world_tile/tools/generate_reference_project.py",
+        "appartus_world_tile/tests/test_pipeline.py"
       ],
       "verifiedChecks": [
-        "The Blender terrain workflow test exercises reference implementation import/export."
+        "The Blender terrain workflow test exercises reference implementation import/export.",
+        "The relocated World Tile project and its fixture tree build four tiles with three LODs and export four validated ADM files.",
+        "The exported tile materials reference R8, R16, BC4, BC5, and BC7 GPU texture primaries."
       ],
       "notTested": [
         "Expected cross-tile transforms, LOD equivalence and material-layer evaluations in a second reader."

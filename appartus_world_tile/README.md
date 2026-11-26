@@ -31,6 +31,12 @@ inside the ADM checkout.
 The standalone World Tile ZIP includes the required ADM core but not the example heightmaps
 under `source`; use your own heightmap with the command-line examples.
 
+The repository includes `reference_project/advanced_reference.awtp`, a four-tile project with
+three LODs, five surfaces, biome noise, and a road. Its textures are in
+`reference_project/textures` and `../adm-standard/fixtures/advanced-materials`; keep that
+relative directory structure when moving the project. The project includes R8, R16, BC4,
+BC5, and BC7 GPU texture sources. Open the project and build its tiles before exporting them.
+
 ## Inputs
 
 | Format | Notes |
@@ -94,8 +100,8 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   **Compare surface blending** opens a separate two-to-four-layer preview. Set base weights,
   toggle height blending, adjust transition and strength, and select a layer to inspect its
   final weight. Drag to rotate, pan, or zoom; choose a studio, grazing, or soft light. This
-  preview composites albedo and tint and approximates AO by darkening the final color. It does
-  not render normal, emission, or parallax effects.
+  preview composites albedo, tint, normal, metallic, roughness, and emission maps and
+  approximates AO by darkening the final color. It does not render parallax effects.
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.
@@ -209,21 +215,34 @@ adm/
   reproduce vertex-weighted layers, metallic/roughness maps, AO maps, height blending, or
   parallax; the export result reports these limitations.
 * Layer textures are shared through `ADM_external_images_v1` by default (content hash in the
-  file name and in the tile, checked on import). Each texture has a DDS primary image and
+  file name and in the tile, checked on import). Each texture has a DDS or KTX2 primary image and
   same-size PNG fallback. **Embed** puts both images into every tile, instead, repeating the
-  data per tile. ADM-compatible DDS files are preserved byte-for-byte when their color space
-  matches the texture role. Other inputs are converted to DDS: albedo uses automatic BC1/BC3
+  data per tile. ADM-compatible DDS and KTX2 files are preserved byte-for-byte when their color
+  space matches the texture role. Other inputs are converted to DDS: albedo uses automatic BC1/BC3
   selection, normal maps use uncompressed RGBA8, and data maps use BC3 or keep a compatible
   scalar format. Albedo and emission use sRGB; normal, AO, height, metallic, and roughness maps
   use linear UNORM. PNG is used as the importer-friendly fallback. DDS textures using BC1, BC3,
   BC4, BC5, BC6 or BC7 are decoded by AWT; supported
   BC2/DXT3 files are read through Pillow.
+  BC5 normal maps reconstruct their Z component in the surface and blend previews.
+  Scalar GPU fallbacks retain red values and use zero for green and blue.
+  When a 16-bit grayscale PNG uses a green or blue map channel, export remaps
+  that selection to red in ADM and reports the change. The project keeps the
+  original selection. Scalar GPU input channels are not remapped.
   Single 2D textures are supported (not texture arrays, cubemaps or volumes).
 * **Export changed** compares a digest of every tile's meshes, vertex weights, material
-  (including the texture contents), placement and export settings with `world.json`. Shader-only
-  material edits do not rebuild terrain geometry or vertex weights. Rebuilding with other LOD
-  errors, retexturing a layer or changing the LOD distance marks tiles for re-export;
-  a missing `.adm` file is always exported again.
+  (including the complete source texture bytes and mip levels), placement and export settings
+  with `world.json`. Shader-only
+  material edits do not rebuild terrain geometry or vertex weights. For newly built tiles, a
+  surface edit marks only tiles that use that surface in at least one LOD. Global shader and
+  export settings can affect every tile. Older manifests without surface-use metadata conservatively
+  mark all tiles for a material edit. The first export with the per-tile fingerprints also
+  refreshes tiles recorded with older fingerprints. A missing `.adm` file is always exported again.
+* Each terrain primitive supports at most four surfaces. Weights at or below 2/255 are omitted
+  from a triangle's surface set. If a triangle needs more than four surfaces, export retains
+  the four with the greatest total corner weight and reports the number of affected triangles.
+  Adjacent triangles can retain different surfaces, producing a visible seam, especially with
+  height blending. Reduce the number of overlapping surfaces to avoid this limitation.
 * Every written tile is validated with the ADM validator before it replaces the old file
   (atomic write). Validation is the slowest step (see Performance); turn it off for quick
   iterations.

@@ -79,11 +79,15 @@ def parse(blob, mime, strict=True):
     raise GpuTextureError(f"not a GPU texture mime type: {mime!r}")
 
 
-def _check_levels(blob, kind, w, h, levels, align):
+def _check_level_count(w, h, count):
     if w < 1 or h < 1:
         raise GpuTextureError("width/height must be >= 1")
-    if not 1 <= len(levels) <= max_levels(w, h):
-        raise GpuTextureError(f"level count {len(levels)} outside 1..{max_levels(w, h)}")
+    if not 1 <= count <= max_levels(w, h):
+        raise GpuTextureError(f"level count {count} outside 1..{max_levels(w, h)}")
+
+
+def _check_levels(blob, kind, w, h, levels, align):
+    _check_level_count(w, h, len(levels))
     out = []
     for i, ((off, length), (lw, lh)) in enumerate(zip(levels, _level_dims(w, h, len(levels)))):
         want = level_size(kind, lw, lh)
@@ -114,6 +118,7 @@ def _parse_ktx2(blob):
         raise GpuTextureError("supercompression is outside the ADM KTX2 subset")
     if nlevels == 0:
         raise GpuTextureError("levelCount 0 (runtime-generated mips) is not allowed")
+    _check_level_count(w, h, nlevels)
     if 80 + 24 * nlevels > len(blob):
         raise GpuTextureError("truncated level index")
     raw = [struct.unpack_from("<3Q", blob, 80 + 24 * i) for i in range(nlevels)]
@@ -172,6 +177,7 @@ def _parse_dds(blob, strict):
     if flags & _DDSD_DEPTH or caps2 & (_DDSCAPS2_CUBEMAP | _DDSCAPS2_VOLUME):
         raise GpuTextureError("only a single 2D image is allowed (no volume or cubemap)")
     nlevels = mips if (flags & _DDSD_MIPMAPCOUNT and mips) else 1
+    _check_level_count(w, h, nlevels)
     offset = 128
     swizzle = None
     if pf_flags & _DDPF_FOURCC and fourcc == b"DX10":
@@ -572,6 +578,16 @@ def _write_dds_data(data, w, h, n, kind, srgb):
     return head + data
 
 
+def repackage_bc7_as_dds(blob, mime=None):
+    """Repackage BC7 mip payloads as DDS without decoding them."""
+    info = parse(blob, mime or mime_of(blob))
+    if info["kind"] != "BC7":
+        raise GpuTextureError("DDS repackaging requires BC7 data")
+    levels = b"".join(blob[offset:offset + length] for offset, length, _, _ in info["levels"])
+    return _write_dds_data(levels, info["width"], info["height"], len(info["levels"]),
+                           info["kind"], info["srgb"])
+
+
 def encode(rgba, mime, kind="AUTO", srgb=False, mipmaps=True):
     """Encode uint8 (h, w, 4) top-to-bottom pixels as an ADM-subset KTX2 or DDS image.
 
@@ -780,6 +796,23 @@ def decode(blob, mime=None, strict=False):
     info = parse(blob, mime, strict)
     rgb_only = mime == MIME_KTX2 and struct.unpack_from("<I", blob, 12)[0] in (131, 132)
     return decode_level(blob, info, 0, rgb_only), info
+
+
+def reconstruct_bc5_normal(rgba):
+    """Reconstruct normalized tangent-space normals from linear BC5 RGBA samples."""
+    import numpy as np
+
+    pixels = np.asarray(rgba, dtype=np.float32)
+    if pixels.ndim != 3 or pixels.shape[2] != 4 or not np.isfinite(pixels).all() \
+            or np.any((pixels < 0.0) | (pixels > 1.0)):
+        raise ValueError("BC5 samples must be finite normalized RGBA pixels")
+    result = pixels.copy()
+    xy = result[..., :2] * 2.0 - 1.0
+    z = np.sqrt(np.maximum(0.0, 1.0 - np.sum(xy * xy, axis=-1, keepdims=True)))
+    vector = np.concatenate((xy, z), axis=-1)
+    vector /= np.linalg.norm(vector, axis=-1, keepdims=True)
+    result[..., :3] = vector * 0.5 + 0.5
+    return result
 
 
 def decode_scalar_level(blob, info, level=0):

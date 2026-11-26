@@ -446,8 +446,10 @@ try {
         "test_shader_profiles.py",
         "test_shader_preview.py",
         "test_advanced_scene_images_blender.py",
+        "test_advanced_reference_blender.py",
         "test_lod_generator.py",
         "test_texture_formats.py",
+        "test_bc5_normal_import_blender.py",
         "test_component_animation_blender.py",
         "test_mixamo_animation_blender.py",
         "test_bvh_blender.py",
@@ -465,7 +467,8 @@ try {
             }
             $testPath = ".\adm_blender\tests\$test"
             if ($test -in @("test_shader_enums_blender.py", "test_shader_profiles.py",
-                           "test_shader_preview.py")) {
+                           "test_shader_preview.py", "test_advanced_reference_blender.py",
+                           "test_bc5_normal_import_blender.py")) {
                 Invoke-Step -Name "Blender: $test" -Executable $pythonExe -Arguments @(
                     ".\tools\run_blender_test.py", $blenderExe, $testPath, "240"
                 )

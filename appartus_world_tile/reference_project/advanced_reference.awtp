@@ -51,7 +51,7 @@
      "invert": false
     },
     "height_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/rock/height.png",
+     "path": "textures/rock_height.dds",
      "channel": 0,
      "invert": false
     },
@@ -85,7 +85,7 @@
      "invert": false
     },
     "height_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/cobblestone/height.png",
+     "path": "textures/cobblestone_height.ktx2",
      "channel": 0,
      "invert": false
     },
@@ -119,7 +119,7 @@
      "invert": false
     },
     "height_map": {
-     "path": "../../adm-standard/fixtures/advanced-materials/sand/height.png",
+     "path": "textures/sand_height.dds",
      "channel": 0,
      "invert": false
     },
@@ -146,7 +146,7 @@
      "channel": 0,
      "invert": false
     },
-    "normal": "../../adm-standard/fixtures/advanced-materials/dirt/normal.png",
+    "normal": "textures/dirt_normal.ktx2",
     "ao_map": {
      "path": "../../adm-standard/fixtures/advanced-materials/dirt/ao.png",
      "channel": 0,
@@ -167,7 +167,7 @@
      255
     ],
     "repeat_m": 4.0,
-    "albedo": "../../adm-standard/fixtures/advanced-materials/grass/albedo.png",
+    "albedo": "textures/grass_albedo.ktx2",
     "metallic": 0.0,
     "metallic_map": {
      "path": "",

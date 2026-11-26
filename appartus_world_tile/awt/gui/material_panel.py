@@ -14,12 +14,24 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDou
                                QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QToolButton,
                                QVBoxLayout, QWidget)
 
+from ..bake import _linear_to_srgb, _srgb_to_linear
 from ..material import (CHANNELS, IMAGE_FILTER, MAX_BIOMES, MAX_SURFACES, SURFACES_PER_BIOME, Band, Biome,
-                        BiomeSurface, MapSlot, Surface, TerrainMaterial, prepare_texture)
+                        BiomeSurface, MapSlot, Surface, TerrainMaterial, _eight_bit, normal_preview_array,
+                        prepare_texture)
 from ..material_set_import import apply_material_sets
 from .material_set_import import MaterialSetImportDialog
 
 THUMB = 40
+
+
+def _mesh_with_tangents(mesh, pv):
+    from vtkmodules.vtkFiltersCore import vtkPolyDataTangents
+
+    mesh = mesh.triangulate()
+    tangents = vtkPolyDataTangents()
+    tangents.SetInputData(mesh)
+    tangents.Update()
+    return pv.wrap(tangents.GetOutput())
 
 
 def _thumbnail(path: str) -> QPixmap | None:
@@ -111,7 +123,13 @@ class MaterialPreview(QWidget):
 
         prepared = prepare_texture(path)
         with Image.open(io.BytesIO(prepared.data)) as image:
-            return np.array(image.convert("RGBA"))
+            return np.array(_eight_bit(image).convert("RGBA"))
+
+    @staticmethod
+    def _tint_albedo(rgb, color):
+        linear = _srgb_to_linear(np.asarray(rgb, dtype=np.float32) / 255.0)
+        tint = _srgb_to_linear(np.asarray(color, dtype=np.float32) / 255.0)
+        return np.clip(_linear_to_srgb(linear * tint) * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
     @classmethod
     def _scalar_preview(cls, slot: MapSlot, size: tuple[int, int] | None, factor: float = 1.0,
@@ -154,9 +172,9 @@ class MaterialPreview(QWidget):
         metallic = self._scalar_preview(surface.metallic_map, size)
         if any(value is not None for value in (ao, roughness, metallic)):
             ao = np.full((size[1], size[0], 3), 255, np.uint8) if ao is None else ao
-            roughness = (np.full((size[1], size[0], 3), round(surface.roughness * 255), np.uint8)
+            roughness = (np.full((size[1], size[0], 3), 255, np.uint8)
                          if roughness is None else roughness)
-            metallic = (np.full((size[1], size[0], 3), round(surface.metallic * 255), np.uint8)
+            metallic = (np.full((size[1], size[0], 3), 255, np.uint8)
                         if metallic is None else metallic)
             packed = np.stack((ao[..., 0], roughness[..., 0], metallic[..., 0], np.full(
                 (size[1], size[0]), 255, np.uint8)), axis=-1)
@@ -164,7 +182,7 @@ class MaterialPreview(QWidget):
             orm.repeat = True
         else:
             orm = None
-        normal = self._pv.numpy_to_texture(self._image_array(surface.normal)) if surface.normal else None
+        normal = self._pv.numpy_to_texture(normal_preview_array(surface.normal)) if surface.normal else None
         emission = self._pv.numpy_to_texture(self._image_array(surface.emission)) if surface.emission else None
         if normal is not None:
             normal.repeat = True
@@ -183,10 +201,9 @@ class MaterialPreview(QWidget):
             path = surface.albedo
             image = self._image_array(path) if path else None
             if image is not None:
-                image = image[..., :3].astype(np.float32) * np.asarray(surface.color) / 255.0
-                image = np.clip(image, 0, 255).astype(np.uint8)
+                image = self._tint_albedo(image[..., :3], surface.color)
         elif name == "normal":
-            path, image = surface.normal, self._image_array(surface.normal) if surface.normal else None
+            path, image = surface.normal, normal_preview_array(surface.normal) if surface.normal else None
         elif name == "height":
             slot = surface.height_map
             path = slot.path
@@ -198,7 +215,8 @@ class MaterialPreview(QWidget):
             path = slot.path if slot else ""
             factor = surface.ao_strength if name == "ao" else (
                 surface.roughness if name == "roughness" else surface.metallic)
-            image = self._scalar_preview(slot, (1024, 1024), factor) if path else None
+            bias = 1.0 - factor if name == "ao" else 0.0
+            image = self._scalar_preview(slot, (1024, 1024), factor, bias) if path else None
         if image is None:
             return None
         texture = self._pv.numpy_to_texture(image)
@@ -221,14 +239,13 @@ class MaterialPreview(QWidget):
         if map_mode == "material":
             if surface.albedo:
                 try:
-                    from PIL import Image, ImageChops
+                    from PIL import Image
 
                     prepared = prepare_texture(surface.albedo)
                     with Image.open(io.BytesIO(prepared.data)) as image:
                         rgb = image.convert("RGB")
                         rgb.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                        rgb = ImageChops.multiply(rgb, Image.new("RGB", rgb.size, tuple(surface.color)))
-                        texture = self._pv.numpy_to_texture(np.array(rgb))
+                        texture = self._pv.numpy_to_texture(self._tint_albedo(rgb, surface.color))
                         texture.repeat = True
                         texture.SetUseSRGBColorSpace(True)
                 except (OSError, ValueError) as exc:
@@ -251,6 +268,8 @@ class MaterialPreview(QWidget):
             scale = (math.pi / repeat, math.pi / (2 * repeat)) if self.mode.currentIndex() == 0 else (
                 15 / repeat, 15 / repeat)
             mesh.active_texture_coordinates *= scale
+        if normal_texture is not None:
+            mesh = _mesh_with_tangents(mesh, self._pv)
         self._actor = self.plotter.add_mesh(
             mesh, texture=texture, color="white" if texture else tuple(c / 255 for c in surface.color),
             pbr=map_mode == "material", metallic=surface.metallic, roughness=surface.roughness,

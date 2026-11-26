@@ -1,6 +1,7 @@
 """ADM model (.adm) -> Blender importer."""
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -14,7 +15,9 @@ from mathutils import Matrix, Quaternion, Vector
 
 from ..core import constants as K
 from ..core.buffers import read_accessor_np, read_view
+from ..core.container import MAX_CHUNK
 from ..core.external_images import resolve_image_uri
+from ..core import gputex
 from ..core.qa_metrics import record_success
 from ..core.validate import validate_adm
 from . import convert as cv
@@ -118,6 +121,8 @@ class ModelImporter:
         self.filepath = filepath
         self.opts = options or ImportOptions()
         self.warnings = []
+        self._normal_images = {}
+        self._gpu_kinds = {}
 
     def warn(self, msg):
         if msg not in self.warnings:
@@ -207,10 +212,11 @@ class ModelImporter:
         finally:
             shutil.rmtree(self._tmpdir)
         resolve_image = lambda ref: self.resolve_texture(ref)[0]  # noqa: E731
+        resolve_normal_image = lambda ref: self.resolve_normal_texture(ref)[0]  # noqa: E731
         import_shader_definitions(self.context.scene, d, resolve_image)
         self.materials = []
         for m in d.get("materials", []):
-            mat = build_material(m, self.resolve_texture)
+            mat = build_material(m, self.resolve_texture, self.resolve_normal_texture)
             missing_image_uris = []
             if "adm_incomplete_textures" in mat:
                 for image_index in mat["adm_incomplete_textures"]:
@@ -239,7 +245,7 @@ class ModelImporter:
                         missing_image_uris.append(uri)
             if missing_image_uris:
                 mat["adm_incomplete_textures"] = sorted(set(missing_image_uris))
-            apply_shader(mat, m, self.context.scene, resolve_image)
+            apply_shader(mat, m, self.context.scene, resolve_image, resolve_normal_image)
             if not has_profile_preview(mat.adm.shader):
                 self.warn(f"SHADER_FALLBACK: material '{mat.name}' uses portable PBR shading; "
                           f"{mat.adm.shader_key()[0]}@{mat.adm.shader_key()[1]} is preserved for export")
@@ -320,6 +326,55 @@ class ModelImporter:
                       + (f" ({uri})" if uri else ""))
         smp = self.doc["samplers"][tex["sampler"]] if "sampler" in tex else None
         return img, smp
+
+    def _gpu_kind(self, image_index):
+        if image_index in self._gpu_kinds:
+            return self._gpu_kinds[image_index]
+        image = self.doc["images"][image_index]
+        mime = image["mimeType"]
+        if mime not in K.GPU_IMAGE_MIMES:
+            return None
+        try:
+            if "uri" in image:
+                root = os.path.dirname(os.path.abspath(self.filepath))
+                path = resolve_image_uri(root, image["uri"], must_exist=True)
+                with open(path, "rb") as handle:
+                    blob = handle.read(MAX_CHUNK + 1)
+                if len(blob) > MAX_CHUNK:
+                    raise ValueError(f"GPU image exceeds the {MAX_CHUNK}-byte limit")
+                if "sha256" in image and hashlib.sha256(blob).hexdigest() != image["sha256"]:
+                    raise ValueError("GPU image SHA-256 mismatch")
+            else:
+                blob = read_view(self.doc, self.bin, image["bufferView"])
+            kind = gputex.parse(blob, mime, strict=True)["kind"]
+        except (OSError, ValueError) as exc:
+            self.warn(f"GPU_NORMAL_SOURCE: image {image_index} could not be inspected: {exc}; "
+                      "normal fallback may not render correctly")
+            kind = None
+        self._gpu_kinds[image_index] = kind
+        return kind
+
+    def resolve_normal_texture(self, ref):
+        image, sampler = self.resolve_texture(ref)
+        if image is None:
+            return image, sampler
+        texture_index = ref["index"]
+        source = self.doc["textures"][texture_index]["source"]
+        if self._gpu_kind(source) != "BC5":
+            return image, sampler
+        if texture_index not in self._normal_images:
+            image.colorspace_settings.name = "Non-Color"
+            width, height = image.size
+            pixels = np.empty(width * height * 4, dtype=np.float32)
+            image.pixels.foreach_get(pixels)
+            pixels = gputex.reconstruct_bc5_normal(pixels.reshape(height, width, 4))
+            normal = bpy.data.images.new(f"{image.name} BC5 normal", width, height, alpha=True, float_buffer=True)
+            normal.colorspace_settings.name = "Non-Color"
+            normal.pixels.foreach_set(pixels.ravel())
+            normal.update()
+            normal.pack()
+            self._normal_images[texture_index] = normal
+        return self._normal_images[texture_index], sampler
 
     # ---------------------------------------------------------------------------------------------
     # armature planning

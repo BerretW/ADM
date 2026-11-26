@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from . import __version__
-from .material import (SHADER_ID, SHADER_VERSION, SURFACES_PER_BIOME, PreparedImage, Surface, TerrainMaterial,
+from .material import (SHADER_ID, SHADER_VERSION, SURFACES_PER_BIOME, MapSlot, PreparedImage, Surface, TerrainMaterial,
                        MAX_TEXTURE_BYTES, prepare_texture, srgb_to_linear)
 from .ply import read_ply, weight_fields
 
@@ -69,6 +69,7 @@ class ExportSettings:
 class PreparedTexture:
     primary: PreparedImage
     fallback: PreparedImage
+    grayscale_source: bool = False
 
 
 def _png_image(rgba: np.ndarray, name: str) -> PreparedImage:
@@ -82,15 +83,19 @@ def _png_image(rgba: np.ndarray, name: str) -> PreparedImage:
 
 
 def _png_scalar_image(values: np.ndarray, name: str) -> PreparedImage:
-    from PIL import Image
+    from adm_blender.core.png import encode_png
 
     pixels = np.ascontiguousarray(values)
     if pixels.ndim != 2 or pixels.dtype not in (np.dtype(np.uint8), np.dtype(np.uint16)):
-        raise ValueError("Scalar fallback must be a 2D 8-bit or 16-bit grayscale image")
+        raise ValueError("Scalar fallback must be a 2D 8-bit or 16-bit image")
     height, width = pixels.shape
-    stream = io.BytesIO()
-    Image.fromarray(pixels).save(stream, "PNG", optimize=True)
-    data = stream.getvalue()
+    rgba = np.zeros((height, width, 4), dtype=pixels.dtype)
+    rgba[..., 0] = pixels
+    rgba[..., 3] = np.iinfo(pixels.dtype).max
+    depth = pixels.dtype.itemsize * 8
+    if depth == 16:
+        rgba = rgba.astype(">u2")
+    data = encode_png(width, height, rgba.tobytes(), 4, bit_depth=depth)
     return PreparedImage(data, "image/png", hashlib.sha256(data).hexdigest(), width, height, name)
 
 
@@ -151,10 +156,10 @@ def prepare_adm_texture(path: str, role: str) -> PreparedTexture:
             scalar16 = np.asarray(image)
             if role == "data" and scalar16.ndim == 2 and scalar16.dtype == np.uint16:
                 blob, _kind = gputex.encode_scalar(scalar16, gputex.MIME_DDS, "R16", mipmaps=True)
-                fallback = decoded if decoded.mime == "image/png" else _png_scalar_image(scalar16, decoded.name)
+                fallback = _png_scalar_image(scalar16, decoded.name)
                 primary = PreparedImage(blob, gputex.MIME_DDS, hashlib.sha256(blob).hexdigest(),
                                         scalar16.shape[1], scalar16.shape[0], decoded.name)
-                return PreparedTexture(primary, fallback)
+                return PreparedTexture(primary, fallback, grayscale_source=True)
             rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
         fallback = decoded if decoded.mime == "image/png" else _png_image(rgba, decoded.name)
     blob, _kind = gputex.encode(rgba, gputex.MIME_DDS, compression, srgb=color_role, mipmaps=True)
@@ -209,12 +214,43 @@ def tile_digest(tile: dict, material_fp: str, settings: ExportSettings, tile_siz
     return hashlib.blake2b(json.dumps(payload, sort_keys=True).encode(), digest_size=16).hexdigest()
 
 
-def material_key(manifest: dict, material: TerrainMaterial) -> str:
+def material_key(manifest: dict, material: TerrainMaterial, texture_hashes: dict[str, str] | None = None) -> str:
     """Material fingerprint plus the build's surface order (it maps weights to surfaces)."""
     tile_size = float(manifest["tile_size_m"])
     order = (manifest.get("texturing") or {}).get("surfaces") or []
-    return hashlib.blake2b(json.dumps([material.fingerprint(tile_size), order]).encode(),
+    return hashlib.blake2b(json.dumps([material.fingerprint(tile_size, texture_hashes=texture_hashes), order]).encode(),
                            digest_size=16).hexdigest()
+
+
+def _tile_material_keys(manifest: dict, material: TerrainMaterial, fallback: str,
+                        texture_hashes: dict[str, str]) -> dict[str, str]:
+    surfaces = build_surfaces(manifest, material)
+    tile_size = float(manifest["tile_size_m"])
+    order = (manifest.get("texturing") or {}).get("surfaces") or []
+    cached: dict[tuple[int, ...], str] = {}
+    keys = {}
+    for tile in manifest["tiles"]:
+        lods = tile["lods"]
+        if not lods or any("used_surfaces" not in lod for lod in lods):
+            keys[tile["id"]] = fallback
+            continue
+        used = set()
+        for lod in lods:
+            indices = lod["used_surfaces"]
+            if not isinstance(indices, list) or any(
+                    isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(surfaces)
+                    for i in indices):
+                raise ValueError(f"{tile['id']}: invalid used_surfaces metadata")
+            used.update(indices)
+        if not used:
+            raise ValueError(f"{tile['id']}: empty used_surfaces metadata")
+        subset = tuple(sorted(used))
+        if subset not in cached:
+            fingerprint = material.fingerprint(tile_size, [surfaces[i] for i in subset], texture_hashes)
+            cached[subset] = hashlib.blake2b(
+                json.dumps([fingerprint, order, subset]).encode(), digest_size=16).hexdigest()
+        keys[tile["id"]] = cached[subset]
+    return keys
 
 
 def load_index(out_dir: str) -> dict:
@@ -230,16 +266,19 @@ def load_index(out_dir: str) -> dict:
 
 
 def changed_tiles(manifest: dict, material: TerrainMaterial, settings: ExportSettings,
-                  material_fp: str | None = None) -> list[str]:
+                  material_fp: str | None = None, tile_material_keys: dict[str, str] | None = None) -> list[str]:
     """IDs of tiles whose exported file is missing or out of date."""
     out_dir = os.path.abspath(settings.out_dir)
     known = load_index(out_dir).get("tiles", {})
     tile_size = float(manifest["tile_size_m"])
-    material_fp = material_fp or material_key(manifest, material)
+    texture_hashes: dict[str, str] = {}
+    material_fp = material_fp or material_key(manifest, material, texture_hashes)
+    tile_material_keys = tile_material_keys if tile_material_keys is not None else _tile_material_keys(
+        manifest, material, material_fp, texture_hashes)
     changed = []
     for tile in manifest["tiles"]:
         record = known.get(tile["id"])
-        digest = tile_digest(tile, material_fp, settings, tile_size)
+        digest = tile_digest(tile, tile_material_keys[tile["id"]], settings, tile_size)
         if (digest is None or not isinstance(record, dict) or record.get("digest") != digest
                 or not os.path.isfile(os.path.join(out_dir, f"{tile['id']}.adm"))):
             changed.append(tile["id"])
@@ -371,7 +410,13 @@ def _surface_texture_slots(surface: Surface):
 
 def _material_params(surfaces: list[Surface], uv_scale: list[float],
                      texture_index: Callable[[str, str], int], material: TerrainMaterial,
-                     advanced: bool) -> dict:
+                     advanced: bool, texture_assets: dict[tuple[str, str], PreparedTexture]) -> dict:
+    def channel(slot: MapSlot) -> int:
+        if (slot.path and slot.channel in (1, 2)
+                and texture_assets[(slot.path, "data")].grayscale_source):
+            return 0
+        return slot.channel
+
     params: dict = {}
     for i, surface in enumerate(surfaces):
         if surface.albedo:
@@ -382,7 +427,7 @@ def _material_params(surfaces: list[Surface], uv_scale: list[float],
         for kind, slot in (("metallic", surface.metallic_map), ("roughness", surface.roughness_map)):
             if slot.path:
                 params[f"layer{i}_{kind}_texture"] = {"index": texture_index(slot.path, "data")}
-                params[f"layer{i}_{kind}_channel"] = float(slot.channel)
+                params[f"layer{i}_{kind}_channel"] = float(channel(slot))
                 params[f"layer{i}_{kind}_invert"] = bool(slot.invert)
         if surface.normal:
             params[f"layer{i}_normal"] = {"index": texture_index(surface.normal, "normal")}
@@ -390,7 +435,7 @@ def _material_params(surfaces: list[Surface], uv_scale: list[float],
             for name, slot in (("ao", surface.ao_map), ("height", surface.height_map)):
                 if slot.path:
                     params[f"layer{i}_{name}_texture"] = {"index": texture_index(slot.path, "data")}
-                params[f"layer{i}_{name}_channel"] = float(slot.channel)
+                params[f"layer{i}_{name}_channel"] = float(channel(slot))
                 params[f"layer{i}_{name}_invert"] = bool(slot.invert)
             params[f"layer{i}_ao_strength"] = float(surface.ao_strength)
             params[f"layer{i}_height_scale"] = float(surface.height_scale)
@@ -437,6 +482,9 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         weights = np.column_stack([vertices[name] for name in weight_fields(vertices)]).astype(np.uint8)
         if weights.shape[1] != len(surfaces):
             raise ValueError(f"{record['file']}: {weights.shape[1]} weights for {len(surfaces)} surfaces; rebuild")
+        used_surfaces = np.flatnonzero(np.any(weights > 0, axis=0)).tolist()
+        if "used_surfaces" in record and record["used_surfaces"] != used_surfaces:
+            raise ValueError(f"{record['file']}: used_surfaces metadata does not match the tile; rebuild")
         masks, conflicts = triangle_masks(weights, faces)
         lods.append((vertices, faces, masks, conflicts))
     sets, assign = group_masks(np.concatenate([lod[2] for lod in lods]))
@@ -499,7 +547,7 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
             "animationId": f"awt_terrain_{tile['id']}_{k}",
             "shader": {"id": SHADER_ID, "version": material.terrain_shader_version},
             "shaderParameters": _material_params(
-                chosen, [uv_all[i] for i in slots], texture_index, material, advanced),
+                chosen, [uv_all[i] for i in slots], texture_index, material, advanced, texture_assets),
         }
         if base.albedo:
             exported_material["baseColorTexture"] = {"index": texture_index(base.albedo, "albedo")}
@@ -597,7 +645,9 @@ def export_tiles(
 
     report(0.0, "Hashing material")
     surfaces = build_surfaces(manifest, material)
-    material_fp = material_key(manifest, material)
+    texture_hashes: dict[str, str] = {}
+    material_fp = material_key(manifest, material, texture_hashes)
+    tile_material_keys = _tile_material_keys(manifest, material, material_fp, texture_hashes)
     warnings = []
     if rules_outdated(manifest, material):
         warnings.append("Biomes, paint or surfaces changed since the build; rebuild to update the vertex layers")
@@ -611,7 +661,7 @@ def export_tiles(
     elif mode == "selected":
         todo = [tile_id for tile_id in (selected or []) if tile_id in tiles]
     else:
-        todo = changed_tiles(manifest, material, settings, material_fp)
+        todo = changed_tiles(manifest, material, settings, material_fp, tile_material_keys)
 
     texture_assets: dict[tuple[str, str], PreparedTexture] = {}
     texture_uris: dict[tuple[str, str], tuple[str, str]] = {}
@@ -621,6 +671,12 @@ def export_tiles(
             path, role = key
             prepared = prepare_adm_texture(path, role)
             texture_assets[key] = prepared
+            if prepared.grayscale_source and any(
+                slot.path == path and slot.channel in (1, 2)
+                for surface in surfaces
+                for slot in (surface.metallic_map, surface.roughness_map, surface.ao_map, surface.height_map)
+            ):
+                warnings.append(f"Grayscale texture '{path}' uses red for green/blue channel selections in ADM.")
             if not settings.embed_textures:
                 primary_uri = _texture_uri(prepared.primary)
                 fallback_uri = _texture_uri(prepared.fallback)
@@ -660,7 +716,7 @@ def export_tiles(
                     written.append(tile_id)
                     total_bytes += size
                     tile = tiles[tile_id]
-                    records[tile_id] = {"file": f"{tile_id}.adm", "digest": tile_digest(tile, material_fp, settings,
+                    records[tile_id] = {"file": f"{tile_id}.adm", "digest": tile_digest(tile, tile_material_keys[tile_id], settings,
                                                                                         tile_size),
                                         "origin_m": tile["origin_m"], "size_m": tile["size_m"]}
                     report(done / len(todo), f"Exported {done} of {len(todo)} tiles")

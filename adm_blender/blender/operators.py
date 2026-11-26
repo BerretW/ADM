@@ -2233,9 +2233,53 @@ class ADM_OT_material_texture_open(_SlotOp, bpy.types.Operator):
     def execute(self, context):
         from .materials import load_image_file, set_slot_image
         try:
-            img = load_image_file(self.filepath)
+            img = load_image_file(self.filepath, normal_map=self.slot == "NORMAL")
             set_slot_image(_active_material(context), self.slot, img)
-        except (RuntimeError, ValueError) as e:
+        except (OSError, RuntimeError, ValueError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class ADM_OT_material_shader_texture_open(bpy.types.Operator):
+    """Load an image into a shader texture parameter, including DDS and KTX2"""
+    bl_idname = "adm.material_shader_texture_open"
+    bl_label = "Open Shader Texture"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: StringProperty()
+    filepath: StringProperty(subtype="FILE_PATH")
+    filter_glob: StringProperty(default="*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.tif;*.tiff;*.exr;*.hdr;*.webp;*.dds;*.ktx2",
+                                options={"HIDDEN", "SKIP_SAVE"})
+    filter_folder: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return _active_material(context) is not None
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        from .materials import load_image_file
+        mat = _active_material(context)
+        param = mat.adm.params.get(self.name)
+        if mat.adm.shader == "CUSTOM":
+            shader = context.scene.adm_anim.shaders.get(mat.adm.custom_shader)
+            definition = shader.params.get(self.name) if shader is not None else None
+            texture = definition is not None and definition.type == "TEXTURE"
+            normal_map = False
+        else:
+            schema = K.OFFICIAL_SHADERS.get(mat.adm.shader_key(), ())
+            texture = any(item["name"] == self.name and item["type"] == "TEXTURE" for item in schema)
+            normal_map = self.name.endswith("_normal")
+        if param is None or not texture:
+            self.report({"ERROR"}, f"Shader texture parameter '{self.name}' is unavailable")
+            return {"CANCELLED"}
+        try:
+            param.image = load_image_file(self.filepath, normal_map=normal_map)
+        except (OSError, RuntimeError, ValueError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         return {"FINISHED"}
@@ -2644,7 +2688,8 @@ CLASSES = (
     ADM_OT_material_auto_animation_id, ADM_OT_material_sync_params, ADM_OT_material_terrain_from_pbr,
     ADM_OT_material_refresh_preview,
     ADM_OT_material_generate_mortar_mask, ADM_OT_material_layers_from_pbr,
-    ADM_OT_material_texture_open, ADM_OT_material_texture_clear, ADM_OT_material_texture_adopt,
+    ADM_OT_material_texture_open, ADM_OT_material_shader_texture_open,
+    ADM_OT_material_texture_clear, ADM_OT_material_texture_adopt,
     ADM_OT_material_texture_uv,
     ADM_OT_material_texture_alpha,
     ADM_OT_material_link_clip, ADM_OT_material_key_param, ADM_OT_material_set_map_factor,

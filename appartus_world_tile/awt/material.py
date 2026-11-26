@@ -441,12 +441,30 @@ class TerrainMaterial:
             data["roads"] = [road.to_dict() for road in self.roads]
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:32]
 
-    def fingerprint(self, tile_size_m: float) -> str:
+    def fingerprint(self, tile_size_m: float, surfaces: list[Surface] | None = None,
+                    texture_hashes: dict[str, str] | None = None) -> str:
         """Changes whenever the look of exported tiles changes, including texture files."""
-        data = {"surfaces": [_surface_dict(s, None) for s in self.surfaces],
-                "uv_scale": self.uv_scale(tile_size_m), "double_sided": self.double_sided,
-                "files": {path: prepare_texture(path).sha256 for path in self.textures()}}
-        if self.has_advanced_shader_features():
+        selected = self.surfaces if surfaces is None else surfaces
+        paths = dict.fromkeys(path for surface in selected for path in surface.textures())
+        hashes = texture_hashes if texture_hashes is not None else {}
+        for path in paths:
+            if path not in hashes:
+                digest = hashlib.sha256()
+                size = 0
+                with open(path, "rb") as handle:
+                    while True:
+                        chunk = handle.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > MAX_TEXTURE_BYTES:
+                            raise ValueError(f"Texture file is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+                        digest.update(chunk)
+                hashes[path] = digest.hexdigest()
+        data = {"surfaces": [_surface_dict(s, None) for s in selected],
+                "uv_scale": self.uv_scale(tile_size_m, selected), "double_sided": self.double_sided,
+                "files": {path: hashes[path] for path in paths}}
+        if surfaces is not None or self.has_advanced_shader_features():
             data["terrain_shader"] = {
                     "version": self.terrain_shader_version,
                     "height_blend_enabled": self.height_blend_enabled,
@@ -764,6 +782,35 @@ def prepare_texture(path: str) -> PreparedImage:
         raw = handle.read(MAX_TEXTURE_BYTES + 1)
     if len(raw) > MAX_TEXTURE_BYTES:
         raise ValueError(f"Texture file is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+    if raw[:12] == b"\xabKTX 20\xbb\r\n\x1a\n" or raw[:4] == b"DDS ":
+        from .adm_export import _core, _png_scalar_image
+        _core()
+        from adm_blender.core import gputex
+
+        mime = gputex.mime_of(raw)
+        try:
+            info = gputex.parse(raw, mime, strict=True)
+        except gputex.GpuTextureError as exc:
+            if mime == gputex.MIME_KTX2:
+                raise ValueError(f"Cannot read texture {path}: {exc}") from exc
+            info = None
+        if info is not None:
+            width, height = info["width"], info["height"]
+            if width * height > MAX_TEXTURE_PIXELS:
+                raise ValueError(f"Cannot read texture {path}: dimensions exceed the {MAX_TEXTURE_PIXELS:,}-pixel limit")
+            if info["kind"] == "R16":
+                pixels = gputex.decode_scalar_level(raw, info)
+                data = _png_scalar_image(pixels, os.path.splitext(os.path.basename(path))[0]).data
+            else:
+                pixels, _ = gputex.decode(raw, mime, strict=True)
+                out = io.BytesIO()
+                Image.fromarray(pixels).save(out, "PNG", compress_level=6)
+                data = out.getvalue()
+            prepared = PreparedImage(data, "image/png", hashlib.sha256(data).hexdigest(),
+                                     width, height, os.path.splitext(os.path.basename(path))[0])
+            with _cache_lock:
+                _cache[key] = prepared
+            return prepared
     is_dds = is_dds or raw[:4] == b"DDS "
     if raw[:4] == b"DDS ":
         if len(raw) < 128 or struct.unpack_from("<I", raw, 4)[0] != 124:
@@ -803,3 +850,27 @@ def prepare_texture(path: str) -> PreparedImage:
     with _cache_lock:
         _cache[key] = prepared
     return prepared
+
+
+def normal_preview_array(path: str) -> np.ndarray:
+    """Decode a normal map for display, reconstructing Z for BC5 sources."""
+    from PIL import Image
+
+    prepared = prepare_texture(path)
+    with Image.open(io.BytesIO(prepared.data)) as image:
+        rgba = np.array(_eight_bit(image).convert("RGBA"))
+    with open(path, "rb") as handle:
+        header = handle.read(148)
+    ktx_bc5 = (len(header) >= 16 and header[:12] == b"\xabKTX 20\xbb\r\n\x1a\n"
+               and struct.unpack_from("<I", header, 12)[0] == 141)
+    dds_bc5 = (len(header) >= 88 and header[:4] == b"DDS " and
+               (header[84:88] in (b"ATI2", b"BC5U") or
+                (header[84:88] == b"DX10" and len(header) >= 132
+                 and struct.unpack_from("<I", header, 128)[0] == 83)))
+    if ktx_bc5 or dds_bc5:
+        from .adm_export import _core
+        _core()
+        from adm_blender.core import gputex
+
+        rgba = np.rint(gputex.reconstruct_bc5_normal(rgba.astype(np.float32) / 255.0) * 255).astype(np.uint8)
+    return rgba

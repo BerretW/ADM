@@ -12,6 +12,7 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
+from adm_blender.core import gputex  # noqa: E402
 from appartus_world_tile.awt.material import (  # noqa: E402
     Band,
     Biome,
@@ -42,6 +43,15 @@ def main() -> None:
     Image.fromarray(height.astype(np.uint8), "L").save(OUT / "heightmap.png")
 
     texture_root = REPO / "adm-standard" / "fixtures" / "advanced-materials"
+    gpu_dir = OUT / "textures"
+    gpu_dir.mkdir(parents=True, exist_ok=True)
+    gpu_sources = {
+        "rock": ("R16", gputex.MIME_DDS, "height", "rock_height.dds"),
+        "cobblestone": ("R8", gputex.MIME_KTX2, "height", "cobblestone_height.ktx2"),
+        "sand": ("BC4", gputex.MIME_DDS, "height", "sand_height.dds"),
+        "dirt": ("BC5", gputex.MIME_KTX2, "normal", "dirt_normal.ktx2"),
+        "grass": ("BC7", gputex.MIME_KTX2, "albedo", "grass_albedo.ktx2"),
+    }
     names = ("rock", "cobblestone", "sand", "dirt", "grass")
     surfaces = []
     for name in names:
@@ -60,6 +70,21 @@ def main() -> None:
             height_bias=0.0,
             parallax_scale=0.08,
         )
+        kind, mime, role, filename = gpu_sources[name]
+        with Image.open(folder / f"{role}.png") as image:
+            if role == "height":
+                values = np.asarray(image.convert("L"), dtype=np.uint8)
+                if kind == "R16":
+                    y, x = np.indices(values.shape)
+                    values = np.clip(values.astype(np.int32) * 257 + (x + 3 * y) % 97 - 48,
+                                     0, 65535).astype(np.uint16)
+                blob, _ = gputex.encode_scalar(values, mime, kind, mipmaps=True)
+                surface.height_map.path = str(gpu_dir / filename)
+            else:
+                pixels = np.asarray(image.convert("RGBA"))
+                blob, _ = gputex.encode(pixels, mime, kind, srgb=(role == "albedo"), mipmaps=True)
+                setattr(surface, role, str(gpu_dir / filename))
+        (gpu_dir / filename).write_bytes(blob)
         surfaces.append(surface)
 
     material = TerrainMaterial(

@@ -4,6 +4,8 @@ import os
 import struct
 import tempfile
 import unittest
+import zlib
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -29,6 +31,26 @@ def _accessor(doc, chunks, index):
     from adm_blender.core.buffers import read_accessor_np
 
     return np.asarray(read_accessor_np(doc, chunks, index))
+
+
+def _read_rgba16_png(data):
+    width, height, depth, color = struct.unpack_from(">IIBB", data, 16)
+    if (depth, color) != (16, 6):
+        raise ValueError("Expected a 16-bit RGBA PNG")
+    offset = 8
+    compressed = bytearray()
+    while offset < len(data):
+        length = struct.unpack_from(">I", data, offset)[0]
+        kind = data[offset + 4:offset + 8]
+        if kind == b"IDAT":
+            compressed.extend(data[offset + 8:offset + 8 + length])
+        offset += length + 12
+    scanlines = zlib.decompress(compressed)
+    stride = width * 8 + 1
+    if any(scanlines[y * stride] != 0 for y in range(height)):
+        raise ValueError("Unexpected PNG row filter")
+    samples = b"".join(scanlines[y * stride + 1:(y + 1) * stride] for y in range(height))
+    return np.frombuffer(samples, dtype=">u2").reshape(height, width, 4)
 
 
 class ExportTest(unittest.TestCase):
@@ -302,6 +324,21 @@ class ExportTest(unittest.TestCase):
             self.assertEqual(mask & ~sets[index], 0)
         self.assertEqual(color1(weights[3:4], [4, 5]).tolist(), [[87, 168, 0, 0]])
 
+    def test_height_blending_is_independent_of_primitive_slot_order(self):
+        from adm_blender.core.material_math import height_blend_weights
+
+        weights = np.array([[0, 102, 153, 0]], dtype=np.uint8)
+        heights = [0.2, 0.3, 0.8, 0.9]
+        results = []
+        for slots in ([0, 1, 2], [1, 2, 3]):
+            encoded = color1(weights, slots)[0, :len(slots)].astype(float) / 255.0
+            blended = height_blend_weights(encoded.tolist(), [heights[index] for index in slots])
+            results.append({index: blended[position] for position, index in enumerate(slots)})
+        self.assertAlmostEqual(results[0][1], results[1][1])
+        self.assertAlmostEqual(results[0][2], results[1][2])
+        self.assertEqual(results[0][0], 0)
+        self.assertEqual(results[1][3], 0)
+
     def test_changed_only_export_follows_geometry_and_material(self):
         export_tiles(self.manifest, self.material, self.settings, "changed")
         self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
@@ -336,6 +373,73 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(result["written"], ["x000_y000"])
         with open(os.path.join(self.settings.out_dir, INDEX_NAME), encoding="utf-8") as handle:
             self.assertEqual(len(json.load(handle)["tiles"]), len(manifest["tiles"]))
+
+    def test_changed_only_tracks_surfaces_used_by_each_tile_and_all_lods(self):
+        source = os.path.join(self.tmp.name, "painted.npy")
+        np.save(source, np.zeros((33, 97), np.float32))
+        params = BuildParams(input_path=source, out_dir=os.path.join(self.tmp.name, "painted"),
+                             tile_cells=32, max_errors_m=[0.1, 1.0], spacing_m=1.0)
+        material = TerrainMaterial()
+        material.ensure_surface_paint(97, 33)
+        grass = material.surface_names().index("grass")
+        rock = material.surface_names().index("rock")
+        material.surface_paint[:, :48] = grass
+        material.surface_paint[:, 48:] = rock
+        build(params, material)
+        manifest = load_manifest(params.out_dir)
+        settings = ExportSettings(out_dir=os.path.join(self.tmp.name, "painted_adm"))
+        for tile in manifest["tiles"]:
+            for lod in tile["lods"]:
+                vertices, _ = read_ply(os.path.join(manifest["_dir"], lod["file"]))
+                actual = [i for i, name in enumerate(weight_fields(vertices)) if np.any(vertices[name])]
+                self.assertEqual(lod["used_surfaces"], actual)
+        export_tiles(manifest, material, settings, "all")
+        affected = {tile["id"] for tile in manifest["tiles"]
+                    if any(rock in lod["used_surfaces"] for lod in tile["lods"])}
+        self.assertTrue(affected)
+        self.assertLess(len(affected), len(manifest["tiles"]))
+        material.surface("rock").roughness = 0.3
+        self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
+        self.assertEqual(set(export_tiles(manifest, material, settings)["written"]), affected)
+        material.surface("soil").roughness = 0.3
+        self.assertEqual(changed_tiles(manifest, material, settings), [])
+        material.double_sided = True
+        self.assertEqual(len(changed_tiles(manifest, material, settings)), len(manifest["tiles"]))
+        material.terrain_shader_version = "2.1.0"
+        material.height_blend_enabled = True
+        ao = os.path.join(self.tmp.name, "rock_ao.png")
+        Image.new("L", (4, 4), 80).save(ao)
+        material.surface("rock").ao_map.path = ao
+        material.surface("rock").height_map.path = ao
+        export_tiles(manifest, material, settings, "all")
+        Image.new("L", (4, 4), 160).save(ao)
+        self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
+        self.assertEqual(set(export_tiles(manifest, material, settings)["written"]), affected)
+        material.surface("rock").height_map.invert = True
+        material.surface("rock").height_bias = 0.1
+        self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
+        export_tiles(manifest, material, settings)
+        material.surface("soil").ao_strength = 0.5
+        self.assertEqual(changed_tiles(manifest, material, settings), [])
+        material.height_blend_strength = 0.4
+        self.assertEqual(len(changed_tiles(manifest, material, settings)), len(manifest["tiles"]))
+
+        legacy = json.loads(json.dumps(manifest))
+        for tile in legacy["tiles"]:
+            for lod in tile["lods"]:
+                lod.pop("used_surfaces")
+        legacy_settings = ExportSettings(out_dir=os.path.join(self.tmp.name, "legacy_adm"))
+        export_tiles(legacy, material, legacy_settings, "all")
+        material.surface("soil").roughness = 0.4
+        self.assertEqual(len(changed_tiles(legacy, material, legacy_settings)), len(legacy["tiles"]))
+        tile = manifest["tiles"][0]
+        original = tile["lods"][0]["used_surfaces"]
+        tile["lods"][0]["used_surfaces"] = [(original[0] + 1) % len(material.surfaces)]
+        with self.assertRaisesRegex(ValueError, "metadata does not match"):
+            export_tiles(manifest, material, settings, "selected", [tile["id"]])
+        manifest["tiles"][0]["lods"][0]["used_surfaces"] = [-1]
+        with self.assertRaisesRegex(ValueError, "invalid used_surfaces"):
+            changed_tiles(manifest, material, settings)
 
     def test_embedded_textures_and_single_lod(self):
         self.params.max_errors_m = [0.5]
@@ -435,9 +539,68 @@ class ExportTest(unittest.TestCase):
                     self.assertEqual(prepared.primary.mime, mime)
                     self.assertEqual(prepared.fallback.mime, "image/png")
                     expected, _ = gputex.decode_scalar(blob, mime, strict=True)
-                    with Image.open(io.BytesIO(prepared.fallback.data)) as image:
-                        fallback_values = np.asarray(image)
-                    np.testing.assert_array_equal(fallback_values, expected)
+                    if kind == "R16":
+                        fallback_values = _read_rgba16_png(prepared.fallback.data)
+                        alpha = 65535
+                    else:
+                        with Image.open(io.BytesIO(prepared.fallback.data)) as image:
+                            fallback_values = np.asarray(image.convert("RGBA"))
+                        alpha = 255
+                    np.testing.assert_array_equal(fallback_values[..., 0], expected)
+                    self.assertTrue(np.all(fallback_values[..., 1:3] == 0))
+                    self.assertTrue(np.all(fallback_values[..., 3] == alpha))
+
+    def test_ktx2_r16_preview_and_mip_changes_are_exported(self):
+        _core()
+        from adm_blender.core import gputex
+
+        values = np.arange(64, dtype=np.uint16).reshape(8, 8) * 513
+        blob, _ = gputex.encode_scalar(values, gputex.MIME_KTX2, "R16", mipmaps=True)
+        path = os.path.join(self.tmp.name, "height.ktx2")
+        with open(path, "wb") as handle:
+            handle.write(blob)
+        preview = _read_rgba16_png(prepare_texture(path).data)
+        np.testing.assert_array_equal(preview[..., 0], values)
+        self.assertTrue(np.all(preview[..., 1:3] == 0))
+
+        self.material.surface("grass").height_map = MapSlot(path)
+        self.material.terrain_shader_version = "2.1.0"
+        export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+        texture_dir = os.path.join(self.settings.out_dir, "textures")
+        primary = next(name for name in os.listdir(texture_dir)
+                       if name.startswith("height_") and name.endswith(".ktx2"))
+        with open(os.path.join(texture_dir, primary), "rb") as handle:
+            self.assertEqual(handle.read(), blob)
+
+        info = gputex.parse(blob, gputex.MIME_KTX2, strict=True)
+        changed = bytearray(blob)
+        changed[info["levels"][1][0]] ^= 1
+        with open(path, "wb") as handle:
+            handle.write(changed)
+        np.testing.assert_array_equal(gputex.decode_scalar(bytes(changed), strict=True)[0], values)
+        dirty = changed_tiles(self.manifest, self.material, self.settings)
+        self.assertTrue(dirty)
+        result = export_tiles(self.manifest, self.material, self.settings, "changed")
+        self.assertEqual(set(result["written"]), set(dirty))
+        self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+        for tile in dirty:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+            primaries = [doc["images"][texture["source"]] for texture in doc["textures"]]
+            self.assertTrue(any(Path(self.settings.out_dir, image["uri"]).read_bytes() == bytes(changed)
+                                for image in primaries if image["mimeType"] == gputex.MIME_KTX2))
+
+    def test_ktx2_bc7_preview_decodes_color(self):
+        _core()
+        from adm_blender.core import gputex
+
+        pixels = np.full((4, 4, 4), [150, 100, 50, 255], dtype=np.uint8)
+        blob, _ = gputex.encode(pixels, gputex.MIME_KTX2, "BC7", srgb=True, mipmaps=False)
+        path = os.path.join(self.tmp.name, "albedo.ktx2")
+        with open(path, "wb") as handle:
+            handle.write(blob)
+        with Image.open(io.BytesIO(prepare_texture(path).data)) as image:
+            np.testing.assert_array_equal(np.asarray(image), gputex.decode(blob, strict=True)[0])
 
     def test_r16_png_is_exported_as_r16_dds_without_precision_loss(self):
         _core()
@@ -453,9 +616,53 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(prepared.fallback.mime, "image/png")
         decoded, _ = gputex.decode_scalar(prepared.primary.data, strict=True)
         np.testing.assert_array_equal(decoded, values)
-        with Image.open(io.BytesIO(prepared.fallback.data)) as image:
-            fallback_values = np.asarray(image)
-        np.testing.assert_array_equal(fallback_values, values)
+        fallback_values = _read_rgba16_png(prepared.fallback.data)
+        np.testing.assert_array_equal(fallback_values[..., 0], values)
+        self.assertTrue(np.all(fallback_values[..., 1:3] == 0))
+        self.assertTrue(np.all(fallback_values[..., 3] == 65535))
+
+    def test_sixteen_bit_grayscale_channels_preserve_visual_sampling(self):
+        path = os.path.join(self.tmp.name, "height16.png")
+        Image.fromarray(np.full((4, 4), 32768, dtype=np.uint16)).save(path)
+        self.material.surface("grass").height_map = MapSlot(path, channel=2)
+        self.material.terrain_shader_version = "2.1.0"
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertTrue(any("uses red for green/blue" in warning for warning in result["warnings"]))
+        channels = []
+        for tile in self.manifest["tiles"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile["id"] + ".adm"))
+            for material in doc["materials"]:
+                params = material["shaderParameters"]
+                channels.extend(value for key, value in params.items()
+                                if key.endswith("_height_channel") and
+                                key.replace("_channel", "_texture") in params)
+        self.assertTrue(channels)
+        self.assertTrue(all(value == 0 for value in channels))
+        self.assertEqual(self.material.surface("grass").height_map.channel, 2)
+
+    def test_r16_gpu_source_keeps_explicit_zero_channel_selection(self):
+        _core()
+        from adm_blender.core import gputex
+
+        blob, _ = gputex.encode_scalar(np.full((4, 4), 32768, dtype=np.uint16),
+                                       gputex.MIME_KTX2, "R16", mipmaps=False)
+        path = os.path.join(self.tmp.name, "height16.ktx2")
+        with open(path, "wb") as handle:
+            handle.write(blob)
+        self.material.surface("grass").height_map = MapSlot(path, channel=2)
+        self.material.terrain_shader_version = "2.1.0"
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertFalse(any("uses red for green/blue" in warning for warning in result["warnings"]))
+        channels = []
+        for tile in self.manifest["tiles"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile["id"] + ".adm"))
+            for material in doc["materials"]:
+                params = material["shaderParameters"]
+                channels.extend(value for key, value in params.items()
+                                if key.endswith("_height_channel") and
+                                key.replace("_channel", "_texture") in params)
+        self.assertTrue(channels)
+        self.assertTrue(all(value == 2 for value in channels))
 
     def test_truncated_dx10_dds_reports_the_decode_error(self):
         path = os.path.join(self.tmp.name, "truncated.dds")

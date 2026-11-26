@@ -15,7 +15,8 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Enforce KTX2 `typeSize` 2 for R16 and 1 for the other registered formats.
 - [ ] Preserve source precision and supported GPU texture bytes; validate codecs
       with independent test vectors, including R16 and mip chains.
-  - Codec tests exist, but distributed Blender BC7 decoder availability is not verified.
+  - The built Blender extension decodes BC7 on Windows without an external wheel;
+    other platforms and full source-byte preservation remain unverified.
 
 ## M3 - Material and shader contracts
 - [x] Define a versioned material-height extension without conflicting with
@@ -47,8 +48,8 @@ checkboxes track verification and delivery, not merely code changes.
       transparent preview limitations.
 - [ ] Add a true multi-surface height blend preview, distinct from single-surface
       preview and fast terrain inspection.
-  - The existing preview omits POM. The multi-surface preview approximates AO,
-    but omits normal, emission, and parallax effects.
+  - The existing preview omits POM. The multi-surface preview approximates AO
+    and composites normal, metallic, roughness, and emission, but omits parallax.
 - [x] Add safe, deterministic directory import for texture sets, with explicit
       conflict/missing-map handling; never infer unknown or packed maps.
 
@@ -77,7 +78,8 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Integrate profiles, nodes, properties, UI, math, import/export, codecs,
       validation, and vertex painting.
 - [ ] Preserve COLOR_0/COLOR_1, precision, and unsupported POM metadata.
-  - POM parameter round-trip is tested, but complete texture precision and packaged codecs are not.
+  - POM parameter round-trip is tested. Packaged BC7 decoding is verified on
+    Windows, but complete texture precision and other platforms are not.
 - [x] Test real node generation and a bake/render of height blending.
 
 ## M10 - Remaining ecosystem
@@ -89,8 +91,13 @@ checkboxes track verification and delivery, not merely code changes.
 ## M11 - Fixtures and documentation
 - [x] Create original procedural Rock, Sand, Dirt, Grass, and Cobblestone maps.
 - [ ] Create an Advanced Terrain ADM scene and a functional multi-tile AWTP sample.
-  - The AWTP builds and exports four validated tiles with three LODs. Packaged-path
-    portability remains unverified. No advanced ADM reference scene has been verified.
+  - The AWTP builds and exports four validated tiles with three LODs and
+    referenced R8/R16/BC4/BC5/BC7 textures. Packaged-path
+    portability was verified with the repository-relative fixture tree relocated;
+    copying the project folder alone does not include its textures. The generated
+    ADM comparison scene round-trips four advanced profiles with AO, height,
+    parallax and POM metadata; it does not yet cover the required GPU formats or
+    demonstrate parallax/POM rendering.
 - [ ] Update specification, registries, profiles, docs, changelog, gaps,
       conformance, and fixture catalog with exact implemented contracts.
 

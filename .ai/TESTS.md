@@ -103,7 +103,9 @@
   neighbouring tiles with three LODs and existing material texture paths.
   Core GPU-texture and material-math tests: 31 passed.
 - The reference project also exported four ADM tiles with export validation
-  enabled; this does not verify portability outside the repository.
+  enabled. A relocated copy of the project and its repository-relative
+  advanced-material fixture tree also built and exported four validated tiles.
+  The project folder alone is not self-contained.
 - The advanced Blender scene generator saved a `.blend` successfully in a
   separate process (36.9 seconds, exit 0). Its first render was too dark to
   demonstrate the intended comparisons. Its packed procedural images contained
@@ -120,3 +122,63 @@
 - Three targeted World Tile multi-surface preview tests passed, including AO
   channel, inversion, strength, missing-map and zero-weight behavior.
 - After that change, the complete World Tile suite passed: 68 tests, no skips.
+- Two focused single-surface material-preview tests passed after correcting the
+  neutral ORM channels. The renderer's shader multiplies its ORM channels by
+  the corresponding roughness and metallic uniforms.
+- Blender texture-format tests passed with R16 DDS/KTX2 loading, project
+  save/reload, 16-bit PNG ADM export/import, edited PNG export, R16 GPU
+  primary/fallback round-trips, R16 mip values, repeated export after importing
+  the PNG fallback, and a warning for 8-bit GPU conversion. Edited non-scalar
+  channels do not get discarded by R16 conversion.
+- World Tile normal-map regression passed: all three preview shapes have
+  tangents, and a lit plane renders differently for flat and sideways normals.
+- Layered PBR tests passed for weighted maps, inversion, zero-weight layers, and
+  actual normal and emission rendering through the multi-surface preview.
+- The complete World Tile suite passed 73 tests after the preview changes.
+  Single-surface tests also verify linear-space albedo tint and neutral AO at
+  zero strength.
+- A later `build.bat -CheckOnly` completed with exit 0: 31 steps, 2,090
+  reported passing cases and 10 external-asset skips. It ran while additional
+  edits were being made, so the resulting report is not a frozen-worktree
+  final build. Profile and enum logs contained no enum mismatch or recursion
+  warnings; the shader profile log still reported dependency cycles.
+- The generated advanced ADM scene passed a bounded Blender test (40.7 s):
+  eight meshes and materials cover all four advanced profiles with classic
+  and height blend, layer AO/height/normal, and parallax/POM metadata; import
+  and validated re-export preserve the checked profile and parameter values.
+  The test is included in subsequent builds. The scene does not yet exercise
+  the required GPU formats or render parallax/POM.
+- BC7 UNORM and sRGB KTX2 loads, odd dimensions, an unloaded file reference,
+  and save/reload passed in Blender. DDS repackaging preserved every tested
+  mip payload. One generated block in each of the eight BC7 modes decoded
+  identically to `texture2ddecoder` on Blender 5.2.3 for Windows. An isolated
+  extension ZIP built from the worktree also decoded BC7 without an external
+  Python wheel; other platforms were not tested.
+- World Tile's selective export regression checks per-LOD usage against PLY
+  weights, tile-local material and AO texture changes, unused surfaces, global
+  height settings, legacy manifests, and rejection of incorrect usage metadata.
+  On the four-tile test fixture, a validated full export took 0.276 s; ten
+  changed-only checks took a median 0.667 ms and a maximum 6.43 ms.
+- Focused texture regressions verify KTX2 R16/BC7 preview decoding, exact
+  R16 export and scalar fallback channels, mip-only Export Changed detection,
+  16-bit preview normalization, grayscale source channel remapping, and BC5
+  normal reconstruction for DDS/KTX2.
+  Blender BC5 normal reconstruction is covered separately below.
+- The World Tile suite passed 81 tests, including the relocated reference project,
+  which built and exported four validated ADM tiles whose referenced
+  primary images include R8, R16, BC4, BC5, and BC7. Two generator runs
+  produced identical hashes for the five GPU source textures.
+- A synthetic shared-edge diagnostic with five equally weighted surfaces and
+  different third-corner weights produced slot sets `[0,1,2,3]` and `[1,2,3,4]`.
+  The reference height-blend output assigns surface 0 weight 0.9479 on the
+  first side and zero on the second. Both triangles report a surface conflict;
+  final cross-primitive visual continuity is therefore not verified.
+- A focused regression checks that two primitive slot layouts produce identical
+  reference height-blend weights for the same two nonzero surface weights.
+- A bounded Blender process passed BC5 DDS embedded and BC5 KTX2 external
+  import, shared data/normal texture use, Cycles layered-normal bake, ADM
+  re-export/import and `.blend` save/reload. An external primary with a
+  mismatched SHA-256 produced the expected warning. Existing dependency-cycle
+  diagnostics were still emitted.
+- Another check-only build returned exit 0 while World Tile changes were in
+  progress; it is not final frozen-worktree evidence.

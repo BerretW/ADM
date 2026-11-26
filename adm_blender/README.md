@@ -513,15 +513,25 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   `adm-standard/SPEC_GAPS.md`.
 - Image export (the **Images** option in File > Export > ADM):
   - **PNG** (default) writes only PNG. JPEG, DDS, KTX2 and other sources are converted, so any
-    engine can read the file.
+    engine can read the file. R16 DDS/KTX2 sources loaded through a texture slot and edited
+    16-bit PNG sources retain 16-bit samples in PNG export.
   - **Keep PNG/JPEG** passes PNG and JPEG source bytes through unchanged and converts the rest to PNG.
-  - **KTX2 + PNG fallback** and **DDS + PNG fallback** write a GPU image (§8.6: RGBA8, BC1 or BC3,
+  - **KTX2 + PNG fallback** and **DDS + PNG fallback** write a GPU image (§8.6: RGBA8, BC1, BC3 or R16,
     sRGB for colour and UNORM for data textures, optional mipmaps) together with the mandatory
     same-size PNG `fallbackSource`. *Compression* `AUTO` picks BC1 for opaque and BC3 for
-    transparent images. The encoder is built in (NumPy), so no external tools are needed.
+    transparent images. For 16-bit data images, `AUTO` uses R16 when the green and blue channels
+    are zero and alpha is one, including an imported R16 PNG fallback. Other 16-bit sources are
+    quantized in the GPU image with a warning; the PNG fallback retains 16-bit samples. The
+    encoder is built in (NumPy), so no external tools are needed.
 - On import, KTX2/DDS primaries resolve to their PNG/JPEG `fallbackSource` (`KTX2_FALLBACK` /
-  `DDS_FALLBACK`). *Open Image* on a texture slot also accepts `.ktx2` and `.dds` files; the add-on
-  decodes them itself when Blender cannot.
+  `DDS_FALLBACK`). BC5 normal maps reconstruct their Z component for core PBR and official shader
+  parameters. If an external primary is missing or fails integrity checks, import warns that the
+  normal fallback might render incorrectly. Re-export does not preserve the original GPU bytes.
+  Use the folder button on a PBR slot or shader texture parameter to open `.ktx2` and `.dds`
+  files through the add-on's loader. Official BC5 normal parameters reconstruct Z;
+  custom shader parameters have no declared normal role and retain their raw channels.
+  BC7 KTX2 blocks are repackaged as DDS and decoded by
+  Blender's DDS reader; this path has been verified on Windows with Blender 5.2.3.
 
 This is ADM 1.0 authoring support, **not full ADM conformance certification**. The numerical
 renderer, retargeting, IK and advanced interoperability evidence described in §25 is a separate

@@ -122,12 +122,13 @@ class ADM_OT_export(bpy.types.Operator, ExportHelper):
         ("PNG", "PNG", "Embed every texture as PNG; JPEG, DDS, KTX2, TGA, EXR… sources are converted. "
                        "Readable by every ADM reader"),
         ("AUTO", "Keep PNG/JPEG", "Keep PNG/JPEG source bytes unchanged, convert everything else to PNG"),
-        ("KTX2", "KTX2 + PNG fallback", "GPU-ready KTX2 (optional capability ADM-TEX-KTX2-1) plus the "
+        ("KTX2", "KTX2 + PNG fallback", "GPU-ready KTX2 (optional capability ADM-TEX-KTX2-1 or -2) plus the "
                                         "mandatory PNG fallback for readers without KTX2"),
-        ("DDS", "DDS + PNG fallback", "GPU-ready DDS/DX10 (optional capability ADM-TEX-DDS-1) plus the "
+        ("DDS", "DDS + PNG fallback", "GPU-ready DDS/DX10 (optional capability ADM-TEX-DDS-1 or -2) plus the "
                                       "mandatory PNG fallback for readers without DDS")])
     gpu_compression: EnumProperty(name="GPU Format", default="AUTO", items=[
-        ("AUTO", "Auto (BC1/BC3)", "BC1 for opaque textures, BC3 when the texture has alpha"),
+        ("AUTO", "Auto (BC1/BC3/R16)", "Preserve compatible R16 data; otherwise use BC1 for opaque textures "
+                                      "or BC3 when the texture has alpha"),
         ("BC1", "BC1 / DXT1", "4 bpp, no alpha"),
         ("BC3", "BC3 / DXT5", "8 bpp with alpha"),
         ("RGBA8", "RGBA8 (uncompressed)", "Lossless, 32 bpp")])

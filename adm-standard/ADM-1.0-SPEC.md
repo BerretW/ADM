@@ -326,6 +326,7 @@ For R8 and R16, sampling yields `(R, 0, 0, 1)`. BC4 yields `(R, 0, 0, 1)` and BC
 fallback MUST use those values and MUST NOT fabricate alpha as data. For normal-role BC5, the
 channels are tangent-space X and Y in linear UNORM. Reconstruct
 `z = sqrt(max(0, 1 - x*x - y*y))` after remapping X and Y from `[0,1]` to `[-1,1]`, then
+normalize `(x, y, z)` before transforming it by the tangent-space basis.
 
 R8, R16, BC4, and BC5 are linear data formats and MUST NOT be used as sRGB sources. BC7_SRGB
 MUST be used for base-color and emission color roles; BC7_UNORM MUST be used for data roles.

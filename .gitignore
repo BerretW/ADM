@@ -30,3 +30,4 @@ build/
 *.blend@
 .DS_Store
 Thumbs.db
+test_files/

@@ -1,0 +1,359 @@
+{
+ "format": "apparatus-world-tile",
+ "format_version": 2,
+ "generator": "appartus_world_tile 0.7.6",
+ "units": "metres, Z up, tile vertices relative to origin_m",
+ "source": {
+  "path": "C:\\Users\\adolf\\GitHub\\ADM\\appartus_world_tile\\reference_project\\heightmap.png",
+  "width": 257,
+  "height": 257,
+  "dtype": "uint8",
+  "height_scale": 0.0196078431372549,
+  "height_offset": 0.0,
+  "height_range_m": [
+   0.0,
+   5.0
+  ]
+ },
+ "params": {
+  "input_path": "C:\\Users\\adolf\\GitHub\\ADM\\appartus_world_tile\\reference_project\\heightmap.png",
+  "spacing_m": 2.0,
+  "height_min_m": 0.0,
+  "height_max_m": 5.0,
+  "remap_float": false,
+  "tile_cells": 128,
+  "max_errors_m": [
+   1.0,
+   4.0,
+   12.0
+  ],
+  "origin": "corner",
+  "threads": 0,
+  "raw_size": null,
+  "texture_error": 0.12,
+  "texture_detail_m": 4.0
+ },
+ "spacing_m": 2.0,
+ "size_m": [
+  512.0,
+  512.0
+ ],
+ "origin": "corner",
+ "bounds_m": [
+  0.0,
+  0.0,
+  512.0,
+  512.0
+ ],
+ "tile_cells": 128,
+ "tile_size_m": 256.0,
+ "tiles_x": 2,
+ "tiles_y": 2,
+ "uv": {
+  "uv0": "0..1 across each full tile (V up); repeat surface textures with integer uv_scale"
+ },
+ "texturing": {
+  "surfaces": [
+   "rock",
+   "cobblestone",
+   "sand",
+   "dirt",
+   "grass"
+  ],
+  "surface_colors": [
+   [
+    255,
+    255,
+    255
+   ],
+   [
+    255,
+    255,
+    255
+   ],
+   [
+    255,
+    255,
+    255
+   ],
+   [
+    255,
+    255,
+    255
+   ],
+   [
+    255,
+    255,
+    255
+   ]
+  ],
+  "biomes": [
+   "grassland",
+   "sand shore",
+   "rock ridge",
+   "road edge"
+  ],
+  "rules_digest": "61dd40f9ec4dac57a356c1cf3b573bcc",
+  "vertex_weights": "PLY uchar w0..wN per vertex in surface order, summing to 255",
+  "unshared_neighbours": []
+ },
+ "preview": "preview.png",
+ "biomes_preview": "biomes.png",
+ "surfaces_preview": "surfaces.png",
+ "lods": [
+  {
+   "index": 0,
+   "max_error_m": 1.0,
+   "vertices": 2689,
+   "triangles": 5171,
+   "measured_error_m": 0.9917595684528351
+  },
+  {
+   "index": 1,
+   "max_error_m": 4.0,
+   "vertices": 2377,
+   "triangles": 4547,
+   "measured_error_m": 3.964056670665741
+  },
+  {
+   "index": 2,
+   "max_error_m": 12.0,
+   "vertices": 1649,
+   "triangles": 3091,
+   "measured_error_m": 11.89649486541748
+  }
+ ],
+ "tiles": [
+  {
+   "id": "x000_y000",
+   "ix": 0,
+   "iy": 0,
+   "origin_m": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "size_m": [
+    256.0,
+    256.0
+   ],
+   "lods": [
+    {
+     "file": "tiles/x000_y000_lod0.ply",
+     "vertices": 161,
+     "triangles": 271,
+     "measured_error_m": 0.8114933967590332,
+     "digest": "b31fc48648a2f3814bbec686b9b6ba6e",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x000_y000_lod1.ply",
+     "vertices": 155,
+     "triangles": 259,
+     "measured_error_m": 3.431977689266205,
+     "digest": "f762a75e15364b7abffe4e0bafcdcb69",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x000_y000_lod2.ply",
+     "vertices": 149,
+     "triangles": 247,
+     "measured_error_m": 10.965442657470703,
+     "digest": "d7849e28af936c145c15ceae40b5cf6f",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "id": "x001_y000",
+   "ix": 1,
+   "iy": 0,
+   "origin_m": [
+    256.0,
+    0.0,
+    0.0
+   ],
+   "size_m": [
+    256.0,
+    256.0
+   ],
+   "lods": [
+    {
+     "file": "tiles/x001_y000_lod0.ply",
+     "vertices": 1096,
+     "triangles": 2138,
+     "measured_error_m": 0.9839973449707031,
+     "digest": "b060d9477a7bd5038264319d699aa926",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x001_y000_lod1.ply",
+     "vertices": 1001,
+     "triangles": 1948,
+     "measured_error_m": 3.93133544921875,
+     "digest": "a03270535c8faebe423d07b0165b4f00",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x001_y000_lod2.ply",
+     "vertices": 797,
+     "triangles": 1540,
+     "measured_error_m": 11.78360366821289,
+     "digest": "cee785048ebb61e1ba3a58fb369a2a96",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "id": "x000_y001",
+   "ix": 0,
+   "iy": 1,
+   "origin_m": [
+    0.0,
+    256.0,
+    0.0
+   ],
+   "size_m": [
+    256.0,
+    256.0
+   ],
+   "lods": [
+    {
+     "file": "tiles/x000_y001_lod0.ply",
+     "vertices": 1270,
+     "triangles": 2489,
+     "measured_error_m": 0.9917595684528351,
+     "digest": "f1008ec78c00474d3f7427a950752ead",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x000_y001_lod1.ply",
+     "vertices": 1065,
+     "triangles": 2079,
+     "measured_error_m": 3.964056670665741,
+     "digest": "494dd451b231186dd9b382c1fc7b660f",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x000_y001_lod2.ply",
+     "vertices": 553,
+     "triangles": 1055,
+     "measured_error_m": 11.89649486541748,
+     "digest": "b459cfd22e715a5b41cb7492670dd13b",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  {
+   "id": "x001_y001",
+   "ix": 1,
+   "iy": 1,
+   "origin_m": [
+    256.0,
+    256.0,
+    0.0
+   ],
+   "size_m": [
+    256.0,
+    256.0
+   ],
+   "lods": [
+    {
+     "file": "tiles/x001_y001_lod0.ply",
+     "vertices": 162,
+     "triangles": 273,
+     "measured_error_m": 0.3731703758239746,
+     "digest": "5a530ceaa871a27986345a6ea24a8ec7",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x001_y001_lod1.ply",
+     "vertices": 156,
+     "triangles": 261,
+     "measured_error_m": 3.849180579185486,
+     "digest": "7ea867f038c228589c55dd9ecbc73c52",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "file": "tiles/x001_y001_lod2.ply",
+     "vertices": 150,
+     "triangles": 249,
+     "measured_error_m": 11.35954612493515,
+     "digest": "e099df5beff029711768e072d0d90ce1",
+     "used_surfaces": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  }
+ ],
+ "timings": {
+  "load_s": 2.3900007363408804e-05,
+  "errors_s": 0.016187400033231825,
+  "texture_errors_s": 0.3062171000055969,
+  "tiles_s": 0.02887059998465702,
+  "total_s": 0.4325879999669269
+ },
+ "edited_height_range_m": [
+  0.0,
+  150.0
+ ]
+}

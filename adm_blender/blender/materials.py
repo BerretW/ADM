@@ -2,6 +2,7 @@
 
 import os
 import re
+import tempfile
 
 import bpy
 import numpy as np
@@ -184,6 +185,16 @@ class TextureExportError(Exception):
 
 
 GPU_IMAGE_FORMATS = {"KTX2": gputex.MIME_KTX2, "DDS": gputex.MIME_DDS}
+MAX_GPU_TEXTURE_BYTES = 512 * 1024 * 1024
+MAX_GPU_TEXTURE_PIXELS = 64 * 1024 * 1024
+
+
+def _read_gpu_texture(path):
+    with open(path, "rb") as fh:
+        data = fh.read(MAX_GPU_TEXTURE_BYTES + 1)
+    if len(data) > MAX_GPU_TEXTURE_BYTES:
+        raise ValueError(f"GPU texture exceeds the {MAX_GPU_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+    return data
 
 
 def source_bytes(image):
@@ -208,24 +219,79 @@ def _portable_mime(data):
     return None
 
 
-def load_image_file(path):
+def _has_16bit_source(image):
+    if image.get("adm_source_precision_bits") == 16:
+        return True
+    data = source_bytes(image)
+    return bool(data and len(data) >= 25 and _is_png(data)
+                and data[12:16] == b"IHDR" and data[24] == 16)
+
+
+def _decode_bc7_with_blender(data, mime):
+    dds = gputex.repackage_bc7_as_dds(data, mime)
+    with tempfile.TemporaryDirectory(prefix="adm_bc7_") as folder:
+        path = os.path.join(folder, "texture.dds")
+        with open(path, "wb") as handle:
+            handle.write(dds)
+        try:
+            image = bpy.data.images.load(path, check_existing=False)
+        except RuntimeError as exc:
+            raise gputex.GpuTextureError(f"Blender could not decode BC7 DDS: {exc}") from exc
+        try:
+            image.colorspace_settings.name = "Non-Color"
+            return image_pixels(image).copy()
+        finally:
+            bpy.data.images.remove(image)
+
+
+def load_image_file(path, *, normal_map=False):
     """Load an image file; KTX2/DDS files Blender cannot read are decoded by the add-on and packed."""
     with open(path, "rb") as fh:
         head = fh.read(16)
     mime = gputex.mime_of(head)
-    if mime != gputex.MIME_KTX2:
+    data = None
+    info = None
+    if mime == gputex.MIME_DDS:
+        data = _read_gpu_texture(path)
+        try:
+            info = gputex.parse(data, mime, strict=False)
+        except gputex.GpuTextureError:
+            # Blender may support DDS formats outside the ADM GPU subset.
+            pass
+    elif mime == gputex.MIME_KTX2:
+        data = _read_gpu_texture(path)
+        info = gputex.parse(data, mime, strict=False)
+    if info is not None and info["width"] * info["height"] > MAX_GPU_TEXTURE_PIXELS:
+        raise ValueError(f"GPU texture exceeds the {MAX_GPU_TEXTURE_PIXELS:,}-pixel limit")
+    special = info is not None and info["kind"] in ("R8", "R16", "BC4", "BC5")
+    if mime != gputex.MIME_KTX2 and not special:
         img = bpy.data.images.load(path, check_existing=True)
         if mime is None or img.size[0] > 0:
             return img
         bpy.data.images.remove(img)
-    with open(path, "rb") as fh:
-        data = fh.read()
-    rgba, info = gputex.decode(data, mime)
+    if data is None:
+        data = _read_gpu_texture(path)
+    if info is None:
+        info = gputex.parse(data, mime, strict=False)
+    if info["kind"] == "R16":
+        scalar = gputex.decode_scalar_level(data, info).astype(np.float32) / 65535.0
+        rgba = np.zeros((*scalar.shape, 4), dtype=np.float32)
+        rgba[..., 0] = scalar
+        rgba[..., 3] = 1.0
+    elif info["kind"] == "BC7":
+        rgba = _decode_bc7_with_blender(data, mime)
+    else:
+        rgba = gputex.decode(data, mime)[0].astype(np.float32) / 255.0
+    if normal_map and info["kind"] == "BC5":
+        rgba = gputex.reconstruct_bc5_normal(rgba)
     h, w = rgba.shape[:2]
-    img = bpy.data.images.new(os.path.basename(path), w, h, alpha=True)
+    img = bpy.data.images.new(os.path.basename(path), w, h, alpha=True, float_buffer=info["kind"] == "R16")
     img.colorspace_settings.name = "sRGB" if info["srgb"] else "Non-Color"
-    img.pixels.foreach_set((rgba[::-1].astype(np.float32) / 255.0).ravel())
+    img.pixels.foreach_set(rgba[::-1].ravel())
+    img.update()
     img.pack()
+    if info["kind"] == "R16":
+        img["adm_source_precision_bits"] = 16
     return img
 
 
@@ -282,6 +348,9 @@ class MaterialExporter:
             if mime is None:
                 raise TextureExportError(f"image '{image.name}' has no readable pixel data")
             try:
+                info = gputex.parse(data, mime, strict=False)
+                if info["kind"] == "BC7":
+                    return _decode_bc7_with_blender(data, mime)
                 rgba, _ = gputex.decode(data, mime)
             except gputex.GpuTextureError as exc:
                 raise TextureExportError(f"image '{image.name}': cannot convert {mime} source ({exc}); "
@@ -298,6 +367,10 @@ class MaterialExporter:
         mime = _portable_mime(data)
         if mime in keep:
             return data, mime
+        if _has_16bit_source(image):
+            px = self._pixels(image, color_role, data)
+            rgba = (np.clip(px, 0.0, 1.0) * 65535.0 + 0.5).astype(">u2")
+            return encode_png(rgba.shape[1], rgba.shape[0], rgba.tobytes(), 4, bit_depth=16), "image/png"
         return self._encode_pixels(self._pixels(image, color_role, data))
 
     @staticmethod
@@ -351,11 +424,29 @@ class MaterialExporter:
         gpu_mime = GPU_IMAGE_FORMATS.get(self.image_format)
         if gpu_mime:
             px = pixels if pixels is not None else self._pixels(image, color_role)
-            rgba = self._to_u8(px)
-            blob, _ = gputex.encode(rgba, gpu_mime, self.gpu_compression, color_role, self.gpu_mipmaps)
+            high_precision = image is not None and _has_16bit_source(image)
+            scalar_r16 = (high_precision and pixels is None and not color_role
+                          and self.gpu_compression == "AUTO"
+                          and np.all(px[..., 1:3] == 0) and np.all(px[..., 3] == 1))
+            if scalar_r16:
+                scalar = (np.clip(px[..., 0], 0.0, 1.0) * 65535.0 + 0.5).astype(np.uint16)
+                blob, _ = gputex.encode_scalar(scalar, gpu_mime, "R16", self.gpu_mipmaps)
+            else:
+                if high_precision:
+                    self.warn(f"image '{name}': GPU export converts 16-bit samples to 8-bit; "
+                              "the PNG fallback retains 16-bit precision")
+                rgba = self._to_u8(px)
+                blob, _ = gputex.encode(rgba, gpu_mime, self.gpu_compression, color_role, self.gpu_mipmaps)
             primary = self._add_blob(name, blob, gpu_mime)
-            h, w = rgba.shape[:2]
-            fallback = self._add_blob(name, encode_png(w, h, rgba.tobytes(), 4), "image/png")
+            if high_precision:
+                rgba16 = (np.clip(px, 0.0, 1.0) * 65535.0 + 0.5).astype(">u2")
+                h, w = rgba16.shape[:2]
+                fallback_blob = encode_png(w, h, rgba16.tobytes(), 4, bit_depth=16)
+            else:
+                rgba = self._to_u8(px)
+                h, w = rgba.shape[:2]
+                fallback_blob = encode_png(w, h, rgba.tobytes(), 4)
+            fallback = self._add_blob(name, fallback_blob, "image/png")
             entry = (primary, fallback)
         else:
             blob, mime = self._encode_image_bytes(image, color_role) if pixels is None else self._encode_pixels(pixels)
@@ -1024,16 +1115,16 @@ def _apply_shader_value(v, typ, val, resolve_image):
         v.image = None
 
 
-def apply_shader(mat, m, scene, resolve_image):
+def apply_shader(mat, m, scene, resolve_image, resolve_normal_image):
     """Read ADM shader fields of material dict ``m`` into ``mat.adm`` and rebuild the viewport preview."""
     with quiet_param_updates():
-        _apply_shader(mat, m, scene, resolve_image)
+        _apply_shader(mat, m, scene, resolve_image, resolve_normal_image)
     if mat.adm.shader != "CORE" or mat.adm.vertex_controls_enabled \
             or K.has_color1_profile(mat.adm.shader, mat.adm.shader_version):
         refresh_shader_preview(mat)
 
 
-def _apply_shader(mat, m, scene, resolve_image):
+def _apply_shader(mat, m, scene, resolve_image, resolve_normal_image):
     a = mat.adm
     a.animation_id = m.get("animationId", "")
     sh = m.get("shader")
@@ -1072,7 +1163,8 @@ def _apply_shader(mat, m, scene, resolve_image):
             prm = defs.get(name)
             if v is not None and prm is not None:
                 v.use = True
-                _apply_shader_value(v, prm["type"], val, resolve_image)
+                resolver = resolve_normal_image if prm["type"] == "TEXTURE" and name.endswith("_normal") else resolve_image
+                _apply_shader_value(v, prm["type"], val, resolver)
                 if v.image is not None and prm["type"] == "TEXTURE" and name not in K.SHADER_COLOR_TEXTURES:
                     v.image.colorspace_settings.name = "Non-Color"
                     if K.OFFICIAL_SHADER_KINDS.get(key) == "TERRAIN_4" and name == "blend_mask":
@@ -1133,7 +1225,7 @@ def _tex_node(nt, image, sampler, non_color, x, y, label):
     return n
 
 
-def build_material(m, resolve_texture):
+def build_material(m, resolve_texture, resolve_normal_texture):
     """Create a Blender material from an ADM material dict.
 
     ``resolve_texture(textureRef) -> (bpy.types.Image, sampler_dict)``.
@@ -1143,6 +1235,12 @@ def build_material(m, resolve_texture):
 
     def _resolve_texture(ref):
         image, sampler = resolve_texture(ref)
+        if image is None:
+            missing_textures.append(ref)
+        return image, sampler
+
+    def _resolve_normal_texture(ref):
+        image, sampler = resolve_normal_texture(ref)
         if image is None:
             missing_textures.append(ref)
         return image, sampler
@@ -1222,7 +1320,7 @@ def build_material(m, resolve_texture):
             nt.links.new(s, bsdf.inputs[target])
         y -= 300
     if "normalTexture" in m:
-        img, smp = _resolve_texture(m["normalTexture"])
+        img, smp = _resolve_normal_texture(m["normalTexture"])
         tn = _tex_node(nt, img, smp, True, -900, y, "Normal")
         tc = m["normalTexture"].get("texCoord", 0)
         _uv_node(nt, tn, tc, -900, y)

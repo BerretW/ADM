@@ -8,7 +8,9 @@ import numpy as np
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout,
                                QLabel, QPushButton, QSlider, QVBoxLayout, QWidget)
 
-from ..material import Surface, TerrainMaterial, prepare_texture
+from ..bake import _linear_to_srgb, _srgb_to_linear
+from ..material import Surface, TerrainMaterial, _eight_bit, normal_preview_array, prepare_texture
+from .material_panel import _mesh_with_tangents
 
 
 def _read_rgba(path: str) -> np.ndarray:
@@ -16,7 +18,7 @@ def _read_rgba(path: str) -> np.ndarray:
 
     prepared = prepare_texture(path)
     with Image.open(io.BytesIO(prepared.data)) as image:
-        return np.asarray(image.convert("RGBA"))
+        return np.asarray(_eight_bit(image).convert("RGBA"))
 
 
 def _sample_repeat(image: np.ndarray, repeat_m: float, size: int) -> np.ndarray:
@@ -49,9 +51,10 @@ def compose_preview(surfaces: list[Surface], base_weights: list[float], *, size:
     for surface in surfaces:
         if surface.albedo:
             color = _sample_repeat(_read_rgba(surface.albedo), surface.repeat_m, size)[..., :3]
-            color = color.astype(np.float64) * (np.asarray(surface.color) / 255.0)
+            color = _srgb_to_linear(color.astype(np.float64) / 255.0)
         else:
-            color = np.broadcast_to(np.asarray(surface.color, dtype=np.float64), (size, size, 3))
+            color = np.ones((size, size, 3), dtype=np.float64)
+        color *= _srgb_to_linear(np.asarray(surface.color, dtype=np.float64) / 255.0)
         colors.append(color)
         if surface.height_map.path:
             height_rgba = _sample_repeat(_read_rgba(surface.height_map.path), surface.repeat_m, size)
@@ -82,8 +85,54 @@ def compose_preview(surfaces: list[Surface], base_weights: list[float], *, size:
     color = sum(weight[..., None] * layer for weight, layer in zip(final, colors))
     ao = sum(weight * layer for weight, layer in zip(final, occlusion))
     color *= ao[..., None]
-    rgb = np.clip(color + 0.5, 0, 255).astype(np.uint8)
+    rgb = np.clip(_linear_to_srgb(color) * 255.0 + 0.5, 0, 255).astype(np.uint8)
     return rgb, final
+
+
+def _compose_pbr_maps(surfaces: list[Surface], final: np.ndarray) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+    size = final.shape[1]
+    roughness = np.zeros((size, size), dtype=np.float64)
+    metallic = np.zeros((size, size), dtype=np.float64)
+    normals = np.zeros((size, size, 3), dtype=np.float64)
+    emission = np.zeros((size, size, 3), dtype=np.float64)
+    has_normal = any(surface.normal for surface in surfaces)
+    has_emission = any(surface.emission for surface in surfaces)
+    for surface, weight in zip(surfaces, final):
+        for slot, factor, target in ((surface.roughness_map, surface.roughness, roughness),
+                                     (surface.metallic_map, surface.metallic, metallic)):
+            if slot.path:
+                rgba = _sample_repeat(_read_rgba(slot.path), surface.repeat_m, size)
+                sample = rgba[..., slot.channel].astype(np.float64) / 255.0
+                if slot.invert:
+                    sample = 1.0 - sample
+            else:
+                sample = 1.0
+            target += weight * factor * sample
+        if has_normal:
+            if surface.normal:
+                rgb = _sample_repeat(normal_preview_array(surface.normal), surface.repeat_m, size)[..., :3]
+                normal = rgb.astype(np.float64) / 127.5 - 1.0
+                length = np.linalg.norm(normal, axis=-1, keepdims=True)
+                normal = np.divide(normal, length, out=np.zeros_like(normal), where=length > 1e-12)
+            else:
+                normal = np.array((0.0, 0.0, 1.0))
+            normals += weight[..., None] * normal
+        if surface.emission:
+            rgb = _sample_repeat(_read_rgba(surface.emission), surface.repeat_m, size)[..., :3]
+            emission += weight[..., None] * _srgb_to_linear(rgb.astype(np.float64) / 255.0)
+    orm = np.stack((np.ones_like(roughness), roughness, metallic), axis=-1)
+    orm = np.clip(orm * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    normal_image = None
+    if has_normal:
+        length = np.linalg.norm(normals, axis=-1, keepdims=True)
+        normalized = np.zeros_like(normals)
+        normalized[..., 2] = 1.0
+        normalized = np.divide(normals, length, out=normalized, where=length > 1e-12)
+        normal_image = np.clip((normalized * 0.5 + 0.5) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    emission_image = None
+    if has_emission:
+        emission_image = np.clip(_linear_to_srgb(emission) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    return orm, normal_image, emission_image
 
 
 class HeightBlendPreview(QDialog):
@@ -129,9 +178,10 @@ class HeightBlendPreview(QDialog):
         self.lighting.addItem("Soft", "soft")
         self.weight_label = QLabel()
         self.weight_label.setWordWrap(True)
-        self.status = QLabel("Preview composites albedo, tint and an approximate AO darkening. "
+        self.status = QLabel("Preview composites albedo, tint, normal, metallic, roughness and emission. "
+                             "AO is approximated by darkening the color. "
                              "Select a layer to inspect its final weight. "
-                             "Normal, emission and parallax effects are not composited here.")
+                             "Parallax effects are not composited here.")
         self.status.setWordWrap(True)
         self.plotter = QtInteractor(self)
         self.plotter.set_background("#15181c", top="#3b4652")
@@ -226,11 +276,12 @@ class HeightBlendPreview(QDialog):
             rgb, final = compose_preview(
                 surfaces, weights, height_blend=self.height_blend.isChecked(),
                 transition=self.transition.value(), strength=self.strength.value())
+            selected_view = self.view.currentData()
+            pbr_maps = _compose_pbr_maps(surfaces, final) if selected_view == -1 else None
         except (OSError, ValueError) as exc:
             self.error.setText(str(exc))
             return
         self.error.clear()
-        selected_view = self.view.currentData()
         if selected_view is not None and selected_view >= 0:
             if selected_view not in indices:
                 self.error.setText(f"Enable Layer {selected_view + 1} to inspect its final weight.")
@@ -244,10 +295,24 @@ class HeightBlendPreview(QDialog):
         reset_camera = self._actor is None
         if self._actor is not None:
             self.plotter.remove_actor(self._actor, reset_camera=False, render=False)
+        mesh = self._pv.Plane(i_size=15, j_size=15, i_resolution=64, j_resolution=64)
+        if pbr_maps is not None and pbr_maps[1] is not None:
+            mesh = _mesh_with_tangents(mesh, self._pv)
         self._actor = self.plotter.add_mesh(
-            self._pv.Plane(i_size=15, j_size=15, i_resolution=64, j_resolution=64),
-            texture=texture, pbr=True, reset_camera=reset_camera, render=False)
+            mesh, texture=texture, pbr=True, metallic=1.0 if pbr_maps is not None else 0.0,
+            roughness=1.0 if pbr_maps is not None else 0.5,
+            reset_camera=reset_camera, render=False)
         self._actor.prop.SetTexture("albedoTex", texture)
+        if pbr_maps is not None:
+            orm, normal, emission = pbr_maps
+            self._actor.prop.SetORMTexture(self._pv.numpy_to_texture(orm))
+            if normal is not None:
+                self._actor.prop.SetNormalTexture(self._pv.numpy_to_texture(normal))
+            if emission is not None:
+                emission_texture = self._pv.numpy_to_texture(emission)
+                emission_texture.SetUseSRGBColorSpace(True)
+                self._actor.prop.SetEmissiveTexture(emission_texture)
+                self._actor.prop.SetEmissiveFactor(1.0, 1.0, 1.0)
         self.weight_label.setText("Mean final weights: " + ", ".join(
             f"{surface.name} {float(final[i].mean()):.1%}" for i, surface in enumerate(surfaces)))
         self.plotter.render()

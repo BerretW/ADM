@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from collections import Counter
@@ -57,7 +58,19 @@ class PipelineTest(unittest.TestCase):
         return load_manifest(params.out_dir)
 
     def test_advanced_reference_project_builds_neighboring_tiles(self):
-        project_path = os.path.join(os.path.dirname(__file__), "..", "reference_project", "advanced_reference.awtp")
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        source = os.path.join(self.tmp.name, "source")
+        project_dir = os.path.join(source, "appartus_world_tile", "reference_project")
+        fixture_dir = os.path.join(source, "adm-standard", "fixtures", "advanced-materials")
+        os.makedirs(project_dir)
+        for name in ("advanced_reference.awtp", "heightmap.png"):
+            shutil.copy2(os.path.join(repo, "appartus_world_tile", "reference_project", name), project_dir)
+        shutil.copytree(os.path.join(repo, "appartus_world_tile", "reference_project", "textures"),
+                        os.path.join(project_dir, "textures"))
+        shutil.copytree(os.path.join(repo, "adm-standard", "fixtures", "advanced-materials"), fixture_dir)
+        relocated = os.path.join(self.tmp.name, "relocated")
+        shutil.move(source, relocated)
+        project_path = os.path.join(relocated, "appartus_world_tile", "reference_project", "advanced_reference.awtp")
         project = load_project(project_path)
         project.params.out_dir = os.path.join(self.tmp.name, "reference_tiles")
         project.params.threads = 2
@@ -76,6 +89,18 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(len(result["written"]), 4)
         self.assertTrue(all(os.path.isfile(os.path.join(project.export.out_dir, f"{tile}.adm"))
                             for tile in result["written"]))
+        from adm_blender.core import constants, container, gputex
+
+        formats = set()
+        for tile in result["written"]:
+            with open(os.path.join(project.export.out_dir, f"{tile}.adm"), "rb") as handle:
+                doc, _ = container.read_container(handle.read(), constants.ADM_MAGIC)[:2]
+            for texture in doc["textures"]:
+                image = doc["images"][texture["source"]]
+                with open(os.path.join(project.export.out_dir, image["uri"].replace("/", os.sep)), "rb") as handle:
+                    info = gputex.parse(handle.read(), image["mimeType"], strict=True)
+                formats.add(info["kind"])
+        self.assertTrue({"R8", "R16", "BC4", "BC5", "BC7"}.issubset(formats), formats)
 
     def test_biome_noise_varies_surfaces_without_changing_old_rules(self):
         data = np.zeros((65, 65), np.float32)

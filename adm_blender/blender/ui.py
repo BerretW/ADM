@@ -1075,6 +1075,7 @@ def draw_texture_slots(lay, context, mat):
         col = box.column(align=True)
         head = col.row(align=True)
         head.label(text=label, icon=icon)
+        head.operator("adm.material_texture_open", text="", icon="FILE_FOLDER").slot = sid
         if state == "CUSTOM":
             head.label(text="custom node setup", icon="NODETREE")
             for src in M.custom_source_candidates(mat, sid)[:3]:
@@ -1204,6 +1205,7 @@ def _draw_shader_texture(box, p, v, prm, label=None, show_channel_options=False)
     r.prop(v, "use", text="")
     r.label(text=v.name if label is None else label)
     r.prop(v, "tex_coord", text="UV")
+    r.operator("adm.material_shader_texture_open", text="", icon="FILE_FOLDER").name = v.name
     c.template_ID(v, "image", new="image.new", open="image.open")
     if show_channel_options:
         prefix = v.name[:-len("_texture")]

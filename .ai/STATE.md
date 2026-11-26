@@ -132,4 +132,50 @@ See `TASKS.md` and `TESTS.md` for current evidence.
   diagnostics, retained in the test logs; these are not claimed as resolved.
 - World Tile's multi-surface preview now approximates weighted per-layer AO by
   darkening the composed color, honoring map channel, inversion and strength.
-  Normal, emission, parallax and POM remain unsupported in this preview.
+  At that point, normal, emission, parallax and POM were unsupported.
+- Corrected single-surface ORM packing: absent roughness and metallic maps use
+  neutral channels, so the renderer applies each scalar factor once instead of
+  squaring it when another ORM map is present.
+- Blender's texture-slot loader decodes R16 DDS and KTX2 into a packed float
+  image. PNG export retains 16-bit samples for those sources and for edited
+  16-bit PNGs. AUTO GPU export preserves unmodified scalar channel layouts as
+  R16; other 16-bit GPU conversions warn and retain a 16-bit PNG fallback.
+- World Tile's single-surface normal map now has generated mesh tangents for
+  sphere, plane and relief. VTK requires those tangents to apply normal mapping.
+- World Tile's multi-surface preview now blends color in linear space and
+  composites normal, metallic, roughness, and emission maps into PBR textures.
+  It uses the final height-adjusted weights; parallax and POM remain unsupported.
+- Single-surface albedo tint now also uses linear-space multiplication; the AO
+  inspection view applies the same neutral-at-zero strength as the PBR preview.
+- A later check-only build passed 31 steps, but ran while further changes were
+  being made. Repeat the final verification on a stable worktree after the
+  remaining mission requirements are implemented.
+- The advanced comparison-scene generator now emits a validated ADM alongside
+  its Blender project. It includes classic and height blending, AO maps, and
+  parallax/POM settings for all four advanced profiles. It is not the complete
+  GPU-format or POM-rendering fixture required by the mission.
+- Blender's BC7 KTX2 loader now repackages its validated blocks into a temporary
+  DDS and uses Blender's native decoder. A built extension decoded a BC7 texture
+  without an external wheel on Windows; other platforms remain unverified.
+- World Tile builds now record per-LOD surface usage. Export Changed fingerprints
+  only surfaces used by each tile, and validates usage metadata against geometry
+  when exporting. Older manifests retain conservative whole-material detection.
+- KTX2 inputs previously failed in World Tile's material fingerprint and preview,
+  even though direct export accepted them. Compatible DDS/KTX2 sources now decode
+  for preview; fingerprints hash complete source bytes, including mip levels.
+  Scalar GPU PNG fallbacks now use `(R, 0, 0, 1)` with 16-bit R16 samples.
+  World Tile reconstructs BC5 normal Z in both surface and blended previews.
+- The relocated four-tile World Tile reference project now exports referenced
+  R8, R16, BC4, BC5, and BC7 sources. Its generator reproduces the five GPU
+  source files byte-for-byte. This does not complete the separate advanced
+  Blender scene.
+- A shared-edge numerical diagnostic confirms an existing >4-surface seam:
+  neighbouring triangles select different four-surface sets. With equal shared
+  weights and one high layer, reference height blending assigns that layer
+  0.9479 on one side and omits it on the other. The exporter reports the
+  affected-triangle count; the geometry and selection behavior are unchanged.
+- Blender's ADM importer now reconstructs BC5 normal Z for core PBR and official
+  shader normal parameters without changing data-role uses of the same texture.
+  External GPU primaries are size-limited and integrity-checked; unreadable or
+  invalid sources produce an explicit warning. Source GPU bytes are still not
+  retained through Blender's fallback-based ADM re-export.

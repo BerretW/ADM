@@ -20,13 +20,20 @@ represented as complete renderer conformance.
 
 - Blender approximates layer AO by darkening the preview color. It retains parallax
   and POM parameters, but does not preview their UV offsets.
+- Blender's ADM importer uses the PNG fallback for GPU images. For BC5 normal
+  maps, it reconstructs Z from the primary format and the fallback X and Y
+  channels. If the external primary is missing or fails integrity checks,
+  Blender reports that the normal fallback might not render correctly.
 - World Tile's CPU multi-surface composition approximates AO by darkening the
-  final color. It does not render normal, emission, parallax, or POM effects.
+  final color and supplies blended normal, metallic, roughness, and emission
+  maps to its preview renderer. It does not render parallax or POM effects.
 - Portable PBR fallback textures preserve only data representable in portable PBR and must
   be labeled as a fallback, never as layered shader conformance.
 - DDS/KTX2 primary bytes are preserved only when the source role and color space match.
-- BC7 decoding requires `texture2ddecoder`; the Blender extension does not declare a
-  bundled wheel. Standalone package availability remains unverified.
+- The standalone shared BC7 decoder requires `texture2ddecoder`. Blender's texture
+  loader repackages BC7 KTX2 blocks as DDS and uses Blender's native DDS reader;
+  this path has been verified in a built extension on Windows with Blender 5.2.3.
+  Other platforms have not been verified.
 - Validators check contracts and references; they do not render or prove visual
   conformance. The reference math is not a renderer.
 - Independent implementation certification requires separate render/reference comparisons.

@@ -1,4 +1,4 @@
-"""Generate a deterministic Blender scene for the four advanced layered profiles.
+"""Generate Blender and ADM comparison scenes for the advanced layered profiles.
 
 Run:
   blender -b --factory-startup --python adm_blender/tests/build_advanced_material_test_scene.py -- output.blend
@@ -36,6 +36,7 @@ def main(output):
     adm_blender.register()
     from adm_blender.core import constants as K
     from adm_blender.blender import materials
+    from adm_blender.blender.export_adm import ExportOptions, ModelExporter
 
     bpy.ops.wm.read_homefile(use_empty=True)
     scene = bpy.context.scene
@@ -51,6 +52,12 @@ def main(output):
     normal = make_image("Procedural Normal", lambda x, y, s:
                         (0.5 + x / s * 0.1, 0.5 + y / s * 0.1, 1.0, 1.0))
     mask = make_image("Procedural Blend Mask", lambda x, y, s: (0.5, 0.5, 0.0, 0.0))
+    ao = make_image("Procedural AO", lambda x, y, s:
+                    (0.35 if (x // 8 + y // 8) % 2 else 1.0, 0.0, 0.0, 1.0))
+
+    root = bpy.data.objects.new("Advanced Material Reference", None)
+    root.adm.adm_type = "MODEL"
+    scene.collection.objects.link(root)
 
     profiles = (
         (K.SHADER_TERRAIN_4[0], K.SHADER_PROFILE_LAYERED_HEIGHT_V1),
@@ -64,6 +71,7 @@ def main(output):
             radius=0.7, location=((index - 1.5) * 1.8, 1.0 if height_blend else -1.0, 0.7))
         obj = bpy.context.object
         obj.name = f"{shader_id}@{version} {'Height' if height_blend else 'Classic'}"
+        obj.parent = root
         attr = obj.data.color_attributes.new(name="COLOR_1", type="FLOAT_COLOR", domain="CORNER")
         attr.data.foreach_set("color", np.tile((0.5, 0.5, 0.0, 0.0), len(attr.data)).ravel())
         mat = bpy.data.materials.new(obj.name)
@@ -82,11 +90,13 @@ def main(output):
             mat.adm.params[f"layer{i}_height_scale"].value_f = 1.0
             mat.adm.params[f"layer{i}_height_bias"].value_f = 0.0
             mat.adm.params[f"layer{i}_ao_strength"].value_f = 1.0
+            mat.adm.params[f"layer{i}_ao_texture"].image = ao
             mat.adm.params[f"layer{i}_normal"].image = normal
+            mat.adm.params[f"layer{i}_parallax_scale"].value_f = 0.08
         mat.adm.params["height_blend_enabled"].value_bool = height_blend
         mat.adm.params["height_blend_transition"].value_f = 0.2
         mat.adm.params["height_blend_strength"].value_f = 1.0
-        mat.adm.params["parallax_mode"].value_enum = "PARALLAX_OCCLUSION"
+        mat.adm.params["parallax_mode"].value_enum = "PARALLAX_OCCLUSION" if height_blend else "PARALLAX"
         mat.adm.params["parallax_min_steps"].value_f = 8
         mat.adm.params["parallax_max_steps"].value_f = 32
         materials.refresh_shader_preview(mat)
@@ -103,8 +113,17 @@ def main(output):
 
     output = os.path.abspath(output)
     os.makedirs(os.path.dirname(output), exist_ok=True)
+    print("PHASE export ADM", flush=True)
+    data, report = ModelExporter(bpy.context, root, ExportOptions(vertex_controls=True)).export()
+    if not report.ok:
+        raise RuntimeError(f"Advanced reference ADM validation failed: {report.errors}")
+    adm_path = os.path.splitext(output)[0] + ".adm"
+    with open(adm_path, "wb") as handle:
+        handle.write(data)
+    print(f"Generated validated ADM scene: {adm_path}", flush=True)
+    print("PHASE save Blender project", flush=True)
     bpy.ops.wm.save_as_mainfile(filepath=output)
-    print(f"Generated advanced layered material scene: {output}")
+    print(f"Generated advanced layered material scene: {output}", flush=True)
 
 
 if __name__ == "__main__":

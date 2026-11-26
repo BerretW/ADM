@@ -350,7 +350,8 @@ def build(
         write_ply(os.path.join(out_dir, rel), vertices, faces,
                   f"{MANIFEST_FORMAT} tile {_tile_id(ti, iy)} lod {lod}")
         return job, {"file": rel, "vertices": int(len(grid)), "triangles": int(len(faces)),
-                     "measured_error_m": float(measured), "digest": content_digest(vertices, faces)}
+                     "measured_error_m": float(measured), "digest": content_digest(vertices, faces),
+                     "used_surfaces": np.flatnonzero(np.any(weights > 0, axis=0)).tolist()}
 
     phase = time.perf_counter()
     results: dict[tuple[int, int, int], dict] = {}
