@@ -164,9 +164,15 @@ class ModelImporter:
             raise ImportError_(f"{K.MATERIAL_HEIGHT_EXT} is required but its effect is not supported by Blender",
                                report)
         if K.TERRAIN_MACRO_NORMAL_EXT in self.doc.get("extensionsRequired", []):
-            raise ImportError_(
-                f"{K.TERRAIN_MACRO_NORMAL_EXT} is required but Blender does not yet conform to its "
-                "mirrored and degenerate UV tangent-frame cases", report)
+            macro_normal_payloads = [
+                (material.get("extensions") or {}).get(K.TERRAIN_MACRO_NORMAL_EXT)
+                for material in self.doc.get("materials", [])
+            ]
+            if any(payload is not None and payload.get("projection") != "SHARED_WORLD_XZ"
+                   for payload in macro_normal_payloads):
+                raise ImportError_(
+                    f"{K.TERRAIN_MACRO_NORMAL_EXT} is required with LOCAL_UV projection, which Blender "
+                    "does not conform to at the degenerate UV fallback near world X", report)
         unknown = sorted(set(self.doc.get("extensionsUsed", [])) - set(K.SUPPORTED_EXTENSIONS))
         if unknown:
             self.warn("OPTIONAL_EXTENSIONS_UNSUPPORTED: " + ", ".join(unknown) +

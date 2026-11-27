@@ -1505,9 +1505,9 @@ def draw_material(lay, context, mat):
             if p.shader_key() not in K.TERRAIN_MACRO_NORMAL_PROFILES:
                 macro_normal.label(text="The active shader profile cannot preview Macro Normal", icon="ERROR")
             else:
-                macro_normal.label(text="Mirrored and degenerate UV tangent-frame cases are not verified",
+                macro_normal.label(text="LOCAL_UV fallback differs near world X for degenerate UVs",
                                    icon="INFO")
-                macro_normal.label(text="Required import remains disabled pending frame and BC5 fallback conformance",
+                macro_normal.label(text="Required LOCAL_UV import remains disabled pending frame conformance",
                                    icon="INFO")
             macro_normal.label(text="Changes normals only; terrain weights and collider assignments stay unchanged",
                                icon="INFO")

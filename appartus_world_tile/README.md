@@ -382,9 +382,10 @@ adm/
   follow the preservation rules; enable GPU source conversion to re-encode compatible GPU files.
 * **Export changed** compares a digest of every tile's meshes, vertex weights, material
   (including the complete source texture bytes and mip levels), placement and export settings
-  with `world.json`. Shader-only
+  with `world.json`, including each tile's shared-palette boundary data. Shader-only
   material edits do not rebuild terrain geometry or vertex weights. For newly built tiles, a
-  surface edit marks only tiles that use that surface in at least one LOD. Global shader and
+  surface edit marks only tiles that use that surface in at least one LOD, plus adjacent tiles
+  whose shared palette boundary changes. Global shader and
   export settings can affect every tile. A global GPU encoding change does not mark a tile
   when every texture it uses has a per-map encoding override. Older manifests without surface-use metadata conservatively
   mark all tiles for a material edit. The first export with the per-tile fingerprints also
@@ -397,13 +398,16 @@ adm/
   handling: export checks the selected tile LODs before writing and refuses a tile set if any
   triangle needs more than four surfaces. Choose **Approximate (seam-aware reduction)** only
   when losing some weight is acceptable. It keeps each vertex's dominant surface, reconciles
-  vertex weights across the primitive palettes that use that vertex, and reports the affected
+  weights across incident primitive palettes, matching LOD vertices, and adjacent tile edges,
+  and reports the affected
   triangles, up to 20 examples of dropped surfaces with raw U8 corner weights
   (0 to 255), and mean and maximum total-variation error. The report suggests
   reducing overlapping weights or painting fewer active surfaces with
   **Surface** on the **Map** tab. This guarantees matching effective
-  weights at shared vertices within each tile LOD; it does not claim exact representation of
-  omitted surfaces or continuity across independently sampled tile/LOD boundaries. Projects
+  weights at coincident exported positions; the exporter may drop additional non-dominant
+  weights to keep those values identical. It does not claim exact representation of omitted
+  surfaces. A selected export also writes adjacent tiles when their shared palette boundary
+  changes. Projects
   from versions 2–6 that do not store a palette policy load as **Approximate** to preserve their
   previous export behavior. Saving writes project format version 14 with the selected policy.
   Exported terrain materials use `ADM_terrain_surface_v1` to map local layer slots to those stable

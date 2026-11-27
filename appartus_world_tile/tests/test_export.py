@@ -3,6 +3,7 @@ import io
 import os
 import struct
 import tempfile
+import time
 import unittest
 import zlib
 from pathlib import Path
@@ -13,7 +14,8 @@ from PIL import Image
 
 from awt.adm_export import (INDEX_NAME, ExportSettings, _core, _palette_conflict_details, changed_tiles, color1,
                             export_tiles, group_masks, prepare_adm_texture, rules_outdated,
-                            seam_consistent_weights, triangle_masks)
+                            seam_consistent_weights, triangle_masks,
+                            _shared_lod_palette_masks, _world_vertex_key)
 from awt.material import (Band, Biome, BiomeSurface, MacroColorSettings, MacroNormalSettings, MapSlot,
                           PhysicalMaterial, Surface, TerrainMaterial, prepare_texture)
 from awt.pipeline import BuildParams, build, load_manifest
@@ -35,6 +37,201 @@ def _accessor(doc, chunks, index):
     from adm_blender.core.buffers import read_accessor_np
 
     return np.asarray(read_accessor_np(doc, chunks, index))
+
+
+def _spatial_region_palette_metrics(manifest, region_m):
+    started = time.perf_counter()
+    tile_records = []
+    boundary_supports = {}
+    palette_count = 0
+    for tile in manifest["tiles"]:
+        lod_records = []
+        tile_palettes = set()
+        for lod in tile["lods"]:
+            vertices, faces = read_ply(os.path.join(manifest["_dir"], lod["file"]))
+            fields = weight_fields(vertices)
+            weights = np.column_stack([vertices[name] for name in fields]).astype(np.uint8)
+            vertex_xy = np.column_stack((vertices["x"], vertices["y"]))
+            centroids = vertex_xy[faces].mean(axis=1)
+            regions = np.floor(centroids / region_m).astype(np.int64)
+            face_palettes = np.empty(len(faces), dtype=np.uint64)
+            for region in np.unique(regions, axis=0):
+                selected_faces = np.flatnonzero(np.all(regions == region, axis=1))
+                totals = weights[faces[selected_faces]].astype(np.uint64).sum(axis=(0, 1))
+                selected_surfaces = sorted(range(len(fields)), key=lambda index: (-int(totals[index]), index))[:4]
+                palette = sum(1 << index for index in selected_surfaces)
+                face_palettes[selected_faces] = palette
+                tile_palettes.add(palette)
+            lod_records.append((vertices, faces, weights, face_palettes))
+        palette_count += len(tile_palettes)
+        supports = _shared_lod_palette_masks(
+            [lod[0] for lod in lod_records],
+            [lod[1] for lod in lod_records],
+            [lod[3] for lod in lod_records])
+        for (vertices, _faces, _weights, _palettes), allowed in zip(lod_records, supports):
+            width, height = tile["size_m"]
+            edge = (
+                np.isclose(vertices["x"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["x"], width, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], height, atol=1e-4, rtol=0.0)
+            )
+            for vertex_index in np.flatnonzero(edge):
+                key = _world_vertex_key(
+                    tile, float(vertices["x"][vertex_index]), float(vertices["y"][vertex_index]))
+                boundary_supports[key] = (
+                    boundary_supports.get(key, np.uint64(np.iinfo(np.uint64).max))
+                    & allowed[vertex_index])
+        tile_records.append((tile, lod_records, supports))
+
+    mean_error_sum = 0.0
+    affected_vertices = 0
+    maximum_error = 0.0
+    dominant_samples = 0
+    dominant_preserved = 0
+    zero_support_vertices = 0
+    position_weights = {}
+    maximum_boundary_error = 0.0
+    boundary_comparisons = 0
+    render_records = {}
+    for tile, lod_records, supports in tile_records:
+        width, height = tile["size_m"]
+        tile_render_records = []
+        for (vertices, _faces, weights, _palettes), allowed in zip(lod_records, supports):
+            allowed = allowed.copy()
+            edge = (
+                np.isclose(vertices["x"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["x"], width, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], height, atol=1e-4, rtol=0.0)
+            )
+            for vertex_index in np.flatnonzero(edge):
+                key = _world_vertex_key(
+                    tile, float(vertices["x"][vertex_index]), float(vertices["y"][vertex_index]))
+                allowed[vertex_index] &= boundary_supports[key]
+            channels = np.left_shift(np.uint64(1), np.arange(weights.shape[1], dtype=np.uint64))
+            retained = np.where((allowed[:, None] & channels[None, :]) != 0, weights, 0)
+            tile_render_records.append((vertices, _faces, retained))
+            totals = weights.astype(np.uint64).sum(axis=1)
+            kept = retained.astype(np.uint64).sum(axis=1)
+            errors = np.divide(totals - kept, totals, out=np.zeros(len(weights), float), where=totals > 0)
+            affected = errors > 0
+            affected_vertices += int(np.count_nonzero(affected))
+            mean_error_sum += float(errors[affected].sum())
+            maximum_error = max(maximum_error, float(errors.max(initial=0.0)))
+            dominant = np.argmax(weights, axis=1)
+            dominant_samples += len(weights)
+            dominant_preserved += int(np.count_nonzero((allowed & channels[dominant]) != 0))
+            zero_support_vertices += int(np.count_nonzero(allowed == 0))
+            for vertex_index in range(len(vertices)):
+                total = int(kept[vertex_index])
+                values = (retained[vertex_index] / total) if total else np.zeros(weights.shape[1])
+                world = (
+                    round(float(tile["origin_m"][0] + vertices["x"][vertex_index]), 5),
+                    round(float(-tile["origin_m"][1] - vertices["y"][vertex_index]), 5),
+                )
+                previous = position_weights.setdefault(world, [])
+                for other in previous:
+                    variation = 0.5 * float(np.abs(other - values).sum())
+                    maximum_boundary_error = max(maximum_boundary_error, variation)
+                    boundary_comparisons += 1
+                previous.append(values)
+        render_records[tile["id"]] = tile_render_records
+    metrics = {
+        "region_m": region_m,
+        "palette_count": palette_count,
+        "affected_vertex_mean_tv_error": mean_error_sum / affected_vertices if affected_vertices else 0.0,
+        "affected_vertex_max_tv_error": maximum_error,
+        "dominant_surface_preservation": f"{dominant_preserved}/{dominant_samples}",
+        "zero_support_vertices": zero_support_vertices,
+        "boundary_comparisons": boundary_comparisons,
+        "max_boundary_tv_error": maximum_boundary_error,
+        "evaluation_seconds": time.perf_counter() - started,
+    }
+    return metrics, render_records
+
+
+def _render_palette_weights(vertices, faces, weights, surface_colors):
+    import pyvista as pv
+
+    totals = np.asarray(weights, dtype=np.float64).sum(axis=1, keepdims=True)
+    normalized = np.divide(weights, totals, out=np.zeros_like(weights, dtype=np.float64), where=totals > 0)
+    rgb = np.clip(normalized @ surface_colors, 0, 255).astype(np.uint8)
+    points = np.column_stack((vertices["x"], vertices["y"], np.zeros(len(vertices), dtype=np.float32)))
+    cells = np.column_stack((np.full(len(faces), 3, dtype=np.int64), faces)).reshape(-1)
+    mesh = pv.PolyData(points, cells)
+    mesh.point_data["palette_rgb"] = rgb
+    plotter = pv.Plotter(off_screen=True, window_size=(256, 256))
+    try:
+        plotter.set_background("black")
+        plotter.add_mesh(mesh, scalars="palette_rgb", rgb=True, lighting=False,
+                         show_scalar_bar=False, interpolate_before_map=True)
+        plotter.view_xy()
+        plotter.reset_camera()
+        plotter.camera.zoom(1.05)
+        plotter.show(auto_close=False)
+        return plotter.screenshot(return_img=True)[..., :3].astype(np.int16)
+    finally:
+        plotter.close()
+
+
+def _render_palette_strategy_comparison(manifest, surface_ids, export_dir, tile,
+                                        region_records, lod_index=0):
+    lod = tile["lods"][lod_index]
+    vertices, faces = read_ply(os.path.join(manifest["_dir"], lod["file"]))
+    source_weights = np.column_stack([vertices[name] for name in weight_fields(vertices)])
+    face_weights = np.zeros_like(source_weights, dtype=np.float64)
+    face_weight_counts = np.zeros(len(vertices), dtype=np.uint32)
+    local_indices = {
+        (round(float(vertex["x"]), 5), round(float(vertex["y"]), 5)): index
+        for index, vertex in enumerate(vertices)
+    }
+    doc, chunks = _read_adm(os.path.join(export_dir, tile["id"] + ".adm"))
+    half_width, half_height = (size / 2.0 for size in tile["size_m"])
+    surface_indices = {surface_id: index for index, surface_id in enumerate(surface_ids)}
+    for primitive in doc["meshes"][lod_index]["primitives"]:
+        attributes = primitive["attributes"]
+        positions = _accessor(doc, chunks, attributes["POSITION"])
+        colors = _accessor(doc, chunks, attributes["COLOR_1"])
+        palette_ids = doc["materials"][primitive["material"]]["extensions"][
+            "ADM_terrain_surface_v1"]["surfaceIds"]
+        for position, color in zip(positions, colors):
+            key = (round(float(position[0] + half_width), 5),
+                   round(float(-position[2] + half_height), 5))
+            vertex_index = local_indices[key]
+            for slot, surface_id in enumerate(palette_ids):
+                face_weights[vertex_index, surface_indices[surface_id]] = color[slot]
+            face_weight_counts[vertex_index] += 1
+    if not np.all(face_weight_counts > 0):
+        raise AssertionError("The exported mesh does not reference every source vertex")
+    face_weights /= face_weight_counts[:, None]
+
+    region_vertices, region_faces, region_weights = region_records[tile["id"]][lod_index]
+    if len(region_vertices) != len(vertices) or not np.array_equal(region_faces, faces):
+        raise AssertionError("Spatial-region and face-mask meshes do not match")
+    angles = np.arange(len(surface_ids), dtype=np.float64) * (2.0 * np.pi / len(surface_ids))
+    surface_colors = np.column_stack((
+        128.0 + 100.0 * np.cos(angles),
+        128.0 + 100.0 * np.cos(angles - 2.0 * np.pi / 3.0),
+        128.0 + 100.0 * np.cos(angles + 2.0 * np.pi / 3.0),
+    ))
+    reference_image = _render_palette_weights(vertices, faces, source_weights, surface_colors)
+    images = {
+        "face_mask": _render_palette_weights(vertices, faces, face_weights, surface_colors),
+        "spatial_region": _render_palette_weights(
+            region_vertices, region_faces, region_weights, surface_colors),
+    }
+    visible = np.max(reference_image, axis=2) > 5
+    results = {}
+    for name, image in images.items():
+        errors = np.abs(reference_image[visible] - image[visible])
+        pixel_errors = errors.max(axis=1)
+        results[name] = {
+            "mean_absolute_rgb": float(errors.mean()),
+            "p95_pixel_max_absolute": float(np.percentile(pixel_errors, 95)),
+            "changed_pixel_fraction": float(np.count_nonzero(pixel_errors) / len(pixel_errors)),
+        }
+    return results
 
 
 def _read_rgba16_png(data):
@@ -169,6 +366,64 @@ class ExportTest(unittest.TestCase):
             embedded_doc["textures"][extension_data["texture"]["index"]]["source"]]
         self.assertIn("bufferView", embedded_image)
         self.assertNotIn("uri", embedded_image)
+
+    def test_external_control_map_does_not_change_physical_collider_assignments(self):
+        self.params.collision_max_error_m = 0.8
+        self.params.collision_max_triangles_per_tile = 4096
+        self.material.physical_materials = [
+            PhysicalMaterial("Paint A", 0.6, 0.05, id="test.physical.paint_a"),
+            PhysicalMaterial("Paint B", 0.8, 0.1, id="test.physical.paint_b"),
+        ]
+        self.material.ensure_physical_paint(65, 49)
+        self.material.physical_paint[:, :32] = 0
+        self.material.physical_paint[:, 32:] = 1
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        tile_id = manifest["tiles"][0]["id"]
+
+        baseline_settings = ExportSettings(
+            out_dir=os.path.join(self.tmp.name, "adm-control-baseline"),
+            palette_conflict_policy="APPROXIMATE")
+        export_tiles(manifest, self.material, baseline_settings, "selected", [tile_id])
+        baseline_doc, baseline_chunks = _read_adm(
+            os.path.join(baseline_settings.out_dir, tile_id + ".adm"))
+
+        mask_path = os.path.join(self.tmp.name, "visual-mask.png")
+        mask = np.zeros((8, 8, 4), dtype=np.uint8)
+        mask[..., 0] = 255
+        Image.fromarray(mask).save(mask_path)
+        self.material.external_control_map_path = mask_path
+        self.material.external_control_map_surface_ids = [
+            surface.id for surface in self.material.surfaces[:4]]
+        control_settings = ExportSettings(
+            out_dir=os.path.join(self.tmp.name, "adm-control-map"),
+            palette_conflict_policy="APPROXIMATE", control_map_resolution=16)
+        export_tiles(manifest, self.material, control_settings, "selected", [tile_id])
+        control_doc, control_chunks = _read_adm(
+            os.path.join(control_settings.out_dir, tile_id + ".adm"))
+        self.assertIn("ADM_terrain_control_map_v1", control_doc["extensionsRequired"])
+
+        def collision_snapshot(doc, chunks):
+            mesh = doc["meshes"][doc["colliders"][0]["mesh"]]
+            return [
+                (
+                    _accessor(doc, chunks, primitive["attributes"]["POSITION"]).tolist(),
+                    _accessor(doc, chunks, primitive["indices"]).tolist(),
+                    primitive.get("extensions"),
+                )
+                for primitive in mesh["primitives"]
+            ]
+
+        baseline_ids = {
+            material_id
+            for primitive in collision_snapshot(baseline_doc, baseline_chunks)
+            for material_id in primitive[2]["ADM_physical_surfaces_v1"]["faceMaterials"]
+        }
+        self.assertEqual(baseline_ids, {"test.physical.paint_a", "test.physical.paint_b"})
+        self.assertEqual(
+            collision_snapshot(control_doc, control_chunks),
+            collision_snapshot(baseline_doc, baseline_chunks),
+        )
 
     def test_external_control_map_exports_stable_channels_and_invalidates_changed_masks(self):
         self.params.collision_max_error_m = 0.8
@@ -1189,6 +1444,14 @@ class ExportTest(unittest.TestCase):
         project.params.out_dir = os.path.join(self.tmp.name, "reference_build")
         build(project.params, project.material)
         manifest = load_manifest(project.params.out_dir)
+        region_runs = [
+            _spatial_region_palette_metrics(manifest, region_m)
+            for region_m in (4.0, 8.0, 16.0)
+        ]
+        region_results = [result[0] for result in region_runs]
+        region_render_records = region_runs[1][1]
+        print("REFERENCE_SPATIAL_REGION_BENCHMARK "
+              + json.dumps(region_results, sort_keys=True))
 
         strict_output = os.path.join(self.tmp.name, "reference_strict")
         strict = ExportSettings(out_dir=strict_output, palette_conflict_policy="STRICT")
@@ -1206,6 +1469,17 @@ class ExportTest(unittest.TestCase):
             out_dir=os.path.join(self.tmp.name, "reference_approximate"),
             palette_conflict_policy="APPROXIMATE")
         result = export_tiles(manifest, project.material, approximate, "all")
+        export_time_samples = [result["seconds"]]
+        for repeat in range(2):
+            repeated = export_tiles(
+                manifest, project.material,
+                ExportSettings(
+                    out_dir=os.path.join(self.tmp.name, f"reference_repeat_{repeat}"),
+                    palette_conflict_policy="APPROXIMATE"),
+                "all")
+            self.assertEqual(repeated["bytes"], result["bytes"])
+            self.assertEqual(repeated["conflicts"], result["conflicts"])
+            export_time_samples.append(repeated["seconds"])
         self.assertEqual(result["conflicts"], 54)
         self.assertEqual(result["conflicts_by_lod"], {0: 18, 1: 18, 2: 18})
         self.assertEqual(result["conflicts_by_tile_lod"], {"x000_y001": {0: 18, 1: 18, 2: 18}})
@@ -1222,11 +1496,13 @@ class ExportTest(unittest.TestCase):
         self.assertLess(result["max_reduction_error"], 0.05)
 
         by_world_position = {}
+        face_mask_palette_count = 0
         boundary_comparisons = 0
         cross_tile_or_lod_comparisons = 0
         max_boundary_error = 0.0
         for tile in manifest["tiles"]:
             doc, chunks = _read_adm(os.path.join(approximate.out_dir, tile["id"] + ".adm"))
+            face_mask_palette_count += len(doc["materials"])
             translation = np.asarray(doc["nodes"][0]["translation"])
             for lod_index, lod in enumerate(doc["meshes"]):
                 by_position = {}
@@ -1254,6 +1530,223 @@ class ExportTest(unittest.TestCase):
         self.assertGreater(boundary_comparisons, 0)
         self.assertGreater(cross_tile_or_lod_comparisons, 0)
         self.assertLessEqual(max_boundary_error, 0.01)
+        render_tile = next(tile for tile in manifest["tiles"] if tile["id"] == "x000_y001")
+        rendered_errors = _render_palette_strategy_comparison(
+            manifest,
+            [project.material.surface(name).id for name in manifest["texturing"]["surfaces"]],
+            approximate.out_dir,
+            render_tile,
+            region_render_records,
+        )
+        print("REFERENCE_PALETTE_STRATEGY_COMPARISON " + json.dumps({
+            "face_mask": {
+                "palette_count": face_mask_palette_count,
+                "affected_vertex_mean_tv_error": result["mean_reduction_error"],
+                "affected_vertex_max_tv_error": result["max_reduction_error"],
+                "export_bytes": result["bytes"],
+                "export_seconds_samples": export_time_samples,
+                "export_seconds_median": float(np.median(export_time_samples)),
+            },
+            "spatial_regions": region_results,
+            "albedo_proxy_render": rendered_errors,
+            "max_exported_boundary_tv_error": max_boundary_error,
+            "boundary_comparisons": boundary_comparisons,
+        }, sort_keys=True))
+        self.assertGreater(rendered_errors["spatial_region"]["mean_absolute_rgb"], 0.0)
+        self.assertGreater(rendered_errors["face_mask"]["mean_absolute_rgb"], 0.0)
+
+    def test_palette_metrics_on_noisy_irregular_multibiome_fixture(self):
+        project_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "reference_project", "advanced_reference.awtp"))
+        project = load_project(project_path)
+        height_path = os.path.join(self.tmp.name, "palette_fixture.npy")
+        y, x = np.indices((182, 214), dtype=np.float32)
+        height = (-8.0 + 1.2 * x + 0.25 * y
+                  + 9.0 * np.sin(x / 8.0) * np.cos(y / 11.0))
+        np.save(height_path, height.astype(np.float32))
+        shared_surfaces = ["dirt", "sand", "rock"]
+        project.material.biomes = [
+            Biome("benchmark lowland", surfaces=[
+                BiomeSurface("grass"),
+                *(BiomeSurface(name) for name in shared_surfaces),
+            ], noise=1.0),
+            Biome("benchmark highland", height=Band(min=100.0), surfaces=[
+                BiomeSurface("cobblestone"),
+                *(BiomeSurface(name) for name in shared_surfaces),
+            ], noise=1.0),
+        ]
+        project.params.input_path = height_path
+        project.params.out_dir = os.path.join(self.tmp.name, "palette_fixture_build")
+        project.params.tile_cells = 64
+        project.params.max_errors_m = [0.6, 2.0]
+        project.params.spacing_m = 2.0
+        build(project.params, project.material)
+        manifest = load_manifest(project.params.out_dir)
+        tile_size = float(manifest["tile_size_m"])
+        irregular_tiles = [
+            tile for tile in manifest["tiles"]
+            if tile["size_m"][0] < tile_size or tile["size_m"][1] < tile_size
+        ]
+        self.assertTrue(irregular_tiles)
+        self.assertTrue(any(biome.noise > 0 for biome in project.material.biomes))
+        self.assertEqual(len(manifest["tiles"]), 12)
+        self.assertEqual(len(irregular_tiles), 6)
+        self.assertEqual(len(manifest["lods"]), 2)
+        region_results = [
+            _spatial_region_palette_metrics(manifest, region_m)
+            for region_m in (4.0, 8.0, 16.0)
+        ]
+        region_metrics = [result[0] for result in region_results]
+        region_render_records = region_results[1][1]
+        print("SPATIAL_REGION_BENCHMARK " + json.dumps(region_metrics, sort_keys=True))
+
+        settings = ExportSettings(
+            out_dir=os.path.join(self.tmp.name, "palette_fixture_export"),
+            palette_conflict_policy="APPROXIMATE")
+        result = export_tiles(manifest, project.material, settings, "all")
+        export_time_samples = [result["seconds"]]
+        for repeat in range(2):
+            repeated = export_tiles(
+                manifest, project.material,
+                ExportSettings(
+                    out_dir=os.path.join(self.tmp.name, f"palette_fixture_repeat_{repeat}"),
+                    palette_conflict_policy="APPROXIMATE"),
+                "all")
+            self.assertEqual(repeated["bytes"], result["bytes"])
+            self.assertEqual(repeated["conflicts"], result["conflicts"])
+            export_time_samples.append(repeated["seconds"])
+        palette_count = 0
+        exported_ids = set()
+        dominant_samples = 0
+        dominant_preserved = 0
+        by_world_position = {}
+        boundary_comparisons = 0
+        cross_tile_or_lod_comparisons = 0
+        boundary_error_by_scope = {
+            "same_tile_lod": 0.0,
+            "cross_lod": 0.0,
+            "cross_tile": 0.0,
+            "cross_tile_lod": 0.0,
+        }
+        source_ids = [project.material.surface(name).id for name in manifest["texturing"]["surfaces"]]
+        for tile in manifest["tiles"]:
+            doc, _chunks = _read_adm(os.path.join(settings.out_dir, tile["id"] + ".adm"))
+            palette_count += len(doc["materials"])
+            for material in doc["materials"]:
+                exported_ids.update(material["extensions"]["ADM_terrain_surface_v1"]["surfaceIds"])
+            half_width, half_height = (size / 2.0 for size in tile["size_m"])
+            for lod_index, lod in enumerate(tile["lods"]):
+                source_vertices, _source_faces = read_ply(os.path.join(manifest["_dir"], lod["file"]))
+                source_fields = weight_fields(source_vertices)
+                source_weights = np.column_stack([source_vertices[name] for name in source_fields])
+                source_dominants = {
+                    (round(float(vertex["x"]), 5), round(float(vertex["y"]), 5)): source_ids[
+                        int(np.argmax(source_weights[index]))]
+                    for index, vertex in enumerate(source_vertices)
+                }
+                for primitive in doc["meshes"][lod_index]["primitives"]:
+                    attributes = primitive["attributes"]
+                    positions = _accessor(doc, _chunks, attributes["POSITION"])
+                    colors = _accessor(doc, _chunks, attributes["COLOR_1"])
+                    palette_ids = doc["materials"][primitive["material"]]["extensions"][
+                        "ADM_terrain_surface_v1"]["surfaceIds"]
+                    for position, weights in zip(positions, colors):
+                        key = (round(float(position[0] + half_width), 5),
+                               round(float(-position[2] + half_height), 5))
+                        self.assertIn(key, source_dominants)
+                        source_id = source_dominants[key]
+                        emitted_id = palette_ids[int(np.argmax(weights))]
+                        dominant_samples += 1
+                        dominant_preserved += emitted_id == source_id
+                        world = (round(float(tile["origin_m"][0] + position[0] + half_width), 5),
+                                 round(float(position[2] - tile["origin_m"][1] - half_height), 5))
+                        values = {surface_id: float(weights[index])
+                                  for index, surface_id in enumerate(palette_ids)}
+                        previous_samples = by_world_position.setdefault(world, [])
+                        for previous in previous_samples:
+                            surface_ids = set(previous[2]) | set(values)
+                            total_variation = 0.5 * sum(
+                                abs(previous[2].get(surface_id, 0.0) - values.get(surface_id, 0.0))
+                                for surface_id in surface_ids)
+                            if previous[0] == tile["id"] and previous[1] == lod_index:
+                                scope = "same_tile_lod"
+                            elif previous[0] == tile["id"]:
+                                scope = "cross_lod"
+                            elif previous[1] == lod_index:
+                                scope = "cross_tile"
+                            else:
+                                scope = "cross_tile_lod"
+                            boundary_error_by_scope[scope] = max(
+                                boundary_error_by_scope[scope], total_variation)
+                            boundary_comparisons += 1
+                            if previous[0] != tile["id"] or previous[1] != lod_index:
+                                cross_tile_or_lod_comparisons += 1
+                        previous_samples.append((tile["id"], lod_index, values))
+        known_ids = {surface.id for surface in project.material.surfaces}
+        self.assertEqual(exported_ids, known_ids)
+        self.assertGreater(result["conflicts"], 0)
+        self.assertGreater(dominant_samples, 0)
+        self.assertEqual(dominant_preserved, dominant_samples)
+        self.assertGreater(boundary_comparisons, 0)
+        self.assertGreater(cross_tile_or_lod_comparisons, 0)
+        self.assertLessEqual(max(boundary_error_by_scope.values()), 0.01)
+        self.assertGreater(result["bytes"], 0)
+        self.assertGreater(result["seconds"], 0)
+        self.assertGreater(palette_count, 0)
+        metrics = {
+            "tiles": len(manifest["tiles"]),
+            "irregular_tiles": len(irregular_tiles),
+            "lods": len(manifest["lods"]),
+            "noise_biomes": sum(biome.noise > 0 for biome in project.material.biomes),
+            "palette_count": palette_count,
+            "surface_identity_count": len(exported_ids),
+            "dominant_surface_preservation": f"{dominant_preserved}/{dominant_samples}",
+            "boundary_comparisons": boundary_comparisons,
+            "cross_tile_or_lod_comparisons": cross_tile_or_lod_comparisons,
+            "max_boundary_tv_error_by_scope": boundary_error_by_scope,
+            "conflicts": result["conflicts"],
+            "mean_tv_error": result["mean_reduction_error"],
+            "max_tv_error": result["max_reduction_error"],
+            "export_bytes": result["bytes"],
+            "export_seconds_samples": export_time_samples,
+            "export_seconds_median": float(np.median(export_time_samples)),
+        }
+        print("PALETTE_BENCHMARK " + json.dumps(metrics, sort_keys=True))
+        render_tile = manifest["tiles"][0]
+        rendered_errors = _render_palette_strategy_comparison(
+            manifest, source_ids, settings.out_dir, render_tile, region_render_records)
+        print("PALETTE_RENDER_BENCHMARK " + json.dumps(rendered_errors, sort_keys=True))
+        self.assertGreater(rendered_errors["spatial_region"]["mean_absolute_rgb"], 0.0)
+        self.assertGreater(rendered_errors["face_mask"]["mean_absolute_rgb"], 0.0)
+        selected_tile = manifest["tiles"][0]
+        selected_result = export_tiles(
+            manifest, project.material,
+            ExportSettings(
+                out_dir=os.path.join(self.tmp.name, "palette_fixture_selected"),
+                palette_conflict_policy="APPROXIMATE"),
+            "selected", [selected_tile["id"]])
+        selected_neighbors = {
+            tile["id"] for tile in manifest["tiles"]
+            if abs(tile["ix"] - selected_tile["ix"]) <= 1
+            and abs(tile["iy"] - selected_tile["iy"]) <= 1
+        }
+        self.assertTrue(selected_neighbors.issubset(set(selected_result["written"])))
+        self.assertTrue(any("adjacent tile(s)" in warning for warning in selected_result["warnings"]))
+        index_path = os.path.join(selected_result["out_dir"], INDEX_NAME)
+        with open(index_path, encoding="utf-8") as handle:
+            index = json.load(handle)
+        index["format_version"] = 8
+        with open(index_path, "w", encoding="utf-8") as handle:
+            json.dump(index, handle)
+        migrated_result = export_tiles(
+            manifest, project.material,
+            ExportSettings(
+                out_dir=selected_result["out_dir"],
+                palette_conflict_policy="APPROXIMATE"),
+            "selected", [selected_tile["id"]])
+        self.assertEqual(set(migrated_result["written"]), {tile["id"] for tile in manifest["tiles"]})
+        self.assertTrue(any("new shared-palette boundary format" in warning
+                            for warning in migrated_result["warnings"]))
 
     def test_height_blending_is_independent_of_primitive_slot_order(self):
         from adm_blender.core.material_math import height_blend_weights
@@ -1301,7 +1794,8 @@ class ExportTest(unittest.TestCase):
         os.remove(os.path.join(self.settings.out_dir, "x000_y000.adm"))
         self.assertIn("x000_y000", changed_tiles(manifest, self.material, self.settings))
         result = export_tiles(manifest, self.material, self.settings, "selected", ["x000_y000"])
-        self.assertEqual(result["written"], ["x000_y000"])
+        self.assertEqual(result["written"], ["x000_y000", "x001_y001"])
+        self.assertTrue(any("shared palette boundary changed" in warning for warning in result["warnings"]))
         with open(os.path.join(self.settings.out_dir, INDEX_NAME), encoding="utf-8") as handle:
             self.assertEqual(len(json.load(handle)["tiles"]), len(manifest["tiles"]))
 

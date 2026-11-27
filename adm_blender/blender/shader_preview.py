@@ -909,20 +909,19 @@ def _macro_normal_frame(g, data):
     normal = g.vmath("NORMALIZE", geometry.outputs["Normal"])
     if data["projection"] == "LOCAL_UV":
         uv_map = g.uv_map_name(data["tex_coord"])
-        tangent = _normal_map_basis(g, uv_map, (1.0, 0.0, 0.0))
-        bitangent = _normal_map_basis(g, uv_map, (0.0, 1.0, 0.0))
         if data["scale"][0] == 0.0:
             tangent = _macro_fallback_tangent(g, normal)
-        else:
-            tangent = g.vmath("SCALE", tangent)
-            tangent_sign = -1.0 if data["scale"][0] < 0.0 else 1.0
-            g.link(tangent_sign, tangent.node.inputs["Scale"])
-        if data["scale"][1] == 0.0:
             bitangent = g.vmath("CROSS_PRODUCT", normal, tangent)
         else:
-            bitangent = g.vmath("SCALE", bitangent)
-            bitangent_sign = -1.0 if data["scale"][1] < 0.0 else 1.0
-            g.link(bitangent_sign, bitangent.node.inputs["Scale"])
+            tangent = g.vmath("SCALE", _normal_map_basis(g, uv_map, (1.0, 0.0, 0.0)))
+            tangent_sign = -1.0 if data["scale"][0] < 0.0 else 1.0
+            g.link(tangent_sign, tangent.node.inputs["Scale"])
+            if data["scale"][1] == 0.0:
+                bitangent = g.vmath("CROSS_PRODUCT", normal, tangent)
+            else:
+                bitangent = g.vmath("SCALE", _normal_map_basis(g, uv_map, (0.0, 1.0, 0.0)))
+                bitangent_sign = -1.0 if data["scale"][1] < 0.0 else 1.0
+                g.link(bitangent_sign, bitangent.node.inputs["Scale"])
         return (g.vmath("NORMALIZE", tangent),
                 g.vmath("NORMALIZE", bitangent), normal)
 

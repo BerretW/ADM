@@ -3,6 +3,7 @@
 Builds every profile preview with all parameters overridden, checks the exported PBR fallback is
 unaffected, and bakes Brick / Terrain with Cycles to verify the node math against the contracts.
 """
+import json
 import math
 import os
 import sys
@@ -19,6 +20,9 @@ import adm_blender
 
 FAILS = []
 RES = 16
+with open(os.path.join(REPO, "adm-standard", "fixtures", "expectations",
+                       "terrain_control_map_filtering_v1.json"), encoding="utf-8") as handle:
+    CONTROL_MAP_FILTERING = json.load(handle)
 
 
 def check(condition, message):
@@ -279,16 +283,28 @@ def main():
     plane.location.x = 0.0
     control_mat.adm.control_map_mode = "TEXTURE_RGBA"
     control_mat.adm.control_map_mapping = "UV"
-    control_mat.adm.control_map_scale = (8.0, 8.0)
+    control_mat.adm.control_map_scale = CONTROL_MAP_FILTERING["uvScale"]
     control_mat.adm.control_map_offset = (0.0, 0.0)
-    control_mat.adm.control_map_image = image(
-        "control_map_minified_checker",
-        lambda x, y: (1.0, 0.0, 0.0, 0.0) if (x + y) % 2 else (0.0, 1.0, 0.0, 0.0),
-    )
+    filtering_width = CONTROL_MAP_FILTERING["width"]
+    filtering_height = CONTROL_MAP_FILTERING["height"]
+    checker_y, checker_x = np.indices((filtering_height, filtering_width))
+    red = ((checker_x + checker_y) % 2).astype(np.float32)
+    filtering_pixels = np.zeros((filtering_height, filtering_width, 4), dtype=np.float32)
+    filtering_pixels[..., 0] = red
+    filtering_pixels[..., 1] = 1.0 - red
+    filtering_image = bpy.data.images.new(
+        "control_map_minified_checker", filtering_width, filtering_height,
+        alpha=True, float_buffer=True)
+    filtering_image.colorspace_settings.name = "Non-Color"
+    filtering_image.pixels.foreach_set(filtering_pixels.ravel())
+    filtering_image.update()
+    filtering_image.pack()
+    control_mat.adm.control_map_image = filtering_image
     M.refresh_shader_preview(control_mat)
     bsdf = preview_bsdf(control_mat, M)
     minified = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
-    check(close(minified, (0.5, 0.5, 0.0), tol=0.08),
+    check(close(minified, CONTROL_MAP_FILTERING["expectedLinearAverage"][:3],
+                tol=CONTROL_MAP_FILTERING["tolerance"]),
           f"TERRAIN_4: minified linear Control Map resolves to averaged weights ({minified})")
 
     control_mat.adm.control_map_mapping = "WORLD_PLANAR_XZ"
@@ -874,6 +890,41 @@ def main():
         plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
     check(close(mirrored_normal, (-0.25, 0.0, math.sqrt(0.9375))),
           f"TERRAIN_4: mirrored UV handedness follows the tangent frame ({mirrored_normal})")
+    for macro_scale, expected_x in (((0.0, 1.0), 0.25), ((1.0, 0.0), -0.25)):
+        mat.adm.macro_normal_scale = macro_scale
+        M.refresh_shader_preview(mat)
+        bsdf = preview_bsdf(mat, M)
+        scaled_degenerate = bake_socket(
+            plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
+        expected = (expected_x, 0.0, math.sqrt(0.9375))
+        check(close(scaled_degenerate, expected),
+              f"TERRAIN_4: zero Macro Normal scale component uses fallback frame {macro_scale}")
+    mat.adm.macro_normal_scale = (1.0, 1.0)
+    for uv in uv1.data:
+        uv.uv = (0.5, 0.5)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    degenerate_uv = bake_socket(
+        plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
+    check(close(degenerate_uv, (0.25, 0.0, math.sqrt(0.9375))),
+          f"TERRAIN_4: degenerate UV derivatives use deterministic fallback ({degenerate_uv})")
+    plane.rotation_euler = (math.radians(90.0), 0.0, 0.0)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    rotated_degenerate_uv = bake_socket(
+        plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
+    rotated_frame = terrain_macro_normal_frame(
+        (0.0, -1.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    expected_rotated_degenerate = terrain_macro_normal(
+        (None, None, None, None), (0.0, 1.0, 0.0, 0.0),
+        macro_normal_sample[:2], 0.5, (1.0, 1.0, 1.0, 1.0))
+    expected_rotated_degenerate_world = tuple(
+        sum(axis[i] * component for axis, component in
+            zip(rotated_frame, expected_rotated_degenerate)) for i in range(3))
+    check(close(rotated_degenerate_uv, expected_rotated_degenerate_world),
+          f"TERRAIN_4: rotated degenerate UV uses reference fallback "
+          f"({rotated_degenerate_uv}, expected {expected_rotated_degenerate_world})")
+    plane.rotation_euler = original_rotation
     mat.adm.macro_normal_enabled = False
 
     # Terrain scalar maps use their own UV set, layer tiling and normalized layer weights.

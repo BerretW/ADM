@@ -44,11 +44,13 @@
       ],
       "expectations": [
         "adm-standard/fixtures/expectations/shader_masks_v2.json",
+        "adm-standard/fixtures/expectations/terrain_control_map_filtering_v1.json",
         "adm-standard/fixtures/expectations/terrain_macro_color_v1.json",
         "adm-standard/fixtures/expectations/terrain_macro_normal_v1.json"
       ],
       "referenceTests": [
         "adm-standard/tools/test_shader_vertex_masks.py",
+        "adm-standard/tools/test_terrain_control_maps.py",
         "adm-standard/tools/test_terrain_macro_color.py",
         "adm-standard/tools/test_terrain_macro_normal.py",
         "adm_blender/tests/test_shader_math.py",
@@ -60,6 +62,7 @@
       ],
       "verifiedChecks": [
         "The mask expectation file provides reference vectors for registered COLOR_1 profiles.",
+        "World Tile VTK and Blender Cycles consume one shared minified Control Map checker fixture and compare its linear 0.5/0.5 average.",
         "Independent Macro Color vectors cover sRGB decoding, all three blend modes, per-layer influence, and local/shared coordinates.",
         "The ADM validator checks Macro Color profile compatibility, stable IDs, sampler settings, image channels, and GPU color space.",
         "Independent Macro Normal vectors cover BC5 reconstruction, RNM, per-layer influence, tangent frames, and local/shared coordinates.",
@@ -71,7 +74,8 @@
       "notTested": [
         "A single measured material fixture covering every listed PBR, COLOR_0, tint and emission behavior.",
         "A second independent renderer bake and cross-reader visual golden image.",
-        "Rendered Macro Normal output, portable-fallback equivalence, and filtered cross-tile mip/border continuity."
+        "Rendered Macro Normal output, portable-fallback equivalence, and filtered cross-tile mip/border continuity.",
+        "Direct pixel-by-pixel filtering output comparison between World Tile VTK and Blender Cycles."
       ],
       "requiredFixtureData": [
         "Materials covering PBR, COLOR_0 tint, COLOR_1 masks, emission and portable fallbacks."

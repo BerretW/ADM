@@ -26,9 +26,11 @@ M1 and M3 are complete. M2 and M4–M13 remain in progress. Global terrain
 surface identity is separate from local material slots through persistent World Tile surface IDs
 and optional `ADM_terrain_surface_v1` mappings. Strict and approximate palette
 policies include bounded conflict details and repair suggestions. M2 remains
-open pending broader palette-strategy comparisons. Its Control Map boundary is
-now recorded: texture weights remove dependence on vertex density, but retain
-four local layer slots and do not claim exact five-plus-surface representation.
+open pending broader palette-strategy comparisons. The exporter now
+reconciles coincident tile/LOD vertex palettes and fingerprints shared seam
+inputs. Its Control Map boundary is now recorded: texture weights remove
+dependence on vertex density, but retain four local layer slots and do not
+claim exact five-plus-surface representation.
 M3 now has an additive,
 machine-readable physical type/subtype/tag registry and Blender authoring,
 validation, fallback lookup, and import/export/save-reload support. Existing
@@ -228,7 +230,7 @@ update them as implementation evidence becomes available.
   paint overrides the automatic mapping and unlinked surfaces remain unassigned.
   The manifest records dominant surfaces per collision tile for selective
   physical fingerprinting. AWTP is v11, presets are v6, the collision manifest is
-  v4, and the Export Changed index is v8.
+  v4, and the Export Changed index is v9.
 - 2026-11-27: World Tile focused regression suites passed 139 tests with five
   existing PyVista future warnings. A generated tile containing automatic,
   manual-override, and unassigned collision faces passed Blender 5.2.3 import,
@@ -270,7 +272,11 @@ update them as implementation evidence becomes available.
   option. The root check-only matrix was not rerun for this World Tile change.
 
 ## Blockers
-None established. Do not treat unavailable platforms or unrun tests as passes.
+Blender's current terrain preview has no POM implementation and does not expose
+explicit mip-level selection, so Blender-side verification of per-layer
+parallax ordering and explicit mip choice is blocked. This does not block
+independent Control Map, contract, validation, or other material-technology
+work. Do not treat unavailable platforms or unrun tests as passes.
 
 ## Continuation from the external audit
 - Working baseline: `531188310beb9d307e09cb43cd1380653debd583`, the user-
@@ -279,12 +285,15 @@ None established. Do not treat unavailable platforms or unrun tests as passes.
 - Added the normative `ADM_terrain_control_map_v1@1.0.0` contract, reference
   weight and coordinate math, golden vectors, and validator coverage.
 - Added the material feature compatibility matrix. World Tile Control Map
-  external-mask authoring, blended diagnostics and seam evidence remain open.
-  Blender now preserves, authors and previews Control Maps, but filtered
-  sampling, mip/border continuity and complete mode conformance remain open.
-- Control Map physical classification is not integrated. Existing collision
-  assignments remain based on authored camera-independent weights and stable
-  physical links, independent of final shader output.
+  external-mask authoring, source-rule and external-mask seam evidence are
+  implemented; shader-composed final-weight diagnostics remain open. Blender
+  preserves, authors and previews Control Maps, but filtered sampling,
+  mip/border continuity and complete mode conformance remain open.
+- Control Maps intentionally do not feed physical classification. A focused
+  export regression changes every external visual mask sample to one surface
+  and confirms independently painted two-ID collision assignments and geometry
+  remain unchanged. Collision assignments remain based on authored,
+  camera-independent weights and stable physical links.
 - No release build or package was created. Continue M2's broader strategy
   comparisons and M4 onward; do not treat the initial Control Map contract as
   mission completion.
@@ -323,12 +332,19 @@ authors/exports the required extension, preserves settings through `.blend`
 save/reload, and previews local/shared sampling with RNM for aligned tangent
 frames; Cycles pixel tests match the independent vector and confirm unchanged
 terrain weights. The preview also transforms a UV1 layer normal through the
-shared Macro Normal frame and matches a rotated-surface frame vector. Blender
-still rejects required Macro Normal on import because mirrored/degenerate UV
-frame handling and BC5/fallback round-trip conformance remain incomplete.
-Filtered mip/gutter behavior, adjacent-tile continuity, portable-fallback
-equivalence, cross-reader parity, and full Blender import/render conformance
-remain open. Macro Normal does not participate in physical classification.
+shared Macro Normal frame and matches a rotated-surface frame vector. New Cycles
+tests verify mirrored UV handedness, zero scale components, and degenerate UV
+fallback on aligned and rotated surfaces. The near-world-X degenerate fallback
+still differs from the normative frame, so required `LOCAL_UV` import remains
+rejected before scene mutation; required shared-world import is enabled.
+Shared-world BC5 import/export preserves exact primary bytes and reconstructed
+RGB fallback pixels. Filtered mip/gutter behavior, adjacent-tile continuity,
+and cross-reader parity remain open in Blender. World Tile now renders a
+shared-world Macro Normal map across adjacent tile actors at magnified and
+minified views; the shared edge meets the same median and 95th-percentile
+thresholds used by Macro Color. Filtered mip/gutter behavior, portable fallback
+equivalence, and cross-reader parity remain open. Macro Normal does not
+participate in physical classification.
 
 World Tile now integrates Control Maps with an opt-in export resolution, AWTP
 v13 persistence, CLI, export-change fingerprints, and its Detailed material
@@ -482,6 +498,41 @@ coordinates. It does not expose a mip-level diagnostic, so exact mip selection
 and cross-reader sampling parity remain open. The Blender terrain preview does
 not implement POM, so parallax ordering cannot yet be rendered against an
 active parallax effect. No release build or package was produced.
+
+The M2 palette stress fixture now covers 12 tiles (six irregular edges), two
+LODs, noisy biome transitions, and 2,870 over-capacity triangles. Global
+shared-palette intersections preserve all 10,901 emitted dominant-surface
+samples and reduce measured decoded-weight total variation to 7.16% mean and
+65.10% maximum on affected vertices; matching positions across tile/LOD
+boundaries agree exactly in 8,961 comparisons. Export Changed records a seam
+digest and updates adjacent tiles only when their shared palette boundary
+changes; the internal export index is now v9.
+
+The face-mask strategy and 4/8/16 m spatial-region candidates have now been
+compared on both the rebuilt reference project and the noisy stress asset.
+Face-mask export uses 9 palettes on the reference and 34 on the stress asset.
+On the stress fixture it preserves every emitted dominant ID; the region
+candidate reduces palette count to 27–32 but drops some dominant IDs and has
+higher mean/max weight error. The reference candidate uses 16–17 palettes
+versus 9 and also has higher weight error. An albedo-only VTK vertex-RGB proxy
+render measures pixel differences on both assets; it is not the layered
+terrain shader and does not include height blending, normal maps, or parallax.
+Full-shader comparison and repeated export-cost measurements remain open.
+
+The focused comparison passes 2 tests, and the complete World Tile export test
+module passes 61 tests. A PyVista `DataObject` deallocator exception appears
+after the successful test summary during interpreter shutdown. Physical
+collider classification remains independent of Control Maps and view-dependent
+shader effects; no release build or package was produced.
+
+Control Map minification now checks the same linear 0.5/0.5 red/green average
+in World Tile VTK and Blender Cycles. Blender renders 0.499744/0.500256; the
+World Tile test decodes its sRGB framebuffer before comparing against the
+linear vector. These are separate render fixtures, so same-asset cross-reader
+filter parity remains open. Blender's current preview also lacks POM and does
+not expose explicit mip-level selection; per-layer parallax ordering and
+explicit mip-selection evidence are blocked until a supported preview path is
+available.
 
 The World Tile shared-world Macro Color seam regression initially measured an
 81/255 median edge jump. Each tile is a separate preview actor, so the preview

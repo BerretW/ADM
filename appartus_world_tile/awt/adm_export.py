@@ -39,7 +39,7 @@ from .texturing import (compile_rules, load_external_control_map, rasterize_cont
 
 INDEX_NAME = "world.json"
 INDEX_FORMAT = "apparatus-world-tile-export"
-INDEX_VERSION = 8
+INDEX_VERSION = 9
 TEXTURE_DIR = "textures"
 GENERATOR = f"Apparatus World Tile {__version__} (ADM 1.0)"
 MODES = ("changed", "selected", "all")
@@ -450,7 +450,8 @@ def rules_outdated(manifest: dict, material: TerrainMaterial) -> bool:
 
 # ----------------------------------------------------------------------------------- digests
 def tile_digest(tile: dict, material_fp: str, settings: ExportSettings, tile_size_m: float,
-                uses_textures: bool = True, uses_default_encoding: bool = True) -> str | None:
+                uses_textures: bool = True, uses_default_encoding: bool = True,
+                seam_digest: str | None = None) -> str | None:
     """Digest of everything that goes into one tile file; None when the build has no digests."""
     lods = [lod.get("digest") for lod in tile["lods"]]
     if not all(lods):
@@ -469,6 +470,8 @@ def tile_digest(tile: dict, material_fp: str, settings: ExportSettings, tile_siz
     payload = {"lods": lods, "collision": collision_digest, "material": material_fp, "settings": settings_key,
                "origin": tile["origin_m"], "size": tile["size_m"], "tile_size": tile_size_m,
                "format": INDEX_VERSION}
+    if seam_digest is not None:
+        payload["seam"] = seam_digest
     return hashlib.blake2b(json.dumps(payload, sort_keys=True).encode(), digest_size=16).hexdigest()
 
 
@@ -758,18 +761,23 @@ def load_index(out_dir: str) -> dict:
 
 def changed_tiles(manifest: dict, material: TerrainMaterial, settings: ExportSettings,
                   material_fp: str | None = None, tile_material_keys: dict[str, str] | None = None,
-                  control_map_source_digest: str | None = None) -> list[str]:
+                  control_map_source_digest: str | None = None,
+                  seam_digests: dict[str, str] | None = None) -> list[str]:
     """IDs of tiles whose exported file is missing or out of date."""
     out_dir = os.path.abspath(settings.out_dir)
     known = load_index(out_dir).get("tiles", {})
     tile_size = float(manifest["tile_size_m"])
     texture_hashes: dict[str, str] = {}
     material_fp = material_fp or material_key(manifest, material, texture_hashes)
+    control_map_source = None
     if settings.control_map_resolution:
         if control_map_source_digest is None:
-            control_map_source_digest = _control_map_source_fingerprint(_control_map_source(manifest, material))
+            control_map_source = _control_map_source(manifest, material)
+            control_map_source_digest = _control_map_source_fingerprint(control_map_source)
             material_fp = _control_map_material_fingerprint(material_fp, control_map_source_digest)
             tile_material_keys = None
+        else:
+            control_map_source = _control_map_source(manifest, material)
         if tile_material_keys is None:
             tile_material_keys = _include_control_map_source(
                 _tile_material_keys(manifest, material, material_fp, texture_hashes),
@@ -777,11 +785,16 @@ def changed_tiles(manifest: dict, material: TerrainMaterial, settings: ExportSet
     else:
         tile_material_keys = tile_material_keys if tile_material_keys is not None else _tile_material_keys(
             manifest, material, material_fp, texture_hashes)
+    if seam_digests is None:
+        _shared_masks, seam_digests = _shared_boundary_palette_masks(
+            manifest, manifest["tiles"], material, control_map_source)
     texture_flags = _tile_texture_settings(manifest, material)
     changed = []
     for tile in manifest["tiles"]:
         record = known.get(tile["id"])
-        digest = tile_digest(tile, tile_material_keys[tile["id"]], settings, tile_size, *texture_flags[tile["id"]])
+        digest = tile_digest(
+            tile, tile_material_keys[tile["id"]], settings, tile_size, *texture_flags[tile["id"]],
+            seam_digest=seam_digests.get(tile["id"]))
         if (digest is None or not isinstance(record, dict) or record.get("digest") != digest
                 or not os.path.isfile(os.path.join(out_dir, f"{tile['id']}.adm"))):
             changed.append(tile["id"])
@@ -899,7 +912,8 @@ def _tile_palette_conflict_details(manifest: dict, tile: dict, material: Terrain
 
 
 def seam_consistent_weights(
-    weights: np.ndarray, faces: np.ndarray, face_palettes: np.ndarray
+    weights: np.ndarray, faces: np.ndarray, face_palettes: np.ndarray,
+    shared_palettes: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reduce weights to the common palette at each shared vertex.
 
@@ -921,9 +935,14 @@ def seam_consistent_weights(
     if len(faces) and (faces.min() < 0 or faces.max() >= len(weights)):
         raise ValueError("Face index is outside the vertex-weight array")
 
-    allowed = np.full(len(weights), np.iinfo(np.uint64).max, dtype=np.uint64)
-    if len(faces):
-        np.bitwise_and.at(allowed, faces.reshape(-1), np.repeat(face_palettes, 3))
+    allowed = vertex_palette_masks(len(weights), faces, face_palettes)
+    if shared_palettes is not None:
+        shared_palettes = np.asarray(shared_palettes, dtype=np.uint64)
+        if shared_palettes.shape != (len(weights),):
+            raise ValueError("Shared palette masks must have one entry per vertex")
+        allowed &= shared_palettes
+        if len(faces) and np.any(allowed[np.unique(faces)] == 0):
+            raise ValueError("A shared vertex has no surface in common across its palettes")
     channels = np.left_shift(np.uint64(1), np.arange(weights.shape[1], dtype=np.uint64))
     included = (allowed[:, None] & channels[None, :]) != 0
     reduced = np.where(included, weights, 0).astype(weights.dtype, copy=False)
@@ -933,6 +952,132 @@ def seam_consistent_weights(
     valid = totals > 0
     errors[valid] = (totals[valid] - retained[valid]) / totals[valid]
     return reduced, errors
+
+
+def vertex_palette_masks(vertex_count: int, faces: np.ndarray, face_palettes: np.ndarray) -> np.ndarray:
+    """Return each vertex's intersection of incident face palettes."""
+    allowed = np.full(vertex_count, np.iinfo(np.uint64).max, dtype=np.uint64)
+    if len(faces):
+        np.bitwise_and.at(allowed, faces.reshape(-1), np.repeat(face_palettes, 3))
+    return allowed
+
+
+def _vertex_position_keys(vertices: np.ndarray) -> np.ndarray:
+    keys = np.empty(len(vertices), dtype=[("x", "<i8"), ("y", "<i8")])
+    keys["x"] = np.rint(vertices["x"].astype(np.float64) * 100_000).astype(np.int64)
+    keys["y"] = np.rint(vertices["y"].astype(np.float64) * 100_000).astype(np.int64)
+    return keys
+
+
+def _shared_lod_palette_masks(
+    vertices_by_lod: list[np.ndarray],
+    faces_by_lod: list[np.ndarray],
+    palettes_by_lod: list[np.ndarray],
+) -> list[np.ndarray]:
+    supports = [
+        vertex_palette_masks(len(vertices), faces, palettes)
+        for vertices, faces, palettes in zip(vertices_by_lod, faces_by_lod, palettes_by_lod)
+    ]
+    keys = [_vertex_position_keys(vertices) for vertices in vertices_by_lod]
+    for left in range(len(keys)):
+        for right in range(left + 1, len(keys)):
+            _shared, left_indices, right_indices = np.intersect1d(
+                keys[left], keys[right], return_indices=True)
+            common = supports[left][left_indices] & supports[right][right_indices]
+            supports[left][left_indices] = common
+            supports[right][right_indices] = common
+    return supports
+
+
+def _world_vertex_key(tile: dict, x: float, y: float) -> tuple[int, int]:
+    return (
+        int(round((float(tile["origin_m"][0]) + x) * 100_000)),
+        int(round((-float(tile["origin_m"][1]) - y) * 100_000)),
+    )
+
+
+def _shared_boundary_palette_masks(
+    manifest: dict,
+    tiles: list[dict],
+    material: TerrainMaterial,
+    control_map_source: dict | None = None,
+) -> tuple[dict[tuple[int, int], np.uint64], dict[str, str]]:
+    """Intersect shared edge palettes and fingerprint each tile's seam inputs."""
+    surfaces = build_surfaces(manifest, material)
+    shared: dict[tuple[int, int], np.uint64] = {}
+    tile_keys: dict[str, set[tuple[int, int]]] = {}
+    for tile in tiles:
+        edge_keys = tile_keys.setdefault(tile["id"], set())
+        lods = []
+        for record in tile["lods"]:
+            vertices, faces = read_ply(os.path.join(manifest["_dir"], record["file"]))
+            weights = np.column_stack([vertices[name] for name in weight_fields(vertices)]).astype(np.uint8)
+            if weights.shape[1] != len(surfaces):
+                raise ValueError(f"{record['file']}: {weights.shape[1]} weights for {len(surfaces)} surfaces; rebuild")
+            masks, _conflicts = triangle_masks(weights, faces)
+            lods.append((vertices, faces, masks))
+        sets, assign = group_masks(np.concatenate([lod[2] for lod in lods]))
+        if control_map_source is not None and "external_mask" in control_map_source:
+            surface_index = {surface.id: index for index, surface in enumerate(surfaces)}
+            external_slots = [surface_index[ident] for ident in control_map_source["surface_ids"]]
+            external_mask = np.uint64(sum(1 << index for index in external_slots))
+            sets = [external_mask]
+            assign = {int(mask): 0 for mask in assign}
+        face_palettes_by_lod = [
+            np.fromiter((sets[assign[int(mask)]] for mask in masks), dtype=np.uint64, count=len(masks))
+            for _vertices, _faces, masks in lods
+        ]
+        vertex_supports = _shared_lod_palette_masks(
+            [lod[0] for lod in lods], [lod[1] for lod in lods], face_palettes_by_lod)
+        width, height = tile["size_m"]
+        for (vertices, _faces, _masks), supports in zip(lods, vertex_supports):
+            edge = (
+                np.isclose(vertices["x"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["x"], width, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], height, atol=1e-4, rtol=0.0)
+            )
+            for index in np.flatnonzero(edge):
+                key = _world_vertex_key(tile, float(vertices["x"][index]), float(vertices["y"][index]))
+                allowed = np.uint64(supports[index])
+                shared[key] = shared.get(key, np.uint64(np.iinfo(np.uint64).max)) & allowed
+                edge_keys.add(key)
+    if any(mask == 0 for mask in shared.values()):
+        raise ValueError("Adjacent terrain palettes have no shared surface at a tile boundary")
+    seam_digests = {
+        tile_id: hashlib.blake2b(
+            json.dumps(
+                [(x, y, int(shared[(x, y)])) for x, y in sorted(keys)],
+                separators=(",", ":"),
+            ).encode("ascii"),
+            digest_size=16,
+        ).hexdigest()
+        for tile_id, keys in tile_keys.items()
+    }
+    return shared, seam_digests
+
+
+def _include_changed_seam_neighbors(
+    todo: list[str],
+    tiles: dict[str, dict],
+    index: dict,
+    seam_digests: dict[str, str],
+) -> tuple[list[str], int]:
+    """Include adjacent tiles only when their shared palette boundary changed."""
+    selected = set(todo)
+    coordinates = {(tile["ix"], tile["iy"]): tile_id for tile_id, tile in tiles.items()}
+    indexed_tiles = index.get("tiles", {})
+    for tile_id in tuple(selected):
+        tile = tiles[tile_id]
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                neighbor = coordinates.get((tile["ix"] + dx, tile["iy"] + dy))
+                record = indexed_tiles.get(neighbor) if neighbor is not None else None
+                recorded_digest = record.get("seam_digest") if isinstance(record, dict) else None
+                if (neighbor is not None and neighbor not in selected
+                        and recorded_digest != seam_digests.get(neighbor)):
+                    selected.add(neighbor)
+    return sorted(selected), len(selected) - len(todo)
 
 
 def _popcount(value: int) -> int:
@@ -1076,7 +1221,9 @@ def _material_params(surfaces: list[Surface], uv_scale: list[float],
 def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, settings: ExportSettings,
                         texture_assets: dict[tuple[str, str, str, int | None], PreparedTexture],
                         texture_uris: dict[tuple[str, str, str, int | None], tuple[str, str | None]],
-                        control_map_source: dict | None = None) -> tuple[dict, object, dict]:
+                        control_map_source: dict | None = None,
+                        shared_boundary_masks: dict[tuple[int, int], np.uint64] | None = None
+                        ) -> tuple[dict, object, dict]:
     """Return ``(doc, chunks, stats)``; ``doc`` and ``chunks`` are ready for ``write_container``.
 
     ``stats`` reports per-LOD primitive counts, palette conflicts, and the
@@ -1121,11 +1268,30 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         if palette_pixels > 16_777_216:
             raise ValueError(f"{tile['id']}: Control Maps for {len(sets)} palettes at "
                              f"{settings.control_map_resolution}px exceed the per-tile pixel limit")
+    face_palettes_by_lod = [
+        np.fromiter((sets[assign[int(mask)]] for mask in masks), dtype=np.uint64, count=len(masks))
+        for _vertices, _faces, masks, _conflicts, _weights in lods
+    ]
+    shared_lod_palettes = _shared_lod_palette_masks(
+        [lod[0] for lod in lods], [lod[1] for lod in lods], face_palettes_by_lod)
     resolved_lods = []
-    for vertices, faces, masks, conflicts, weights in lods:
-        face_palettes = np.fromiter(
-            (sets[assign[int(mask)]] for mask in masks), dtype=np.uint64, count=len(masks))
-        effective_weights, reduction_errors = seam_consistent_weights(weights, faces, face_palettes)
+    for lod_index, (vertices, faces, masks, conflicts, weights) in enumerate(lods):
+        shared_palettes = shared_lod_palettes[lod_index].copy()
+        if shared_boundary_masks is not None:
+            width, height = tile["size_m"]
+            edge = (
+                np.isclose(vertices["x"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["x"], width, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], 0.0, atol=1e-4, rtol=0.0)
+                | np.isclose(vertices["y"], height, atol=1e-4, rtol=0.0)
+            )
+            for index in np.flatnonzero(edge):
+                key = _world_vertex_key(tile, float(vertices["x"][index]), float(vertices["y"][index]))
+                shared_palettes[index] &= shared_boundary_masks.get(
+                    key, np.uint64(np.iinfo(np.uint64).max))
+        face_palettes = face_palettes_by_lod[lod_index]
+        effective_weights, reduction_errors = seam_consistent_weights(
+            weights, faces, face_palettes, shared_palettes)
         resolved_lods.append((vertices, faces, masks, conflicts, effective_weights, reduction_errors))
     lods = resolved_lods
     total_conflicts = sum(lod[3] for lod in lods)
@@ -1549,13 +1715,31 @@ def export_tiles(
                         "represent vertex-weighted layers, metallic/roughness maps, AO maps, "
                         "height blending or parallax.")
     tiles = {tile["id"]: tile for tile in manifest["tiles"]}
+    selected_ids = ([tile_id for tile_id in (selected or []) if tile_id in tiles]
+                    if mode == "selected" else [])
+    if mode != "selected" or selected_ids:
+        shared_boundary_masks, seam_digests = _shared_boundary_palette_masks(
+            manifest, list(tiles.values()), material, control_map_data)
+    else:
+        shared_boundary_masks, seam_digests = None, {}
     if mode == "all":
         todo = list(tiles)
     elif mode == "selected":
-        todo = [tile_id for tile_id in (selected or []) if tile_id in tiles]
+        index = load_index(out_dir)
+        if selected_ids and index and index.get("format_version") != INDEX_VERSION:
+            todo = list(tiles)
+            warnings.append("Refreshed all tiles for the new shared-palette boundary format.")
+        else:
+            todo = selected_ids
+        if todo:
+            todo, added_neighbors = _include_changed_seam_neighbors(
+                todo, tiles, index, seam_digests)
+            if added_neighbors:
+                warnings.append(
+                    f"Included {added_neighbors} adjacent tile(s) whose shared palette boundary changed.")
     else:
         todo = changed_tiles(manifest, material, settings, material_fp, tile_material_keys,
-                             control_map_digest)
+                             control_map_digest, seam_digests)
 
     if settings.palette_conflict_policy == "STRICT" and todo:
         conflicts_by_tile_lod = {}
@@ -1657,7 +1841,8 @@ def export_tiles(
             raise Cancelled()
         tile = tiles[tile_id]
         doc, chunks, stats = build_tile_document(
-            manifest, tile, material, settings, texture_assets, texture_uris, control_map_data)
+            manifest, tile, material, settings, texture_assets, texture_uris, control_map_data,
+            shared_boundary_masks)
         data = container.write_container(_constants.ADM_MAGIC, doc, chunks)
         path = os.path.join(out_dir, f"{tile_id}.adm")
         if settings.validate:
@@ -1726,8 +1911,11 @@ def export_tiles(
                     written.append(tile_id)
                     total_bytes += size
                     tile = tiles[tile_id]
-                    records[tile_id] = {"file": f"{tile_id}.adm", "digest": tile_digest(tile, tile_material_keys[tile_id], settings,
-                                                                                        tile_size, *texture_flags[tile_id]),
+                    seam_digest = seam_digests.get(tile_id)
+                    records[tile_id] = {"file": f"{tile_id}.adm", "digest": tile_digest(
+                                            tile, tile_material_keys[tile_id], settings,
+                                            tile_size, *texture_flags[tile_id], seam_digest=seam_digest),
+                                        "seam_digest": seam_digest,
                                         "origin_m": tile["origin_m"], "size_m": tile["size_m"]}
                     report(done / len(todo), f"Exported {done} of {len(todo)} tiles")
             except BaseException:
@@ -1774,6 +1962,11 @@ def export_tiles(
     if settings.palette_conflict_policy == "APPROXIMATE" and conflicts:
         warnings.append(
             f"Approximate palette reduction affected {reduced_vertices:,} vertex instances across exported "
+            f"tile LODs; per-vertex total-variation error ranged from "
+            f"{mean_reduction_error:.1%} mean to {max_reduction_error:.1%} maximum.")
+    elif reduced_vertices:
+        warnings.append(
+            f"Seam-compatible palette encoding adjusted {reduced_vertices:,} vertex instances across exported "
             f"tile LODs; per-vertex total-variation error ranged from "
             f"{mean_reduction_error:.1%} mean to {max_reduction_error:.1%} maximum.")
     if material.has_physical_paint() and physical_tiles_without_assignments:

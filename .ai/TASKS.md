@@ -11,9 +11,16 @@ design, metadata-only support, or skipped test does not count as completion.
 
 ## M2 - Terrain palette consistency (P0)
 - [x] Separate global surface identity from local palette/material slots.
-- [ ] Compare face-mask reduction with shared-edge, tile/LOD, irregular-edge,
-      noise, and biome-transition fixtures; record palette count, visual error,
-      identity preservation, and export cost.
+- [x] Exercise face-mask reduction on shared-edge, tile/LOD, irregular-edge,
+      noisy-biome transitions; record palette count, decoded-weight error,
+      dominant identity preservation, and export cost.
+- [x] Compare face-mask and spatial-region palettes on the rebuilt reference
+      and 12-tile stress assets; record weight, dominant-ID, boundary, and
+      albedo-proxy pixel-error measurements.
+- [x] Repeat export-cost measurements three times on each of the reference and
+      stress assets; record medians and output sizes.
+- [ ] Render both strategies through the layered terrain shader, including
+      height blending and parallax, across additional independent assets.
 - [x] Implement deterministic palette assignment/reduction and quantify error.
 - [x] Add editor diagnostics, affected-triangle details, suggestions/manual
       repair, and strict versus explicitly approximate export.
@@ -56,8 +63,13 @@ design, metadata-only support, or skipped test does not count as completion.
       minified scales to verify mip-level selection.
 - [x] World Tile VTK: verify sampled Control Map weights stay fixed before
       view-dependent per-layer parallax while parallax offsets change with view.
-- [ ] Control Maps: verify cross-reader filtering parity, tile/border seams,
-      and per-layer parallax ordering in Blender.
+- [x] Compare the minified balanced red/green Control Map against the shared
+      0.5/0.5 average in World Tile VTK and Blender Cycles.
+- [ ] Control Maps: compare both readers on the same asset and texture,
+      including mip/filter and separately tiled border-gutter seams.
+- [ ] Blender Control Maps: verify per-layer parallax ordering when a supported
+      Blender preview path can render that effect; Blender's current preview
+      does not implement POM.
 - [x] Control Maps: validate four-layer profile compatibility, stable IDs,
       texture references, decoded channel counts, and required-capability
       behavior.
@@ -131,6 +143,8 @@ design, metadata-only support, or skipped test does not count as completion.
       fingerprinting without changing physical classification.
 - [x] Report palette-conflict counts by tile and LOD in strict rejection and
       approximate export results.
+- [x] Reconcile palette support at coincident tile-edge and LOD vertices;
+      fingerprint seam inputs and invalidate only affected neighbor exports.
 - [x] Aggregate the exported `COLOR_1` vertex-input means by stable surface ID,
       tile, and LOD; label them as input data, not shader-composed results.
 - [x] Render adjacent external-mask Control Map tiles at magnified and
@@ -160,8 +174,10 @@ design, metadata-only support, or skipped test does not count as completion.
 - [x] Macro Normal: package maps in preset v7 and preserve BC5 source bytes.
 - [x] Macro Normal: render local/shared World Tile previews, RNM, neutral
       behavior, parallax independence, and unchanged collider assignments.
-- [ ] Macro Normal: verify filtered mip/gutter and adjacent-tile continuity,
-      portable fallback equivalence, and cross-reader output.
+- [x] Macro Normal: render a shared-world map across adjacent tiles at
+      magnified and minified views and measure the shared edge.
+- [ ] Macro Normal: verify filtered mip/gutter behavior, portable fallback
+      equivalence, and cross-reader output.
 - [ ] Anti-tiling: expose bounded controls and render camera-, LOD-, and
       tile-seam regressions.
 - [ ] Stochastic sampling: expose bounded tap/sample controls and render
@@ -201,9 +217,10 @@ design, metadata-only support, or skipped test does not count as completion.
       stability.
 - [x] Blender Control Maps: render filtered minification and shared world-XZ
       samples across adjacent tile meshes.
-- [ ] Blender Control Maps: verify explicit mip selection, per-layer parallax
-      ordering, and cross-reader sampling parity; Blender's current preview does
-      not implement POM.
+- [ ] Blender Control Maps: compare filtered samples with World Tile on the
+      same asset and texture, including shared tile borders and mip gutters.
+- [ ] Blender Control Maps: verify explicit mip selection and per-layer POM
+      ordering only after a supported Blender preview path can render them.
 - [x] Blender Macro Color: preserve metadata, authoring settings and nodes.
 - [x] Blender Macro Color: verify rendered output and import/export/save/reload.
 - [x] Blender Macro Normal: author projection/settings, export the required
@@ -211,11 +228,16 @@ design, metadata-only support, or skipped test does not count as completion.
 - [x] Blender Macro Normal: preview local/shared sampling and RNM for the
       aligned-tangent fixture, rotated surface, and differing UV1 layer normal;
       verify neutral strength and unchanged weights.
-- [ ] Blender Macro Normal: verify mirrored/degenerate tangent-frame handling,
-      preserve BC5/fallback metadata, and import required data without losing
-      behavior.
-- [ ] Blender Macro Normal: verify full frame, mip/filter, import/export, and
-      rendered round-trip conformance.
+- [x] Blender Macro Normal: render-test mirrored UV handedness, zero scale
+      components, and degenerate UV derivatives on aligned and rotated
+      surfaces; retain the required-import guard for the known fallback
+      mismatch near world X.
+- [x] Blender Macro Normal: import/export required shared-world data and
+      verify exact BC5 source-byte preservation plus reconstructed RGB fallback.
+- [ ] Blender Macro Normal: make LOCAL_UV degenerate-frame fallback conform
+      near world X, then enable required LOCAL_UV import.
+- [ ] Blender Macro Normal: verify mip/filter, tile continuity, cross-reader,
+      and full rendered round-trip conformance.
 - [ ] Blender anti-tiling: implement nodes or report unsupported behavior.
 - [ ] Blender stochastic sampling: implement bounded nodes or report unsupported
       behavior.

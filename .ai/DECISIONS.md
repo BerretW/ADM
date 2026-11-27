@@ -21,9 +21,10 @@ confirmed.
 - Compare boundary refinement, Control Maps, wider profiles and texture arrays
   against actual seam/render fixtures. The Control Map boundary is accepted as
   an architectural constraint, not as proof that Control Maps are the best
-  general palette strategy. A reference-only spatial-region experiment is
-  preliminary; compare representability, compatibility, cost and error before
-  changing the four-slot export policy.
+  general palette strategy. Spatial-region palettes are now measured on the
+  rebuilt reference and a noisy 12-tile stress asset, including albedo-only
+  VTK renders. Compare full layered-shader output, compatibility and repeated
+  export cost before changing the four-slot export policy.
 - Audit existing physical material/collider schemas before adding fields or
   registries; avoid duplicate friction/restitution semantics.
 - Compare versioned BC5 fallback designs and prove primary-byte preservation,
@@ -199,13 +200,21 @@ confirmed.
   import with four stable-ID channel assignments, AWTP v14 path persistence,
   export, and an opt-in Detailed preview that samples maps before per-layer
   parallax and height blending. External image bytes remain external to the
-  project file. Manual map painting, combined/final diagnostics,
-  filtering/mip/border conformance, and rendered seam evidence remain open.
+  project file. VTK tests cover source-rule and external-mask seam pixels at
+  magnified and minified scales, and generated maps use clamp-to-edge sampling.
+  Manual map painting, combined/final weight diagnostics, and parallax behavior
+  at tile borders remain open.
   Blender imports/exports required Control Maps, exposes authoring settings and
   stable layer IDs, and has Cycles pixel tests for all six modes with UV
   sampling, UV0/UV1 selection, coordinate offsets, and a world-planar
-  XZ/origin sample. Transformed model coordinates, mip/filter, border/seam, and
-  floating-origin conformance remain open.
+  XZ/origin sample. Cycles also verifies translated world positions, a
+  compensating floating-origin shift, filtered minification, and an adjacent
+  shared-world mesh seam. World Tile VTK and Blender Cycles now both check the
+  linear 0.5/0.5 result for a minified red/green checker; Blender renders
+  0.499744/0.500256 after filtering. The fixtures are not the same asset, so
+  this does not establish direct cross-reader parity. Explicit Blender mip
+  selection and per-layer POM ordering remain open because Blender's current
+  preview does not expose mip levels or implement POM.
   The wider M2 comparison of palette reduction, boundary refinement, Control
   Maps, wider profiles, and arrays remains open.
 
@@ -258,16 +267,43 @@ confirmed.
 - Maintain physical classification from stable authored, camera-independent
   weights and explicit physical references. Macro color/normal, lighting,
   parallax, and other view-dependent shader outputs never participate.
-- Evidence: the rebuilt reference measures 9 palettes, 1.243% mean and 3.922%
-  maximum affected-vertex total-variation error for the current face-mask
-  strategy; preliminary spatial bins require 22–27 palettes and about 2.21%
-  mean / 9.80% maximum error. Control Map v1, boundary-refinement behavior,
-  and existing physical-classification tests establish their distinct roles.
-- Consequence: the architecture is selected, but the M2 comparative benchmark
-  remains open until palette count, visual error, identity preservation, and
-  export cost are recorded across shared edges, tiles/LODs, irregular edges,
-  noise, and biome transitions. Do not expand the four-slot profile based on
-  one reference asset.
+- At coincident mesh positions, intersect the permitted local palettes across
+  incident faces, LODs, and tile edges before encoding `COLOR_1`. Preserve the
+  dominant stable surface and report any additional total-variation loss.
+  Fingerprint each tile's shared-edge palette support so Export Changed updates
+  only tiles whose seam inputs changed; selected exports include affected
+  neighbors.
+- Evidence: on the rebuilt reference, face-mask export uses 9 palettes and
+  measures 1.173% mean / 3.922% maximum affected-vertex total-variation error;
+  spatial regions at 4/8/16 m use 17/16/16 palettes and measure 2.215% mean /
+  9.804% maximum. On the 12-tile noisy-biome stress asset, face-mask export
+  uses 34 palettes and preserves all 10,901 emitted dominant-surface samples;
+  affected-vertex error is 7.158% mean / 65.098% maximum. Spatial regions at
+  4/8/16 m use 32/30/27 palettes, preserve 9,532/9,581, 9,538/9,581, and
+  9,550/9,581 source-vertex dominant samples, and measure 8.273%/8.129%/7.929%
+  mean and 83.137%/90.588%/90.588% maximum affected-vertex error. All 8,961
+  face-mask coincident-position comparisons across primitives, LODs, and tiles
+  agree exactly after shared-palette intersection.
+- Evidence: albedo-only VTK vertex-RGB renders compare face-mask output and
+  the 8 m region candidate with the source weights. On the stress asset, mean
+  absolute RGB error is 0.825/1.543 levels (95th-percentile per-pixel maximum
+  error 9/14; changed pixels 14.91%/17.28%). On the reference asset it is
+  0.004/0.006 levels (changed pixels 0.62%/0.63%). These proxy renders omit
+  layered textures, height blending, normals, and parallax; they are not full
+  terrain-shader quality evidence. Three export runs per asset have median
+  times of 1.187 s for the 1,767,152-byte reference and 1.203 s for the
+  969,408-byte stress export. These are small-asset timing samples, not
+  scalability evidence. Control Map v1,
+  boundary-refinement behavior, and physical-classification regressions
+  establish their distinct roles.
+- Consequence: shared-position seams are now reconciled without widening
+  frozen four-slot profiles. The spatial-region candidate is not adopted:
+  it reduces palette count on the stress asset but worsens dominant-ID
+  retention, weight error, and proxy pixel error; it also uses more palettes
+  and has greater weight error on the reference. M2 remains open until both
+  strategies are rendered through the layered terrain shader on additional
+  assets and larger-scale cost behavior is measured. Do not expand the
+  four-slot profile based on these two assets.
 
 ### Terrain Macro Normal contract (M4 contract adopted; consumers pending)
 - Sample local UV or shared world-XZ, always in linear data. GPU sources are
@@ -287,7 +323,13 @@ confirmed.
 - Consequences: World Tile authoring/export/preset and preview integration are
   implemented; Blender authoring/export/save-reload and RNM preview are
   implemented, including rotated surfaces and a different-UV layer-normal
-  fixture. Blender still rejects required data until mirrored/degenerate frame
-  handling and BC5/fallback round trips are verified. Filtered border/mip
-  behavior, adjacent-tile continuity, and portable fallback equivalence
-  remain open.
+  fixture. Cycles verifies mirrored handedness, zero scale components, and
+  degenerate UV fallback on aligned and rotated surfaces. A separate
+  near-world-X degenerate case differs from the normative fallback, so required
+  `LOCAL_UV` import remains rejected before scene mutation; required
+  `SHARED_WORLD_XZ` import is enabled. Shared-world BC5 round-trip tests preserve
+  the exact GPU primary and verify reconstructed RGB fallback pixels.
+  World Tile now passes a shared-world adjacent-tile render at magnified and
+  minified views. Filtered border/mip behavior, Blender tile continuity, and
+  cross-reader parity remain open. Physical classification remains independent
+  of all Macro Normal effects.

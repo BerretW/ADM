@@ -19,7 +19,7 @@ from adm_blender.blender.export_adm import (
     UNKNOWN_ROOT_EXTENSIONS_PROPERTY, UNKNOWN_SCENE_EXTENSIONS_PROPERTY, ExportError, ExportOptions, ModelExporter,
 )
 from adm_blender.blender.import_adm import ImportError_, ImportOptions, ModelImporter
-from adm_blender.core import constants as K
+from adm_blender.core import constants as K, gputex
 from adm_blender.core.buffers import read_accessor_np, read_view
 from adm_blender.core.container import read_container, write_container
 from adm_blender.core.png import encode_png
@@ -730,10 +730,20 @@ def main():
         assert reloaded_macro_ext["texture"]["index"] < len(reloaded_macro["textures"])
 
         print("PHASE export authored terrain Macro Normal", flush=True)
-        normal_image = bpy.data.images.new("macro_normal_authoring", 2, 2, alpha=True)
+        normal_pixels = np.full((4, 4, 4), (180, 95, 0, 255), dtype=np.uint8)
+        macro_bc5_blob, _ = gputex.encode(
+            normal_pixels, gputex.MIME_KTX2, "BC5", mipmaps=True)
+        decoded_bc5 = gputex.decode(macro_bc5_blob, strict=True)[0].astype(np.float32) / 255.0
+        reconstructed_bc5 = gputex.reconstruct_bc5_normal(decoded_bc5)
+        normal_image = bpy.data.images.new("macro_normal_authoring", 4, 4, alpha=True)
         normal_image.colorspace_settings.name = "Non-Color"
-        normal_image.pixels[:] = [0.75, 0.5, 1.0, 1.0] * 4
+        normal_image.pixels.foreach_set(reconstructed_bc5[::-1].ravel())
         normal_image.pack()
+        fallback_image = bpy.data.images.new("macro_normal_rgb_fallback", 4, 4, alpha=True)
+        fallback_image.colorspace_settings.name = "Non-Color"
+        fallback_image.pixels.foreach_set(reconstructed_bc5[::-1].ravel())
+        fallback_image.pack()
+        M.preserve_gpu_source(normal_image, macro_bc5_blob, fallback=fallback_image)
         macro_blender_material.adm.macro_normal_enabled = True
         macro_blender_material.adm.macro_normal_image = normal_image
         macro_blender_material.adm.macro_normal_projection = "SHARED_WORLD_XZ"
@@ -765,13 +775,68 @@ def main():
         reloaded_normal_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
         reloaded_normal_encoded, reloaded_normal_report = reloaded_normal_exporter.export()
         assert reloaded_normal_report.ok, reloaded_normal_report.errors
-        reloaded_normal, _ = read_container(reloaded_normal_encoded, K.ADM_MAGIC)
+        reloaded_normal, reloaded_normal_chunks = read_container(reloaded_normal_encoded, K.ADM_MAGIC)
         reloaded_normal_ext = reloaded_normal["materials"][0]["extensions"][K.TERRAIN_MACRO_NORMAL_EXT]
         assert reloaded_normal_ext["projection"] == "SHARED_WORLD_XZ"
         assert reloaded_normal_ext["origin"] == [3.0, -6.0]
         assert reloaded_normal_ext["layerInfluence"] == [1.0, 0.5, 0.25, 0.0]
         assert abs(reloaded_normal_ext["strength"] - 0.7) < 1e-6
         assert reloaded_normal_ext["texture"]["index"] < len(reloaded_normal["textures"])
+        normal_texture = reloaded_normal["textures"][reloaded_normal_ext["texture"]["index"]]
+        normal_source = reloaded_normal["images"][normal_texture["source"]]
+        normal_fallback = reloaded_normal["images"][normal_texture["fallbackSource"]]
+        assert normal_source["mimeType"] == gputex.MIME_KTX2
+        assert read_view(reloaded_normal, reloaded_normal_chunks,
+                         normal_source["bufferView"]) == macro_bc5_blob
+        assert normal_fallback["mimeType"] == "image/png"
+        fallback_path = os.path.join(folder, "macro_normal_fallback.png")
+        with open(fallback_path, "wb") as stream:
+            stream.write(read_view(
+                reloaded_normal, reloaded_normal_chunks, normal_fallback["bufferView"]))
+        fallback_check = bpy.data.images.load(fallback_path, check_existing=False)
+        try:
+            np.testing.assert_allclose(
+                M.image_pixels(fallback_check), reconstructed_bc5, atol=1.0 / 255.0)
+        finally:
+            bpy.data.images.remove(fallback_check)
+
+        print("PHASE import required shared-world terrain Macro Normal", flush=True)
+        normal_import_path = os.path.join(folder, "required_shared_macro_normal.adm")
+        with open(normal_import_path, "wb") as stream:
+            stream.write(reloaded_normal_encoded)
+        normal_importer = ModelImporter(bpy.context, normal_import_path, ImportOptions())
+        normal_imported_root = normal_importer.run()
+        imported_normal_material = next(
+            item for item in normal_importer.materials if M.MATERIAL_MACRO_NORMAL_DATA in item)
+        assert imported_normal_material.adm.macro_normal_enabled
+        assert imported_normal_material.adm.macro_normal_projection == "SHARED_WORLD_XZ"
+        assert imported_normal_material.adm.macro_normal_image is not None
+        imported_normal_exporter = ModelExporter(
+            bpy.context, normal_imported_root, ExportOptions())
+        imported_normal_encoded, imported_normal_report = imported_normal_exporter.export()
+        assert imported_normal_report.ok, imported_normal_report.errors
+        imported_normal, imported_normal_chunks = read_container(imported_normal_encoded, K.ADM_MAGIC)
+        imported_normal_ext = imported_normal["materials"][0]["extensions"][K.TERRAIN_MACRO_NORMAL_EXT]
+        assert imported_normal_ext["projection"] == "SHARED_WORLD_XZ"
+        assert imported_normal_ext["origin"] == [3.0, -6.0]
+        assert imported_normal_ext["layerInfluence"] == [1.0, 0.5, 0.25, 0.0]
+        assert abs(imported_normal_ext["strength"] - 0.7) < 1e-6
+        imported_normal_texture = imported_normal["textures"][imported_normal_ext["texture"]["index"]]
+        imported_normal_source = imported_normal["images"][imported_normal_texture["source"]]
+        imported_normal_fallback = imported_normal["images"][imported_normal_texture["fallbackSource"]]
+        assert read_view(
+            imported_normal, imported_normal_chunks, imported_normal_source["bufferView"]) == macro_bc5_blob
+        imported_fallback_path = os.path.join(folder, "imported_macro_normal_fallback.png")
+        with open(imported_fallback_path, "wb") as stream:
+            stream.write(read_view(
+                imported_normal, imported_normal_chunks, imported_normal_fallback["bufferView"]))
+        imported_fallback_check = bpy.data.images.load(
+            imported_fallback_path, check_existing=False)
+        try:
+            np.testing.assert_allclose(
+                M.image_pixels(imported_fallback_check), reconstructed_bc5, atol=1.0 / 255.0)
+        finally:
+            bpy.data.images.remove(imported_fallback_check)
 
         print("PHASE reject required terrain Macro Normal", flush=True)
         normal_doc = copy.deepcopy(macro_doc)
@@ -795,7 +860,10 @@ def main():
         try:
             ModelImporter(bpy.context, normal_path, ImportOptions()).run()
         except ImportError_ as exc:
-            assert K.TERRAIN_MACRO_NORMAL_EXT in str(exc) and "required" in str(exc)
+            assert (K.TERRAIN_MACRO_NORMAL_EXT in str(exc)
+                    and "required" in str(exc)
+                    and "LOCAL_UV" in str(exc)
+                    and "world X" in str(exc))
         else:
             raise AssertionError("Required unsupported terrain Macro Normal was accepted")
         assert before == (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))

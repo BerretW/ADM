@@ -10,6 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 VECTORS = json.loads(
     (ROOT / "fixtures" / "expectations" / "terrain_control_maps_v1.json").read_text(encoding="utf-8")
 )
+FILTERING = json.loads(
+    (ROOT / "fixtures" / "expectations" / "terrain_control_map_filtering_v1.json")
+    .read_text(encoding="utf-8")
+)
 
 
 def normalize(values):
@@ -62,6 +66,21 @@ def evaluate_coordinates(vector):
 
 
 class TerrainControlMapVectors(unittest.TestCase):
+    def test_shared_filtering_checker_vector_is_balanced(self):
+        self.assertEqual(FILTERING["extension"], VECTORS["extension"])
+        width, height = FILTERING["width"], FILTERING["height"]
+        self.assertGreaterEqual(width, 2)
+        self.assertGreaterEqual(height, 2)
+        self.assertEqual(width % 2, 0)
+        self.assertEqual(height % 2, 0)
+        red_sum = sum((x + y) % 2 for y in range(height) for x in range(width))
+        red = red_sum / (width * height)
+        green = 1.0 - red
+        self.assertEqual(
+            FILTERING["expectedLinearAverage"],
+            [red, green, 0.0, 0.0],
+        )
+
     def test_registered_mode_vectors(self):
         self.assertEqual(VECTORS["extension"], "ADM_terrain_control_map_v1@1.0.0")
         for vector in VECTORS["vectors"]:

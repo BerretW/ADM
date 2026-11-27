@@ -1346,6 +1346,79 @@ raise SystemExit(app.exec())
             np.testing.assert_allclose(parallax_macro, macro, atol=2)
             np.testing.assert_allclose(pom_macro, macro, atol=2)
 
+    def test_macro_normal_render_is_continuous_across_adjacent_tiles(self):
+        import pyvista as pv
+        from PIL import Image
+        from types import SimpleNamespace
+        from awt.gui.viewer3d import Viewer3D, load_tiles
+        from awt.pipeline import BuildParams, build, load_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            height_path = os.path.join(directory, "height.npy")
+            normal_path = os.path.join(directory, "macro-normal.png")
+            np.save(height_path, np.zeros((33, 65), dtype=np.float32))
+            wave = np.rint(
+                128 + 80 * np.sin(2 * math.pi * 8 * (np.arange(128) + 0.5) / 128)
+            ).astype(np.uint8)
+            normals = np.empty((128, 128, 3), dtype=np.uint8)
+            normals[..., 0] = wave[None, :]
+            normals[..., 1] = 128
+            normals[..., 2] = 255
+            Image.fromarray(normals).save(normal_path)
+
+            material = TerrainMaterial(height_blend_enabled=False)
+            for surface in material.surfaces[:4]:
+                surface.color = [255, 255, 255]
+            material.macro_normal = MacroNormalSettings(
+                path=normal_path, projection="SHARED_WORLD_XZ", scale=[1 / 4, 1.0])
+            params = BuildParams(
+                input_path=height_path, out_dir=os.path.join(directory, "build"),
+                tile_cells=32, max_errors_m=[0.1], spacing_m=1.0)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            tiles = sorted(manifest["tiles"], key=lambda tile: tile["ix"])
+            self.assertEqual(len(tiles), 2)
+
+            data = load_tiles(manifest, [(tile["ix"], tile["iy"]) for tile in tiles],
+                              0, detailed=True)
+            plotter = pv.Plotter(off_screen=True, window_size=(480, 240))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            preview = SimpleNamespace(
+                _manifest=manifest, _material=material, _control_map_resolution=32,
+                _data=data, plotter=plotter, wire=SimpleNamespace(isChecked=lambda: False),
+            )
+            Viewer3D._draw_detailed(preview, pv)
+            plotter.show(auto_close=False)
+
+            points = data["points"]
+            x_min, x_max = float(points[:, 0].min()), float(points[:, 0].max())
+            y_min, y_max = float(points[:, 1].min()), float(points[:, 1].max())
+            seam_x = max(float(tile["points"][:, 0].max())
+                         for tile in data["material_tiles"] if tile["ix"] == tiles[0]["ix"])
+            center_x = (x_min + x_max) / 2
+            center_y = (y_min + y_max) / 2
+            self.assertAlmostEqual(seam_x, center_x, places=4)
+            camera = plotter.camera
+            camera.parallel_projection = True
+            plotter.camera_position = [
+                (center_x, center_y, 100), (center_x, center_y, 0), (0, 1, 0)]
+
+            for scale in (0.5, 32):
+                camera.parallel_scale = scale
+                plotter.render()
+                pixels = plotter.screenshot(return_img=True).astype(np.int16)
+                self.assertEqual(pixels.shape[1], 480)
+                left = pixels[30:-30, 239, :3]
+                right = pixels[30:-30, 241, :3]
+                differences = np.max(np.abs(left - right), axis=1)
+                self.assertLess(float(np.median(differences)), 8,
+                                f"Rendered Macro Normal seam differs at scale {scale}: "
+                                f"{differences}; left={left[len(left) // 2]}, "
+                                f"right={right[len(right) // 2]}")
+                self.assertLess(float(np.percentile(differences, 95)), 20,
+                                f"Rendered Macro Normal seam outliers at scale {scale}: {differences}")
+
     def test_macro_color_render_is_continuous_across_adjacent_tiles(self):
         import pyvista as pv
         from PIL import Image
@@ -1418,11 +1491,16 @@ raise SystemExit(app.exec())
                                 f"Rendered Macro Color seam outliers at scale {scale}: {differences}")
 
     def test_control_map_minification_uses_mip_levels(self):
+        import json
+        from pathlib import Path
         import pyvista as pv
         from awt.gui.preview_shader import install_layered_preview
 
-        y, x = np.indices((256, 256))
-        red = (((x // 2 + y // 2) % 2) * 255).astype(np.uint8)
+        vector_path = (Path(__file__).resolve().parents[2] / "adm-standard" / "fixtures"
+                       / "expectations" / "terrain_control_map_filtering_v1.json")
+        filtering = json.loads(vector_path.read_text(encoding="utf-8"))
+        y, x = np.indices((filtering["height"], filtering["width"]))
+        red = (((x + y) % 2) * 255).astype(np.uint8)
         control = np.zeros((256, 256, 4), dtype=np.uint8)
         control[..., 0] = red
         control[..., 1] = 255 - red
@@ -1458,6 +1536,16 @@ raise SystemExit(app.exec())
         minified_std = float(np.std(minified[48:80, 48:80, 0]))
         magnified_std = float(np.std(magnified[16:-16, 16:-16, 0]))
         self.assertLess(minified_std, 5, f"minified output varied by {minified_std}")
+        display_weights = minified[48:80, 48:80, :2] / 255.0
+        minified_linear = np.where(
+            display_weights <= 0.04045,
+            display_weights / 12.92,
+            ((display_weights + 0.055) / 1.055) ** 2.4,
+        )
+        minified_mean = np.mean(minified_linear, axis=(0, 1))
+        np.testing.assert_allclose(
+            minified_mean, filtering["expectedLinearAverage"][:2], atol=filtering["tolerance"],
+            err_msg="Minified red/green Control Map channels must match the shared linear 0.5/0.5 vector")
         self.assertGreater(magnified_std, 20, f"magnified output varied by {magnified_std}")
 
     def test_control_map_weights_are_sampled_before_view_dependent_parallax(self):

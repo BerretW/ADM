@@ -1,0 +1,10 @@
+{
+  "extension": "ADM_terrain_control_map_v1@1.0.0",
+  "name": "linear-red-green-minified-checker",
+  "width": 256,
+  "height": 256,
+  "pattern": "alternating-red-green-single-texel",
+  "uvScale": [1.0, 1.0],
+  "expectedLinearAverage": [0.5, 0.5, 0.0, 0.0],
+  "tolerance": 0.08
+}

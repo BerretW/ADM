@@ -95,6 +95,13 @@
       "positionDu": [0.0, 1.0, 0.0],
       "positionDv": [0.0, 0.0, 1.0],
       "expected": [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
+    },
+    {
+      "name": "degenerate-u-near-world-x-selects-world-z",
+      "geometricNormal": [1.0, 0.0, 0.0],
+      "positionDu": [1.0, 0.0, 0.0],
+      "positionDv": [0.0, 0.0, 0.0],
+      "expected": [[0.0, 0.0, 1.0], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0]]
     }
   ]
 }
