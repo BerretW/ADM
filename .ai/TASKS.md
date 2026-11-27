@@ -125,11 +125,17 @@ design, metadata-only support, or skipped test does not count as completion.
       their local channel order differs.
 - [x] Add a bounded RGBA external-mask decoder with format, byte, pixel,
       dimension, and malformed-input checks.
-- [ ] Persist external mask sources and their four stable surface IDs; add UI
-      channel assignment, preview/export integration, and selective
-      invalidation without changing physical classification.
-- [ ] Add combined/final weight and palette-conflict diagnostics across tiles
-      and LODs; verify rendered border seams.
+- [x] Persist external mask paths and four stable surface IDs in AWTP v14;
+      add GUI channel assignment, export/preview integration, and source
+      fingerprinting without changing physical classification.
+- [x] Report palette-conflict counts by tile and LOD in strict rejection and
+      approximate export results.
+- [x] Aggregate the exported `COLOR_1` vertex-input means by stable surface ID,
+      tile, and LOD; label them as input data, not shader-composed results.
+- [x] Render adjacent external-mask Control Map tiles at magnified and
+      minified scales and measure the shared-edge pixel difference.
+- [ ] Diagnose shader-composed final weights and verify source-rule seams,
+      mip/border continuity, parallax, and cross-reader output.
 - [ ] Macro Color: author/import color maps and preserve image/source bytes.
 - [ ] Macro Color: render neutral/enabled previews and verify collision geometry
       remains unchanged.

@@ -21,11 +21,15 @@ severity, cause, workaround, proposed fix, and source/test evidence.
 - **Workaround:** Blender emits an import warning for axis-specific wrap modes
   and shows normalized vertex weights in that case. Do not label the available
   preview paths as fully conformant.
-- **Next step:** Integrate the bounded World Tile RGBA decoder with project
-  persistence, stable-ID channel assignment, UI, export, and preview; then add
-  combined/final-weight diagnostics and verify rendered tile borders and
-  cross-reader filtering parity.
-  The decoder is a standalone utility and does not yet persist or apply masks.
+- **Next step:** Complete shader-composed final-weight diagnostics and verify
+  source-rule tile borders and cross-reader filtering parity. Export diagnostics
+  now report palette conflicts by LOD and tile/LOD, plus exact emitted
+  `COLOR_1` input means by stable ID across tiles/LODs; they do not yet
+  aggregate final rendered weights. A VTK render regression verifies external
+  mask seam pixels at magnified and minified scales only. World Tile now imports
+  bounded external RGBA masks, persists their paths and stable-ID channel
+  mapping in AWTP v14, and uses them in export and the Detailed preview.
+  External image bytes remain external to the project file.
   Generated tile maps now use clamp-to-edge
   samplers, and VTK tests exact source-grid edges and mip selection, but these
   tests do not establish final cross-tile rendered seams. Blender now has

@@ -195,9 +195,11 @@ confirmed.
   assignments continue to use stable surface links and manual physical paint;
   they do not consume generated texture weights, rendered colors, camera data,
   or view-dependent shader effects.
-- Consequences: World Tile now has source-rule export and an opt-in Detailed
-  material preview that samples maps before per-layer parallax and height
-  blending. External-mask import, manual map painting, diagnostic modes,
+- Consequences: World Tile now has source-rule export and external RGBA mask
+  import with four stable-ID channel assignments, AWTP v14 path persistence,
+  export, and an opt-in Detailed preview that samples maps before per-layer
+  parallax and height blending. External image bytes remain external to the
+  project file. Manual map painting, combined/final diagnostics,
   filtering/mip/border conformance, and rendered seam evidence remain open.
   Blender imports/exports required Control Maps, exposes authoring settings and
   stable layer IDs, and has Cycles pixel tests for all six modes with UV

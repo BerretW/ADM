@@ -405,9 +405,40 @@ views while the parallax-offset diagnostic changes, verifying that the map is
 sampled before the view-dependent offset. Blender ordering parity remains
 unverified. The World Tile suite passes 159 tests.
 
-External Control Map work has started with a standalone bounded RGBA decoder.
-It accepts PNG, TIFF, and TGA files up to 64 MiB and 4096 pixels per side,
-checks decoded pixel limits, and rejects non-RGBA, malformed, and oversized
-inputs. This is not yet a user-facing import path: source persistence,
-stable-ID channel assignment, export/preview integration, and selective
-invalidation remain open. The decoder does not feed physical classification.
+World Tile now has an external Control Map path from UI to export and Detailed
+preview. It accepts bounded RGBA PNG/TIFF/TGA masks, maps all four channels to
+stable surface IDs, persists the source path and mapping in AWTP v14, resamples
+and normalizes weights over source-grid tile bounds, and includes decoded mask
+content plus IDs in the Control Map fingerprint. Regression tests verify
+preview pixels, project round-trip, changed-mask invalidation, and unchanged
+physical collider assignments. The external source remains a separate file;
+combined/final-weight diagnostics and rendered shared-tile seams are still
+open.
+
+Export diagnostics now preserve palette-conflict counts by LOD and tile/LOD
+for strict rejection and approximate export; the GUI shows aggregate LOD counts
+and a bounded tile/LOD listing. The rebuilt reference still reports 18
+conflicts per LOD across its three LODs. Three focused World Tile tests, Python
+compile checks, and `git diff --check` pass. This does not complete
+combined/final-weight diagnostics or prove rendered tile-border seams; the
+mission remains open and physical collider assignments remain independent of
+Control Map and other view-dependent shader output.
+
+The export result and GUI now also report the exact emitted `COLOR_1`
+vertex-input weight means by stable surface ID, aggregated across exported
+tiles and separately by tile/LOD. The rebuilt reference test verifies all three
+LODs and confirms the means sum to 1 within 1%. These are exported vertex
+attributes only; they are not final shader weights after Control Map sampling,
+height blending, or view-dependent parallax. Those rendered diagnostics and
+tile-border seams remain open.
+
+An offscreen VTK regression now renders adjacent terrain tiles through the
+Detailed-preview shader with an external RGBA gradient. The measured median
+cross-seam RGB difference remains below 8/255 and its 95th percentile below
+20/255 at both magnified and minified views. This evidence is limited to the
+external-mask path and the tested VTK scales; source-rule seam behavior,
+cross-reader filtering, and parallax-at-border remain open.
+
+The complete World Tile test suite passes 166 tests after the new export
+diagnostics and rendered seam coverage. Five pre-existing PyVista future
+warnings remain. No release build or package was produced.

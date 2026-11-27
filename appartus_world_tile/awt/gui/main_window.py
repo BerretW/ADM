@@ -458,7 +458,7 @@ class MainWindow(QMainWindow):
         self.control_map_resolution.setSingleStep(128)
         self.control_map_resolution.setSpecialValueText("Off")
         self.control_map_resolution.setToolTip(
-            "Generate density-independent RGBA surface weights from the source heightmap and current rules. "
+            "Use a density-independent source-rule map or an assigned external RGBA mask. "
             "This is opt-in and requires a four-layer terrain shader profile.")
         self.external_control_map_path = QLineEdit()
         self.external_control_map_path.setPlaceholderText("Optional RGBA image spanning the full heightmap")
@@ -883,7 +883,7 @@ class MainWindow(QMainWindow):
         ids = material.external_control_map_surface_ids
         ids = ids if len(ids) == 4 else [""] * 4
         for combo, surface_id in zip(self.external_control_map_channels, ids):
-            combo.blockSignals(True)
+            was_blocked = combo.blockSignals(True)
             combo.clear()
             combo.addItem("Select surface", "")
             for surface in material.surfaces:
@@ -891,7 +891,7 @@ class MainWindow(QMainWindow):
             if surface_id and combo.findData(surface_id) < 0:
                 combo.addItem(f"Missing surface ({surface_id})", surface_id)
             combo.setCurrentIndex(max(0, combo.findData(surface_id)))
-            combo.blockSignals(False)
+            combo.blockSignals(was_blocked)
 
     def _export_settings(self) -> ExportSettings:
         return ExportSettings(out_dir=self.export_dir.text().strip(), lod_distance_m=self.lod_distance.value(),
@@ -1863,11 +1863,51 @@ class MainWindow(QMainWindow):
         lines = [f"Wrote {written:,} tiles ({result['bytes'] / 2**20:,.1f} MiB) in "
                  f"{result['seconds']:.1f} s, {result['skipped']:,} up to date",
                  f"Up to {result.get('max_primitives', 1)} materials per tile LOD (four surfaces each)"]
+        names = {surface.id: surface.name for surface in self._material().surfaces}
+
+        def surface_label(surface_id: str) -> str:
+            name = names.get(surface_id)
+            return f"{name} ({surface_id})" if name and name != surface_id else surface_id
+
+        mean_weights = result.get("mean_exported_weights_by_lod", {})
+        if mean_weights:
+            lines.append("Mean exported COLOR_1 vertex weights by LOD (input data, not shader-composed):")
+            for lod, weights in mean_weights.items():
+                values = ", ".join(
+                    f"{surface_label(surface_id)} {weight:.1%}"
+                    for surface_id, weight in weights.items())
+                lines.append(f"LOD {lod}: {values}")
         if self._material().has_physical_paint():
             lines.append(f"{result.get('physical_triangles', 0):,} collision triangles have physical assignments.")
         if result.get("conflicts"):
             lines.append(f"{result['conflicts']:,} triangles needed approximate palettes with at most four "
                          "surfaces.")
+            if result.get("conflicts_by_lod"):
+                lod_counts = ", ".join(
+                    f"LOD {lod}: {count:,}" for lod, count in result["conflicts_by_lod"].items() if count)
+                lines.append(f"Palette conflicts by LOD across exported tiles: {lod_counts}.")
+            tile_lod_counts = result.get("conflicts_by_tile_lod", {})
+            if tile_lod_counts:
+                sample = [
+                    f"{tile_id} LOD {lod}: {count:,}"
+                    for tile_id, counts in tile_lod_counts.items()
+                    for lod, count in counts.items()
+                ]
+                lines.append("Palette conflicts by tile and LOD: " + "; ".join(sample[:20]))
+                if len(sample) > 20:
+                    lines.append(f"{len(sample) - 20:,} more tile/LOD entries omitted from this report.")
+        tile_weights = result.get("mean_exported_weights_by_tile_lod", {})
+        if tile_weights:
+            samples = [
+                f"{tile_id} LOD {lod}: " + ", ".join(
+                    f"{surface_label(surface_id)} {weight:.1%}"
+                    for surface_id, weight in weights.items())
+                for tile_id, lods in tile_weights.items()
+                for lod, weights in lods.items()
+            ]
+            lines.append("Mean exported vertex weights by tile and LOD: " + "; ".join(samples[:20]))
+            if len(samples) > 20:
+                lines.append(f"{len(samples) - 20:,} more tile/LOD weight entries omitted from this report.")
             for detail in result.get("conflict_details", []):
                 dropped = ", ".join(
                     f"{surface['name']} ({surface['id']}) U8 (0-255) {surface['corner_weights']}"

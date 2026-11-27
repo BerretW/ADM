@@ -228,6 +228,10 @@ class ExportTest(unittest.TestCase):
         Image.fromarray(mask).save(mask_path)
         self.assertEqual(set(changed_tiles(self.manifest, self.material, self.settings)),
                          {item["id"] for item in self.manifest["tiles"]})
+        self.material.external_control_map_surface_ids = [source_ids[0], source_ids[0],
+                                                          source_ids[2], source_ids[3]]
+        with self.assertRaisesRegex(ValueError, "four unique, existing stable surface IDs"):
+            changed_tiles(self.manifest, self.material, self.settings)
 
     def test_project_v14_external_control_map_paths_and_ids_round_trip(self):
         project_path = os.path.join(self.tmp.name, "world.awtp")
@@ -915,7 +919,7 @@ class ExportTest(unittest.TestCase):
     def test_strict_palette_policy_rejects_before_writing_tiles(self):
         output = os.path.join(self.tmp.name, "strict_adm")
         settings = ExportSettings(out_dir=output, palette_conflict_policy="STRICT")
-        with patch("awt.adm_export._tile_palette_conflicts", return_value=1):
+        with patch("awt.adm_export._tile_palette_conflicts_by_lod", return_value=[1]):
             with self.assertRaisesRegex(ValueError, "Strict export rejected 4 triangles"):
                 export_tiles(self.manifest, self.material, settings, "all")
         self.assertEqual(os.listdir(output), [])
@@ -934,6 +938,9 @@ class ExportTest(unittest.TestCase):
             export_tiles(manifest, project.material, strict, "all")
         self.assertEqual(os.listdir(strict_output), [])
         self.assertIn("x000_y001 LOD 0 triangle", str(raised.exception))
+        self.assertIn("Conflicts by LOD across selected tiles: LOD 0: 18, LOD 1: 18, LOD 2: 18",
+                      str(raised.exception))
+        self.assertIn("x000_y001 LOD 0: 18 conflicts", str(raised.exception))
         self.assertIn("corner weights", str(raised.exception))
         self.assertIn("Surface on the Map tab", str(raised.exception))
 
@@ -942,6 +949,12 @@ class ExportTest(unittest.TestCase):
             palette_conflict_policy="APPROXIMATE")
         result = export_tiles(manifest, project.material, approximate, "all")
         self.assertEqual(result["conflicts"], 54)
+        self.assertEqual(result["conflicts_by_lod"], {0: 18, 1: 18, 2: 18})
+        self.assertEqual(result["conflicts_by_tile_lod"], {"x000_y001": {0: 18, 1: 18, 2: 18}})
+        self.assertEqual(list(result["mean_exported_weights_by_lod"]), [0, 1, 2])
+        for weights in result["mean_exported_weights_by_lod"].values():
+            self.assertAlmostEqual(sum(weights.values()), 1.0, delta=0.01)
+        self.assertEqual(list(result["mean_exported_weights_by_tile_lod"]["x000_y001"]), [0, 1, 2])
         self.assertEqual(len(result["conflict_details"]), 20)
         self.assertEqual(result["conflict_details_truncated"], 34)
         self.assertEqual(result["conflict_details"], sorted(

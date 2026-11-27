@@ -643,6 +643,9 @@ def rasterize_external_control_map(
     if (not isinstance(mask, np.ndarray) or mask.ndim != 3 or mask.shape[2] != 4
             or mask.dtype != np.uint8 or min(mask.shape[:2]) < 2):
         raise ValueError("External Control Map data must be an RGBA uint8 image at least 2x2")
+    if (max(mask.shape[:2]) > MAX_CONTROL_MAP_DIMENSION
+            or mask.shape[0] * mask.shape[1] > 16_777_216):
+        raise ValueError("External Control Map dimensions exceed the 4096-side or 16,777,216-pixel limit")
     if (len(source_shape) != 2 or any(type(value) is not int or value < 2 for value in source_shape)
             or len(size) != 2 or any(type(value) is not int or not 2 <= value <= 4096 for value in size)):
         raise ValueError("External Control Map source and output dimensions are invalid")

@@ -182,9 +182,10 @@ def _tile_source_bounds(manifest: dict, tile: dict, shape: tuple[int, int]) -> t
 
 
 def _control_map_source_fingerprint(source: dict) -> str:
-    values = [sample_digest(source["heightmap"])]
-    if "external_mask" in source:
-        values.extend((sample_digest(source["external_mask"]), list(source["surface_ids"])))
+    height_digest = sample_digest(source["heightmap"])
+    if "external_mask" not in source:
+        return height_digest
+    values = [height_digest, sample_digest(source["external_mask"]), list(source["surface_ids"])]
     return hashlib.blake2b(json.dumps(values, sort_keys=True).encode(), digest_size=16).hexdigest()
 
 
@@ -792,16 +793,16 @@ def tile_geometry(vertices: np.ndarray, faces: np.ndarray, size_m: list[float], 
     return out
 
 
-def _tile_palette_conflicts(manifest: dict, tile: dict) -> int:
-    """Count triangles that exceed the four-surface palette in all tile LODs."""
+def _tile_palette_conflicts_by_lod(manifest: dict, tile: dict) -> list[int]:
+    """Count palette-conflicting triangles separately for each tile LOD."""
     build_dir = manifest["_dir"]
-    conflicts = 0
+    counts = []
     for record in tile["lods"]:
         vertices, faces = read_ply(os.path.join(build_dir, record["file"]))
         weights = np.column_stack([vertices[name] for name in weight_fields(vertices)]).astype(np.uint8)
         _, count = triangle_masks(weights, faces)
-        conflicts += count
-    return conflicts
+        counts.append(count)
+    return counts
 
 
 def triangle_masks(weights: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, int]:
@@ -1260,9 +1261,11 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     stats = {"primitives": [], "conflicts": 0, "reduced_vertices": 0, "physical_triangles": 0,
              "painted_physical_tile": False,
              "reduction_error_sum": 0.0, "max_reduction_error": 0.0,
-             "conflict_details": conflict_details}
+             "conflict_details": conflict_details, "conflicts_by_lod": [],
+             "vertex_weight_samples_by_lod": [], "vertex_weight_sums_by_lod": []}
     for lod, (vertices, faces, masks, conflicts, effective_weights, reduction_errors) in enumerate(lods):
         stats["conflicts"] += conflicts
+        stats["conflicts_by_lod"].append(conflicts)
         geom = tile_geometry(vertices, faces, tile["size_m"], tangents)
         geom["weights"] = effective_weights
         affected = reduction_errors[reduction_errors > 0]
@@ -1272,17 +1275,27 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
             stats["max_reduction_error"] = max(stats["max_reduction_error"], float(affected.max()))
         set_of_face = np.array([assign[int(m)] for m in masks], np.int64) if len(masks) else np.zeros(0, np.int64)
         primitives = []
+        vertex_weight_samples = 0
+        vertex_weight_sums = np.zeros(len(surfaces), dtype=np.uint64)
         for k in np.unique(set_of_face):
             face_rows = geom["indices"][set_of_face == k]
             keep, local = np.unique(face_rows.reshape(-1), return_inverse=True)
+            slots = palette_slots[int(k)]
+            encoded_weights = color1(geom["weights"][keep], slots)
+            vertex_weight_sums[slots] += encoded_weights[:, :len(slots)].sum(axis=0, dtype=np.uint64)
+            vertex_weight_samples += len(keep)
             attributes = {name: b.add_accessor(geom[name][keep], "F32", acc_type) for name, acc_type in
                           (("POSITION", "VEC3"), ("NORMAL", "VEC3"), ("TANGENT", "VEC4"), ("TEXCOORD_0", "VEC2"))
                           if name in geom}
-            attributes["COLOR_1"] = b.add_accessor(color1(geom["weights"][keep], palette_slots[int(k)]), "U8", "VEC4",
-                                                   normalized=True)
+            attributes["COLOR_1"] = b.add_accessor(encoded_weights, "U8", "VEC4", normalized=True)
             index_type = "U16" if len(keep) <= 65535 else "U32"
             indices = b.add_accessor(local.astype(np.uint32), index_type, "SCALAR")
             primitives.append({"attributes": attributes, "indices": indices, "material": int(k)})
+        stats["vertex_weight_samples_by_lod"].append(vertex_weight_samples)
+        stats["vertex_weight_sums_by_lod"].append({
+            surfaces[index].id: int(vertex_weight_sums[index])
+            for index in np.flatnonzero(vertex_weight_sums)
+        })
         stats["primitives"].append(len(primitives))
         meshes.append({"name": f"{tile['id']}_lod{lod}", "primitives": primitives})
 
@@ -1469,8 +1482,19 @@ def export_tiles(
                              control_map_digest)
 
     if settings.palette_conflict_policy == "STRICT" and todo:
-        conflicts = sum(_tile_palette_conflicts(manifest, tiles[tile_id]) for tile_id in todo)
+        conflicts_by_tile_lod = {}
+        conflicts = 0
+        for tile_id in todo:
+            lod_counts = _tile_palette_conflicts_by_lod(manifest, tiles[tile_id])
+            tile_conflicts = sum(lod_counts)
+            conflicts += tile_conflicts
+            if tile_conflicts:
+                conflicts_by_tile_lod[tile_id] = lod_counts
         if conflicts:
+            conflicts_by_lod = {}
+            for counts in conflicts_by_tile_lod.values():
+                for lod, count in enumerate(counts):
+                    conflicts_by_lod[lod] = conflicts_by_lod.get(lod, 0) + count
             details = []
             for tile_id in sorted(todo):
                 if len(details) >= MAX_PALETTE_CONFLICT_DETAILS:
@@ -1486,10 +1510,23 @@ def export_tiles(
             ]
             if conflicts > len(details):
                 detail_lines.append(f"  ... {conflicts - len(details):,} more conflicting triangles")
+            lod_summary = ", ".join(
+                f"LOD {lod}: {count:,}" for lod, count in sorted(conflicts_by_lod.items()) if count)
+            tile_lod_summary = [
+                f"  {tile_id} LOD {lod}: {count:,} conflicts"
+                for tile_id, counts in sorted(conflicts_by_tile_lod.items())
+                for lod, count in enumerate(counts) if count
+            ]
+            if len(tile_lod_summary) > 20:
+                tile_lod_summary = tile_lod_summary[:20] + [
+                    f"  ... {len(tile_lod_summary) - 20:,} more tile/LOD entries"
+                ]
             detail_text = "\nAffected triangle details:\n" + "\n".join(detail_lines) if detail_lines else ""
+            summary_text = (f"\nConflicts by LOD across selected tiles: {lod_summary}\n"
+                            "Conflicts by tile and LOD:\n" + "\n".join(tile_lod_summary))
             raise ValueError(f"Strict export rejected {conflicts:,} triangles that need more than four surfaces. "
                              "Choose the explicit Approximate palette policy to export with measurable "
-                             f"weight reduction.{detail_text}\nSuggestion: reduce overlapping surface weights "
+                             f"weight reduction.{summary_text}{detail_text}\nSuggestion: reduce overlapping surface weights "
                              "or paint fewer active surfaces with Surface on the Map tab.")
 
     texture_assets: dict[tuple[str, str, str, int | None], PreparedTexture] = {}
@@ -1559,6 +1596,12 @@ def export_tiles(
     reduction_error_sum = 0.0
     max_reduction_error = 0.0
     conflict_details = []
+    conflicts_by_lod = {}
+    conflicts_by_tile_lod = {}
+    vertex_weight_totals_by_lod = {}
+    vertex_weight_samples_by_lod = {}
+    vertex_weight_totals_by_tile_lod = {}
+    vertex_weight_samples_by_tile_lod = {}
     max_primitives = 0
     physical_triangles = 0
     physical_tiles_without_assignments = 0
@@ -1571,6 +1614,25 @@ def export_tiles(
                 for done, future in enumerate(as_completed(futures), 1):
                     tile_id, size, stats = future.result()
                     conflicts += stats["conflicts"]
+                    tile_lod_counts = stats["conflicts_by_lod"]
+                    conflicts_by_tile_lod[tile_id] = {
+                        lod: count for lod, count in enumerate(tile_lod_counts) if count
+                    }
+                    for lod, count in enumerate(tile_lod_counts):
+                        conflicts_by_lod[lod] = conflicts_by_lod.get(lod, 0) + count
+                    tile_weight_sums = stats["vertex_weight_sums_by_lod"]
+                    tile_weight_samples = stats["vertex_weight_samples_by_lod"]
+                    vertex_weight_totals_by_tile_lod[tile_id] = {}
+                    vertex_weight_samples_by_tile_lod[tile_id] = {}
+                    for lod, sums in enumerate(tile_weight_sums):
+                        samples = tile_weight_samples[lod]
+                        vertex_weight_samples_by_tile_lod[tile_id][lod] = samples
+                        vertex_weight_totals_by_tile_lod[tile_id][lod] = sums
+                        vertex_weight_samples_by_lod[lod] = (
+                            vertex_weight_samples_by_lod.get(lod, 0) + samples)
+                        lod_totals = vertex_weight_totals_by_lod.setdefault(lod, {})
+                        for surface_id, value in sums.items():
+                            lod_totals[surface_id] = lod_totals.get(surface_id, 0) + value
                     reduced_vertices += stats["reduced_vertices"]
                     reduction_error_sum += stats["reduction_error_sum"]
                     max_reduction_error = max(max_reduction_error, stats["max_reduction_error"])
@@ -1610,6 +1672,25 @@ def export_tiles(
     seconds = time.perf_counter() - started
     report(1.0, f"Exported {len(written)} tiles in {seconds:.1f} s")
     mean_reduction_error = reduction_error_sum / reduced_vertices if reduced_vertices else 0.0
+    mean_exported_weights_by_lod = {
+        lod: {
+            surface_id: value / (255.0 * vertex_weight_samples_by_lod[lod])
+            for surface_id, value in sorted(totals.items())
+        }
+        for lod, totals in sorted(vertex_weight_totals_by_lod.items())
+        if vertex_weight_samples_by_lod.get(lod, 0)
+    }
+    mean_exported_weights_by_tile_lod = {
+        tile_id: {
+            lod: {
+                surface_id: value / (255.0 * vertex_weight_samples_by_tile_lod[tile_id][lod])
+                for surface_id, value in sorted(totals.items())
+            }
+            for lod, totals in sorted(lod_totals.items())
+            if vertex_weight_samples_by_tile_lod[tile_id][lod]
+        }
+        for tile_id, lod_totals in sorted(vertex_weight_totals_by_tile_lod.items())
+    }
     if settings.palette_conflict_policy == "APPROXIMATE" and conflicts:
         warnings.append(
             f"Approximate palette reduction affected {reduced_vertices:,} vertex instances across exported "
@@ -1625,6 +1706,12 @@ def export_tiles(
             "physical_triangles": physical_triangles,
             "physical_tiles_without_assignments": physical_tiles_without_assignments,
             "mean_reduction_error": mean_reduction_error, "max_reduction_error": max_reduction_error,
+            "conflicts_by_lod": dict(sorted(conflicts_by_lod.items())),
+            "conflicts_by_tile_lod": {
+                tile_id: counts for tile_id, counts in sorted(conflicts_by_tile_lod.items()) if counts
+            },
+            "mean_exported_weights_by_lod": mean_exported_weights_by_lod,
+            "mean_exported_weights_by_tile_lod": mean_exported_weights_by_tile_lod,
             "conflict_details": conflict_details,
             "conflict_details_truncated": max(0, conflicts - len(conflict_details)),
             "warnings": warnings}

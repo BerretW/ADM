@@ -20,7 +20,7 @@ The status labels describe repository evidence:
 
 | Feature | ADM contract | Reference math and validation | World Tile | Blender | Collision classification |
 |---|---|---|---|---|---|
-| Terrain Control Maps | `ADM_terrain_control_map_v1@1.0.0` specified for registered four-layer profiles | Six weight modes, coordinate transforms, profile/channel/reference validation, and golden vectors; no filtered-sampling conformance renderer | Partial: bounded source-rule RGBA export, configurable resolution, detailed shader preview, and local-channel diagnostic; external import and combined/final diagnostics remain open | Partial: import/export and save/reload preservation, authoring controls, and Cycles pixel tests for all six modes, UV0/UV1, coordinate offsets, and a world-planar XZ/origin sample; transformed-model, sampler/seam conformance remain open | Export leaves assignments based on authored physical data and manual paint; a regression test confirms independence |
+| Terrain Control Maps | `ADM_terrain_control_map_v1@1.0.0` specified for registered four-layer profiles | Six weight modes, coordinate transforms, profile/channel/reference validation, and golden vectors; no filtered-sampling conformance renderer | Partial: bounded source-rule export and external RGBA mask import, stable-ID channel assignment, AWTP v14 persistence, export, and Detailed preview; external-mask seam pixels are tested in VTK at magnified/minified scales, while shader-composed weights and source-rule seams remain open | Partial: import/export and save/reload preservation, authoring controls, and Cycles pixel tests for all six modes, UV0/UV1, coordinate offsets, and a world-planar XZ/origin sample; transformed-model, sampler/seam conformance remain open | External masks affect visual weights only; export continues to assign collision materials from authored physical data and manual paint |
 | Terrain Macro Color | `ADM_terrain_macro_color_v1@1.0.0` specified for registered four-layer profiles | sRGB color/coordinate reference math, profile/image/color-space/sampler validation, and independent vectors; no renderer | Not implemented | Required extension rejected; no authoring or preview | Independent of physical classification |
 | Terrain Macro Normal | `ADM_terrain_macro_normal_v1@1.0.0` specified for registered four-layer profiles | BC5 reconstruction, RNM, tangent-frame and coordinate reference math; profile/image/format/sampler validation and independent vectors; no renderer | Not implemented | Required extension rejected; no authoring or preview | Independent of physical classification |
 | Anti-tiling and stochastic sampling | Not defined | Not implemented | Not implemented | Not implemented | Independent of visual effects |
@@ -48,8 +48,13 @@ sample; it does not establish texture-filtering, mip-selection, border, or
 rendered-seam conformance. World Tile's opt-in exporter samples the original
 heightmap and current surface rules into bounded per-palette RGBA maps. Its
 detailed preview samples those maps before per-layer parallax and height
-blending, but external-mask import, combined/final diagnostics, and seam/mip
-evidence remain open. Blender imports and preserves required Control Maps,
+blending. World Tile also imports bounded external RGBA masks, stores their
+path and four stable channel IDs in AWTP v14, and uses the resampled weights in
+export and its Detailed preview. The image covers the heightmap grid; R, G, B,
+and A map to distinct stable surface IDs. A VTK render test measures external-
+mask seam pixels at magnified and minified scales. Shader-composed final
+weights, source-rule seams, and cross-reader seam/mip parity remain open.
+Blender imports and preserves required Control Maps,
 exposes authoring properties, and previews supported modes. Its render and
 sampler conformance remains incomplete; unsupported axis-specific wrap settings
 fall back to vertex weights with an import warning.

@@ -149,6 +149,77 @@ raise SystemExit(app.exec())
             self.assertTrue(np.all(pixels[..., 2] == 255))
             self.assertTrue(np.all(pixels[..., (0, 1, 3)] == 0))
 
+    def test_external_control_map_render_is_continuous_across_adjacent_tiles(self):
+        import pyvista as pv
+        from PIL import Image
+        from types import SimpleNamespace
+        from awt.gui.viewer3d import Viewer3D, load_tiles
+        from awt.pipeline import BuildParams, build, load_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            height_path = os.path.join(directory, "height.npy")
+            mask_path = os.path.join(directory, "external.png")
+            np.save(height_path, np.zeros((33, 65), dtype=np.float32))
+            mask = np.zeros((33, 65, 4), dtype=np.uint8)
+            mask[..., 0] = np.broadcast_to(np.linspace(0, 255, 65, dtype=np.uint8), (33, 65))
+            mask[..., 1] = 255 - mask[..., 0]
+            Image.fromarray(mask).save(mask_path)
+
+            material = TerrainMaterial(height_blend_enabled=False)
+            material.surfaces[0].color = [255, 0, 0]
+            material.surfaces[1].color = [0, 0, 255]
+            material.surfaces[2].color = [0, 0, 0]
+            material.surfaces[3].color = [0, 0, 0]
+            material.external_control_map_path = mask_path
+            material.external_control_map_surface_ids = [
+                surface.id for surface in material.surfaces[:4]]
+            params = BuildParams(input_path=height_path, out_dir=os.path.join(directory, "build"),
+                                 tile_cells=32, max_errors_m=[0.1], spacing_m=1.0)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            tiles = sorted(manifest["tiles"], key=lambda tile: tile["ix"])
+            self.assertEqual(len(tiles), 2)
+
+            tile_coords = [(tile["ix"], tile["iy"]) for tile in tiles]
+            data = load_tiles(manifest, tile_coords, 0, detailed=True)
+            plotter = pv.Plotter(off_screen=True, window_size=(480, 240))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            preview = SimpleNamespace(
+                _manifest=manifest, _material=material, _control_map_resolution=32,
+                _data=data, plotter=plotter, wire=SimpleNamespace(isChecked=lambda: False),
+            )
+            Viewer3D._draw_detailed(preview, pv)
+            plotter.show(auto_close=False)
+
+            points = data["points"]
+            x_min, x_max = float(points[:, 0].min()), float(points[:, 0].max())
+            y_min, y_max = float(points[:, 1].min()), float(points[:, 1].max())
+            seam_x = max(float(tile["points"][:, 0].max())
+                         for tile in data["material_tiles"] if tile["ix"] == tiles[0]["ix"])
+            center_x = (x_min + x_max) / 2
+            center_y = (y_min + y_max) / 2
+            self.assertAlmostEqual(seam_x, center_x, places=4)
+            seam_column = 240
+            camera = plotter.camera
+            camera.parallel_projection = True
+            camera.parallel_scale = 18
+            plotter.camera_position = [
+                (center_x, center_y, 100), (center_x, center_y, 0), (0, 1, 0)]
+
+            for scale in (18, 32):
+                camera.parallel_scale = scale
+                plotter.render()
+                pixels = plotter.screenshot(return_img=True).astype(np.int16)
+                self.assertEqual(pixels.shape[1], 480)
+                left = pixels[30:-30, seam_column - 1, :3]
+                right = pixels[30:-30, seam_column + 1, :3]
+                differences = np.max(np.abs(left - right), axis=1)
+                self.assertLess(float(np.median(differences)), 8,
+                                f"Rendered Control Map seam differs at scale {scale}: {differences}")
+                self.assertLess(float(np.percentile(differences, 95)), 20,
+                                f"Rendered seam outliers at scale {scale}: {differences}")
+
     def test_biome_noise_slider_updates_and_saves_project(self):
         window = MainWindow()
         self.addCleanup(window.close)
@@ -1763,6 +1834,12 @@ raise SystemExit(app.exec())
         result = {"written": ["tile"], "skipped": 0, "bytes": 0, "seconds": 0.1, "out_dir": "output",
                   "conflicts": 2, "reduced_vertices": 4, "mean_reduction_error": 0.2,
                   "max_reduction_error": 0.4, "warnings": [],
+                  "conflicts_by_lod": {0: 1, 1: 1},
+                  "conflicts_by_tile_lod": {"tile": {0: 1, 1: 1}},
+                  "mean_exported_weights_by_lod": {0: {"awt.surface.snow": 0.6}},
+                  "mean_exported_weights_by_tile_lod": {
+                      "tile": {0: {"awt.surface.snow": 0.6}},
+                  },
                   "conflict_details": [{
                       "tile_id": "tile", "lod": 0, "triangle_index": 5,
                       "dropped_surfaces": [{
@@ -1775,6 +1852,15 @@ raise SystemExit(app.exec())
         with patch.object(window, "_check_changes"):
             window._export_done(result)
         self.assertIn("approximate palettes", window.report.toPlainText())
+        self.assertIn("Palette conflicts by LOD across exported tiles: LOD 0: 1, LOD 1: 1.",
+                      window.report.toPlainText())
+        self.assertIn("Palette conflicts by tile and LOD: tile LOD 0: 1; tile LOD 1: 1",
+                      window.report.toPlainText())
+        self.assertIn("Mean exported COLOR_1 vertex weights by LOD (input data, not shader-composed):",
+                      window.report.toPlainText())
+        self.assertIn("awt.surface.snow 60.0%", window.report.toPlainText())
+        self.assertIn("Mean exported vertex weights by tile and LOD: tile LOD 0: awt.surface.snow 60.0%",
+                      window.report.toPlainText())
 
         args = argparse.Namespace(project="project.awtp", out="", no_validate=False,
                                   build=False, all=True, tiles=None)

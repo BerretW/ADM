@@ -321,6 +321,17 @@ class PipelineTest(unittest.TestCase):
             source, (3, 5), (2.0, 0.0, 4.0, 2.0), (5, 3), source_ids, target_ids)
         np.testing.assert_array_equal(left[:, -1], right[:, 0])
 
+        corners = np.zeros((2, 2, 4), dtype=np.uint8)
+        for channel in range(4):
+            corners[channel // 2, channel % 2, channel] = 255
+        center = rasterize_external_control_map(
+            corners, (2, 2), (0.0, 0.0, 1.0, 1.0), (3, 3), source_ids, source_ids)[1, 1]
+        np.testing.assert_array_equal(center, [64, 64, 64, 63])
+        oversized = np.zeros((2, 4097, 4), dtype=np.uint8)
+        with self.assertRaisesRegex(ValueError, "4096-side"):
+            rasterize_external_control_map(
+                oversized, (2, 4097), (0.0, 0.0, 1.0, 1.0), (2, 2), source_ids, source_ids)
+
     def test_control_map_adjacent_tile_edges_match_across_palette_order(self):
         data = np.add.outer(np.arange(9, dtype=np.float32), np.arange(13, dtype=np.float32))
         material = TerrainMaterial()

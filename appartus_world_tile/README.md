@@ -42,6 +42,17 @@ continue to use authored physical surface data, not Control Map or shader
 output. Select **Control Map channel** in the 3D viewer to inspect a local
 palette channel; set a nonzero resolution first.
 
+To use an external mask, select an RGBA PNG, TIFF, or TGA in **External RGBA
+map**, then assign each R, G, B, and A channel to a different stable surface.
+The image spans the full heightmap grid, with its top row aligned to the
+northern edge. The importer treats all four channels as linear weights (alpha
+is not transparency), resamples them over each tile, and normalizes each
+sample. Files are limited to 64 MiB and 4096 pixels per side. The project saves
+the image path and channel-to-surface IDs; keep the image available when you
+reopen or export the project. Set a nonzero Control Map resolution to use the
+mask in export and the Detailed material preview. External masks affect visual
+weights only; collision assignments still use authored physical surface data.
+
 For an existing `.venv`, rerun `.venv\Scripts\python -m pip install -e ".[gui]"`
 to update dependencies. The launcher installs them only when it creates `.venv`.
 
@@ -394,7 +405,7 @@ adm/
   weights at shared vertices within each tile LOD; it does not claim exact representation of
   omitted surfaces or continuity across independently sampled tile/LOD boundaries. Projects
   from versions 2–6 that do not store a palette policy load as **Approximate** to preserve their
-  previous export behavior. Saving writes project format version 11 with the selected policy.
+  previous export behavior. Saving writes project format version 14 with the selected policy.
   Exported terrain materials use `ADM_terrain_surface_v1` to map local layer slots to those stable
   IDs. The extension adds identity metadata and does not change rendering or physical assignments.
 * Every written tile is validated with the ADM validator before it replaces the old file
