@@ -232,9 +232,14 @@ confirmed.
   deterministically while keeping unused weight channels zero. The Detailed
   VTK preview renders both projections and all blend modes; regression tests
   confirm neutral behavior and unchanged exported weights and collider
-  assignments. Blender still rejects required Macro Color data. Tile-edge
-  mip/gutter continuity, parallax ordering, and cross-reader output remain
-  unverified.
+  assignments. Blender imports and exports required Macro Color data, preserves
+  texture/sampler references and stable IDs, exposes authoring settings, and
+  renders local-UV/shared-world-XZ projection with all three blend modes.
+  Cycles pixels match the independent linear reference math, and import/export
+  plus `.blend` save/reload tests preserve settings and texture references.
+  The preview uses a dedicated sRGB, channel-packed image so RGB remains
+  independent of alpha coverage. Tile-edge mip/gutter continuity,
+  parallax-ordering, and cross-reader output remain unverified.
 
 ### M2 palette policy with future Control Maps (architectural decision confirmed)
 - Preserve four local visual slots and their stable global surface-ID mapping
@@ -279,6 +284,10 @@ confirmed.
 - Evidence: `adm-standard/extensions/ADM_terrain_macro_normal_v1.md`,
   `adm_blender/core/material_math.py`, validator tests, and independent
   vectors in `adm-standard/fixtures/expectations/terrain_macro_normal_v1.json`.
-- Consequences: Blender rejects required Macro Normal data before scene
-  mutation. World Tile and Blender authoring/render integration, filtered
-  border/mip behavior, and portable fallback equivalence remain open.
+- Consequences: World Tile authoring/export/preset and preview integration are
+  implemented; Blender authoring/export/save-reload and RNM preview are
+  implemented, including rotated surfaces and a different-UV layer-normal
+  fixture. Blender still rejects required data until mirrored/degenerate frame
+  handling and BC5/fallback round trips are verified. Filtered border/mip
+  behavior, adjacent-tile continuity, and portable fallback equivalence
+  remain open.

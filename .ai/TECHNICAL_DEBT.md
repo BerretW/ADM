@@ -13,9 +13,13 @@ severity, cause, workaround, proposed fix, and source/test evidence.
   gate for registered four-layer profiles and four stable IDs in every mode,
   and World Tile can export opt-in, source-sampled RGBA maps and sample them in
   the Detailed material preview. Blender now imports and exports the extension,
-  exposes authoring properties, and previews supported modes. Neither consumer
-  has complete conformance evidence for derivative-based mip selection,
-  shared borders, or rendered seams. Blender falls back to vertex weights when
+  exposes authoring properties, and previews supported modes. World Tile has
+  VTK evidence for minification, mip selection, and rendered seams. Blender
+  Cycles verifies minified filtered weights and a shared world-XZ edge across
+  adjacent meshes; explicit mip selection, cross-reader parity, and per-layer
+  parallax ordering remain unverified. Blender's current terrain preview does
+  not implement POM, so it cannot render-verify the ordering against an active
+  parallax effect. Blender falls back to vertex weights when
   sampler wrap modes differ by axis, because its Image Texture node applies one
   wrap mode to both axes.
 - **Workaround:** Blender emits an import warning for axis-specific wrap modes
@@ -37,8 +41,12 @@ severity, cause, workaround, proposed fix, and source/test evidence.
   rendered evidence for translated object positions and a matching
   floating-origin shift; sampler filtering, mip behavior, and pre-parallax
   ordering remain unverified there. Keep physical classification based on
-  stable authored surface links and manual paint, never rendered Control Map
-  output.
+  Blender now has rendered evidence for translated world positions, a
+  compensating floating-origin shift, minified weight averaging, and an
+  adjacent-mesh world-XZ seam. Explicit mip selection, cross-reader
+  sampler/filter parity, and per-layer parallax ordering remain open; the
+  preview does not implement POM. Keep physical classification based on stable
+  authored surface links and manual paint, never rendered Control Map output.
 - **Evidence:** `adm-standard/extensions/ADM_terrain_control_map_v1.md`,
   `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`,
   `adm_blender/blender/import_adm.py`, and the focused tests recorded in
@@ -78,14 +86,19 @@ severity, cause, workaround, proposed fix, and source/test evidence.
 - **Severity:** High for assets that require the macro effect.
 - **Cause:** `ADM_terrain_macro_color_v1@1.0.0` has a normative contract,
   reference color/coordinate math, profile/image/color-space/sampler
-  validation, and independent vectors. World Tile now authors, persists,
-  exports, and previews the feature, but Blender rejects required Macro Color
-  data and neither reader has tile-edge mip/gutter conformance evidence.
-- **Workaround:** Do not rely on Macro Color in Blender assets. World Tile
-  preview/export support is not cross-reader certification.
-- **Next step:** Implement Blender metadata and rendering support; verify
-  mip/border continuity, parallax ordering, and cross-reader output for both
-  consumers.
+  validation, and independent vectors. World Tile and Blender now author,
+import/export, and render the feature; Blender also verifies output against
+the reference math and preserves editable settings through save/reload.
+World Tile now measures a shared-world map across adjacent tile actors at
+magnified and minified views. Exact mip selection, separate-image gutter
+handling, parallax ordering, and cross-reader conformance remain unverified.
+- **Workaround:** Use Macro Color only with registered four-layer profiles and
+  the tested projection and blend modes. Current consumer support is not
+  cross-reader certification.
+- **Next step:** Verify exact mip/gutter continuity for separately tiled
+  images and cross-reader output. World Tile now has rendered evidence for
+  adjacent tile continuity and independence from per-layer Parallax/POM;
+  Blender's terrain preview still does not implement POM.
 - **Evidence:** `adm-standard/extensions/ADM_terrain_macro_color_v1.md`,
   `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`,
   `adm_blender/blender/import_adm.py`, the focused tests, and the compatibility
@@ -95,16 +108,21 @@ severity, cause, workaround, proposed fix, and source/test evidence.
 - **Severity:** High for assets that require the macro normal effect.
 - **Cause:** `ADM_terrain_macro_normal_v1@1.0.0` has a normative BC5/RNM/frame
   contract, reference math, profile/image/format/sampler validation, and
-  independent vectors, but World Tile and Blender do not render or author it.
-  Filtered mip/border continuity, cross-frame rendered output, and portable
-  fallback equivalence are unverified.
+  independent vectors. World Tile authoring/export/presets and local/shared
+  previews are implemented, including BC5 source preservation, reconstructed
+  RGB fallback, parallax independence, and unchanged collider assignments.
+  Blender authoring/export/save-reload and local/shared RNM previews work for
+  rotated surfaces and a fixture with a layer normal on a different UV set.
+  Mirrored/degenerate UV tangent-frame behavior is not verified; filtered
+  mip/border continuity, broader cross-frame fixtures, adjacent-tile
+  continuity, and portable fallback equivalence are also unverified.
 - **Workaround:** Blender rejects required Macro Normal data before scene
-  mutation. Do not label its contract, validator, or reference math as renderer
-  support.
-- **Next step:** Implement authoring, import/persistence, rendering, and
-  previews in World Tile and Blender; verify BC5/RGB fallback equivalence,
-  shared-tile seams, mip behavior, parallax independence, and unchanged
-  physical assignments.
+  mutation. Keep this guard until the renderer verifies mirrored/degenerate
+  tangent frames and BC5/fallback handling; current preview evidence does not
+  establish complete required-extension support.
+- **Next step:** Verify mirrored/degenerate tangent-frame handling and BC5/RGB
+  fallback equivalence, then enable required-data import only after round-trip,
+  shared-tile seam, mip, parallax-independence, and collider tests pass.
 - **Evidence:** `adm-standard/extensions/ADM_terrain_macro_normal_v1.md`,
   `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`,
   `adm_blender/blender/import_adm.py`, the focused tests, and the compatibility
@@ -141,12 +159,19 @@ severity, cause, workaround, proposed fix, and source/test evidence.
 
 ### Multiplatform codecs and Blender cycle diagnostics
 - **Severity:** Medium to high depending on release target.
-- **Cause:** Historical verification was Windows-focused; Blender dependency
-  cycles were observed without a confirmed minimal reproducer.
-- **Workaround:** State the tested platform/runtime and preserve diagnostics.
-- **Next step:** Test supported platforms where available; isolate cycle sources
-  before attempting targeted fixes.
-- **Evidence:** Previous mission closeout and test records (archived).
+- **Cause:** Historical verification was Windows-focused. Blender 5.2.3
+  reports dependency cycles when preview drivers target shader-node output
+  `default_value` properties and feed back through the node-tree output.
+  `_Graph._driver()` and `source()` in
+  `adm_blender/blender/shader_preview.py` construct these live preview links.
+- **Workaround:** Keep the live drivers and report the warnings; disabling them
+  would break preview updates. Do not suppress the diagnostics.
+- **Next step:** Find a cycle-free live-update path and verify it against the
+  material preview suite before replacing the current driver mechanism. Test
+  supported platforms and codecs where available.
+- **Evidence:** `adm_blender/blender/shader_preview.py`,
+  `adm_blender/tests/test_shader_preview.py`,
+  `adm_blender/tests/test_material_height_blender.py`, and `.ai/TESTS.md`.
 
 ### Independent terrain collision authoring
 - **Severity:** High for terrain collision workflows.

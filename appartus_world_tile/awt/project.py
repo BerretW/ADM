@@ -16,7 +16,7 @@ from .material import TerrainMaterial
 from .pipeline import BuildParams
 
 PROJECT_FORMAT = "apparatus-world-tile-project"
-PROJECT_VERSION = 15
+PROJECT_VERSION = 16
 PROJECT_EXTENSION = ".awtp"
 PROJECT_FILTER = "Apparatus World Tile project (*.awtp)"
 

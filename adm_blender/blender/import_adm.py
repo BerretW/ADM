@@ -164,8 +164,9 @@ class ModelImporter:
             raise ImportError_(f"{K.MATERIAL_HEIGHT_EXT} is required but its effect is not supported by Blender",
                                report)
         if K.TERRAIN_MACRO_NORMAL_EXT in self.doc.get("extensionsRequired", []):
-            raise ImportError_(f"{K.TERRAIN_MACRO_NORMAL_EXT} is required but its renderer is not supported by "
-                               "Blender yet", report)
+            raise ImportError_(
+                f"{K.TERRAIN_MACRO_NORMAL_EXT} is required but Blender does not yet conform to its "
+                "mirrored and degenerate UV tangent-frame cases", report)
         unknown = sorted(set(self.doc.get("extensionsUsed", [])) - set(K.SUPPORTED_EXTENSIONS))
         if unknown:
             self.warn("OPTIONAL_EXTENSIONS_UNSUPPORTED: " + ", ".join(unknown) +
@@ -249,6 +250,13 @@ class ModelImporter:
             if "_adm_control_map_preview_fallback" in mat:
                 self.warn(f"CONTROL_MAP_PREVIEW_FALLBACK: material '{mat.name}': "
                           f"{mat['_adm_control_map_preview_fallback']}; vertex weights remain in preview")
+            macro_color_data = (m.get("extensions") or {}).get(K.TERRAIN_MACRO_COLOR_EXT)
+            if macro_color_data is not None and mat.adm.macro_color_image is None:
+                self.warn(f"MACRO_COLOR_IMAGE_MISSING: material '{mat.name}' retains the required Macro Color "
+                          "reference but previews unchanged albedo")
+            if "_adm_macro_color_preview_fallback" in mat:
+                self.warn(f"MACRO_COLOR_PREVIEW_FALLBACK: material '{mat.name}': "
+                          f"{mat['_adm_macro_color_preview_fallback']}; preview uses the S-axis wrap mode")
             if "adm_incomplete_textures" in mat:
                 for image_index in mat["adm_incomplete_textures"]:
                     try:

@@ -660,6 +660,13 @@ class Viewer3D(QWidget):
                     mesh.point_data["Normals"] = tile["normals"][keep]
                     mesh.point_data.active_normals_name = "Normals"
                     mesh.active_texture_coordinates = tile["uv"][keep]
+                    asset_position_attribute = None
+                    if ((self._material.macro_color.path
+                         and self._material.macro_color.projection == "SHARED_WORLD_XZ")
+                            or (self._material.macro_normal.path
+                                and self._material.macro_normal.projection == "SHARED_WORLD_XZ")):
+                        asset_position_attribute = "admAssetPositionSource"
+                        mesh.point_data[asset_position_attribute] = tile["points"][keep]
                     slots = _slots(mask)
                     mesh.point_data["layer_weights"] = color1(effective_weights[keep], slots).astype(np.float32) / 255
                     mesh = _mesh_with_tangents(mesh, pv)
@@ -708,6 +715,7 @@ class Viewer3D(QWidget):
                         vertex_weights="layer_weights", uv_scales=self._material.uv_scale(tile_size, layers),
                         texture_cache=texture_cache, texture_budget_bytes=DETAIL_TEXTURE_BUDGET,
                         control_map_pixels=control_map_pixels,
+                        asset_position_attribute=asset_position_attribute,
                         diagnostic=("control", self.weight_channel.currentIndex())
                         if control_map_diagnostic else None)
         except (OSError, ValueError):

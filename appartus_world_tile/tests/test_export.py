@@ -14,8 +14,8 @@ from PIL import Image
 from awt.adm_export import (INDEX_NAME, ExportSettings, _core, _palette_conflict_details, changed_tiles, color1,
                             export_tiles, group_masks, prepare_adm_texture, rules_outdated,
                             seam_consistent_weights, triangle_masks)
-from awt.material import (Band, Biome, BiomeSurface, MacroColorSettings, MapSlot, PhysicalMaterial, Surface,
-                          TerrainMaterial, prepare_texture)
+from awt.material import (Band, Biome, BiomeSurface, MacroColorSettings, MacroNormalSettings, MapSlot,
+                          PhysicalMaterial, Surface, TerrainMaterial, prepare_texture)
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields, write_ply
 from awt.project import Project, load_project
@@ -242,7 +242,7 @@ class ExportTest(unittest.TestCase):
             surface.id for surface in project.material.surfaces[:4]]
 
         payload = project.to_dict()
-        self.assertEqual(payload["format_version"], 15)
+        self.assertEqual(payload["format_version"], 16)
         self.assertEqual(payload["material"]["external_control_map"]["path"], "mask.png")
         restored = Project.from_dict(payload, project_path)
         self.assertEqual(restored.material.external_control_map_path, mask_path)
@@ -257,10 +257,12 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(restored_legacy.material.external_control_map_path, "")
         self.assertEqual(restored_legacy.material.external_control_map_surface_ids, [])
 
-    def test_project_v15_macro_color_path_settings_and_fingerprint_round_trip(self):
+    def test_project_v16_macro_maps_round_trip_and_keep_v15_macro_color_compatibility(self):
         project_path = os.path.join(self.tmp.name, "world.awtp")
         macro_path = os.path.join(self.tmp.name, "macro.png")
+        macro_normal_path = os.path.join(self.tmp.name, "macro-normal.png")
         Image.new("RGB", (8, 8), (90, 120, 150)).save(macro_path)
+        Image.new("LA", (8, 8), (128, 255)).save(macro_normal_path)
         project = Project(self.params, self.material, self.settings, path=project_path)
         project.material.macro_color = MacroColorSettings(
             path=macro_path,
@@ -272,25 +274,49 @@ class ExportTest(unittest.TestCase):
             offset=[0.1, -0.2],
             origin=[100.0, -50.0],
         )
+        project.material.macro_normal = MacroNormalSettings(
+            path=macro_normal_path, projection="SHARED_WORLD_XZ", strength=0.7,
+            layer_influence=[1.0, 0.8, 0.6, 0.4], scale=[0.03, 0.04],
+            offset=[-0.1, 0.2], origin=[20.0, -30.0])
         project.material.validate()
         original_fingerprint = project.material.fingerprint(64)
 
         payload = project.to_dict()
-        self.assertEqual(payload["format_version"], 15)
+        self.assertEqual(payload["format_version"], 16)
         self.assertEqual(payload["material"]["macro_color"]["path"], "macro.png")
+        self.assertEqual(payload["material"]["macro_normal"]["path"], "macro-normal.png")
         restored = Project.from_dict(payload, project_path)
         self.assertEqual(restored.material.macro_color, project.material.macro_color)
+        self.assertEqual(restored.material.macro_normal, project.material.macro_normal)
         self.assertIn(macro_path, restored.material.textures())
+        self.assertIn(macro_normal_path, restored.material.textures())
         self.assertEqual(restored.material.fingerprint(64), original_fingerprint)
 
-        Image.new("RGB", (8, 8), (10, 20, 30)).save(macro_path)
+        Image.new("LA", (8, 8), (80, 255)).save(macro_normal_path)
         self.assertNotEqual(restored.material.fingerprint(64), original_fingerprint)
 
         legacy = dict(payload)
-        legacy["format_version"] = 14
+        legacy["format_version"] = 15
         legacy["material"] = dict(payload["material"])
-        legacy["material"].pop("macro_color")
-        self.assertEqual(Project.from_dict(legacy, project_path).material.macro_color, MacroColorSettings())
+        legacy["material"].pop("macro_normal")
+        self.assertEqual(Project.from_dict(legacy, project_path).material.macro_color,
+                         project.material.macro_color)
+        self.assertEqual(Project.from_dict(legacy, project_path).material.macro_normal,
+                         MacroNormalSettings())
+
+    def test_macro_normal_validation_requires_png_with_two_channels(self):
+        grayscale_path = os.path.join(self.tmp.name, "macro-normal-gray.png")
+        Image.new("L", (8, 8), 128).save(grayscale_path)
+        with self.assertRaisesRegex(ValueError, "at least two channels"):
+            MacroNormalSettings(path=grayscale_path).validate()
+        with self.assertRaisesRegex(ValueError, "scale must not be"):
+            MacroNormalSettings(scale=[0.0, 0.0]).validate()
+        with self.assertRaisesRegex(ValueError, "strength must be"):
+            MacroNormalSettings(strength=1.1).validate()
+        jpeg_path = os.path.join(self.tmp.name, "macro-normal.jpg")
+        Image.new("RGB", (8, 8), (128, 128, 255)).save(jpeg_path)
+        with self.assertRaisesRegex(ValueError, "must be PNG"):
+            MacroNormalSettings(path=jpeg_path).validate()
 
     def test_macro_color_validation_rejects_grayscale_and_invalid_scale(self):
         grayscale_path = os.path.join(self.tmp.name, "macro-gray.png")
@@ -371,6 +397,123 @@ class ExportTest(unittest.TestCase):
             collision_snapshot(macro_doc, macro_chunks),
             collision_snapshot(baseline_doc, baseline_chunks),
         )
+
+    def test_macro_normal_export_preserves_bc5_and_collision_assignments(self):
+        from adm_blender.core import gputex
+        from adm_blender.core.constants import TERRAIN_MACRO_NORMAL_EXT
+
+        self.params.collision_max_error_m = 0.8
+        self.params.collision_max_triangles_per_tile = 4096
+        physical = PhysicalMaterial("Terrain", 0.65, 0.1, "adm.phys.ground.v1")
+        self.material.physical_materials.append(physical)
+        for surface in self.material.surfaces:
+            surface.physical_material_id = physical.id
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        tile_id = manifest["tiles"][0]["id"]
+
+        baseline_dir = os.path.join(self.tmp.name, "adm-normal-baseline")
+        baseline_settings = ExportSettings(
+            out_dir=baseline_dir, palette_conflict_policy="APPROXIMATE")
+        export_tiles(manifest, self.material, baseline_settings, "selected", [tile_id])
+        baseline_doc, baseline_chunks = _read_adm(os.path.join(baseline_dir, tile_id + ".adm"))
+
+        source_pixels = np.full((16, 16, 4), 128, dtype=np.uint8)
+        source_pixels[..., 3] = 255
+        source_bytes, _kind = gputex.encode(
+            source_pixels, gputex.MIME_DDS, "BC5", srgb=False, mipmaps=True)
+        source_path = os.path.join(self.tmp.name, "macro-normal.dds")
+        Path(source_path).write_bytes(source_bytes)
+        self.material.macro_normal = MacroNormalSettings(
+            path=source_path, projection="SHARED_WORLD_XZ", origin=[12.0, -4.0],
+            strength=0.7, layer_influence=[1.0, 0.5, 0.25, 0.0])
+
+        macro_dir = os.path.join(self.tmp.name, "adm-macro-normal")
+        macro_settings = ExportSettings(
+            out_dir=macro_dir, palette_conflict_policy="APPROXIMATE")
+        export_tiles(manifest, self.material, macro_settings, "selected", [tile_id])
+        macro_doc, macro_chunks = _read_adm(os.path.join(macro_dir, tile_id + ".adm"))
+
+        self.assertIn(TERRAIN_MACRO_NORMAL_EXT, macro_doc["extensionsUsed"])
+        self.assertIn(TERRAIN_MACRO_NORMAL_EXT, macro_doc["extensionsRequired"])
+        material = macro_doc["materials"][0]
+        extension = material["extensions"][TERRAIN_MACRO_NORMAL_EXT]
+        self.assertEqual(extension["projection"], "SHARED_WORLD_XZ")
+        self.assertEqual(extension["origin"], [12.0, -4.0])
+        self.assertEqual(extension["layerInfluence"], [1.0, 0.5, 0.25, 0.0])
+        self.assertNotIn("texCoord", extension["texture"])
+        surface_ids = material["extensions"]["ADM_terrain_surface_v1"]["surfaceIds"]
+        self.assertEqual(len(surface_ids), 4)
+        self.assertEqual(len(set(surface_ids)), 4)
+
+        texture_record = macro_doc["textures"][extension["texture"]["index"]]
+        primary = macro_doc["images"][texture_record["source"]]
+        primary_bytes = Path(macro_dir, primary["uri"]).read_bytes()
+        self.assertEqual(primary_bytes, source_bytes)
+        info = gputex.parse(primary_bytes, gputex.mime_of(primary_bytes), strict=True)
+        self.assertEqual(info["kind"], "BC5")
+        self.assertFalse(info["srgb"])
+
+        fallback = macro_doc["images"][texture_record["fallbackSource"]]
+        with Image.open(Path(macro_dir, fallback["uri"])) as image:
+            fallback_pixels = np.asarray(image.convert("RGB"))
+        decoded = gputex.decode(source_bytes, gputex.MIME_DDS, strict=True)[0]
+        expected_normal = gputex.reconstruct_bc5_normal(decoded.astype(np.float32) / 255.0)
+        np.testing.assert_array_equal(
+            fallback_pixels, np.rint(expected_normal[..., :3] * 255.0).astype(np.uint8))
+
+        def collision_snapshot(doc, chunks):
+            mesh = doc["meshes"][doc["colliders"][0]["mesh"]]
+            return [
+                (
+                    _accessor(doc, chunks, primitive["attributes"]["POSITION"]).tolist(),
+                    _accessor(doc, chunks, primitive["indices"]).tolist(),
+                    primitive.get("extensions"),
+                )
+                for primitive in mesh["primitives"]
+            ]
+
+        self.assertEqual(
+            collision_snapshot(macro_doc, macro_chunks),
+            collision_snapshot(baseline_doc, baseline_chunks),
+        )
+
+    def test_macro_normal_png_preparation_builds_bc5_and_reconstructed_fallback(self):
+        from adm_blender.core import gputex
+
+        pixels = np.full((16, 16, 3), 127, dtype=np.uint8)
+        pixels[..., 0] = np.arange(16, dtype=np.uint8)[None, :] * 8 + 64
+        pixels[..., 1] = np.arange(16, dtype=np.uint8)[:, None] * 8 + 64
+        path = os.path.join(self.tmp.name, "macro-normal.png")
+        Image.fromarray(pixels).save(path)
+
+        prepared = prepare_adm_texture(path, "macro_normal")
+        info = gputex.parse(prepared.primary.data, prepared.primary.mime, strict=True)
+        self.assertEqual(info["kind"], "BC5")
+        self.assertFalse(info["srgb"])
+        self.assertEqual(prepared.fallback.mime, "image/png")
+        self.assertIsNotNone(prepared.pbr_normal)
+        self.assertEqual(prepared.fallback.data, prepared.pbr_normal.data)
+        decoded = gputex.decode(prepared.primary.data, prepared.primary.mime, strict=True)[0]
+        expected = gputex.reconstruct_bc5_normal(decoded.astype(np.float32) / 255.0)
+        with Image.open(io.BytesIO(prepared.fallback.data)) as image:
+            fallback = np.asarray(image.convert("RGB"))
+        np.testing.assert_array_equal(fallback, np.rint(expected[..., :3] * 255.0).astype(np.uint8))
+
+    def test_macro_normal_la_png_preserves_both_normal_channels(self):
+        from adm_blender.core import gputex
+        from awt.material import normal_preview_array
+
+        path = os.path.join(self.tmp.name, "macro-normal-la.png")
+        Image.new("LA", (8, 8), (64, 192)).save(path)
+
+        preview = normal_preview_array(path)
+        np.testing.assert_array_equal(preview[..., 0], 64)
+        np.testing.assert_array_equal(preview[..., 1], 192)
+        prepared = prepare_adm_texture(path, "macro_normal")
+        decoded = gputex.decode(prepared.primary.data, prepared.primary.mime, strict=True)[0]
+        self.assertLessEqual(abs(int(decoded[0, 0, 0]) - 64), 2)
+        self.assertLessEqual(abs(int(decoded[0, 0, 1]) - 192), 2)
 
     def test_physical_paint_exports_stable_per_triangle_references(self):
         self.params.collision_max_error_m = 0.8
@@ -762,7 +905,7 @@ class ExportTest(unittest.TestCase):
         project.material.physical_paint[2:4, 3:6] = 0
         project.export.control_map_resolution = 128
         payload = project.to_dict()
-        self.assertEqual(payload["format_version"], 15)
+        self.assertEqual(payload["format_version"], 16)
         self.assertEqual(payload["export"]["control_map_resolution"], 128)
         self.assertEqual(payload["export"]["palette_conflict_policy"], "STRICT")
         restored = Project.from_dict(payload)
@@ -1457,7 +1600,7 @@ class ExportTest(unittest.TestCase):
         self.assertTrue(any("retains R16 in KTX2" in warning for warning in result["warnings"]))
         project = Project(self.params, self.material, self.settings)
         data = project.to_dict()
-        self.assertEqual(data["format_version"], 15)
+        self.assertEqual(data["format_version"], 16)
         restored = Project.from_dict(data)
         self.assertEqual((restored.export.gpu_container, restored.export.gpu_encoding), ("KTX2", "RGBA8"))
         self.assertEqual(self.material.rules_digest(), restored.material.rules_digest())
@@ -1552,7 +1695,7 @@ class ExportTest(unittest.TestCase):
                         shared = True
         self.assertTrue(shared)
         data = Project(self.params, self.material, self.settings).to_dict()
-        self.assertEqual(data["format_version"], 15)
+        self.assertEqual(data["format_version"], 16)
         self.assertEqual(Project.from_dict(data).material.surface("rock").gpu_encodings, rock.gpu_encodings)
         rock.gpu_encodings["height"] = "UNKNOWN"
         with self.assertRaisesRegex(ValueError, "unsupported per-map GPU encoding"):

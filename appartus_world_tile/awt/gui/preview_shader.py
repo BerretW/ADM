@@ -155,7 +155,7 @@ def _height_samples(slot: MapSlot) -> np.ndarray:
     return 1.0 - samples if slot.invert else samples
 
 
-def _install_view_position(shader, asset_position=False):
+def _install_view_position(shader, asset_position=False, asset_position_attribute=None):
     shader.AddVertexShaderReplacement(
         "//VTK::Camera::Dec", True, "//VTK::Camera::Dec\nuniform mat4 MCVCMatrix;", False)
     shader.AddVertexShaderReplacement(
@@ -164,11 +164,14 @@ def _install_view_position(shader, asset_position=False):
         "uniform mat4 MCVCMatrix;\n#endif", True)
     declarations = "//VTK::PositionVC::Dec\nout vec3 admPositionVC;"
     if asset_position:
+        if asset_position_attribute:
+            declarations += "\nin vec3 admAssetPositionMC;"
         declarations += "\nout vec3 admAssetPosition;"
     shader.AddVertexShaderReplacement("//VTK::PositionVC::Dec", True, declarations, False)
     implementation = "//VTK::PositionVC::Impl\nadmPositionVC = (MCVCMatrix * vertexMC).xyz;"
     if asset_position:
-        implementation += "\nadmAssetPosition = vertexMC.xyz;"
+        source = "admAssetPositionMC" if asset_position_attribute else "vertexMC.xyz"
+        implementation += f"\nadmAssetPosition = {source};"
     shader.AddVertexShaderReplacement(
         "//VTK::PositionVC::Impl", True, implementation, False)
 
@@ -243,6 +246,9 @@ vec3 admPosDx = dFdx(admPositionVC);
 vec3 admPosDy = dFdy(admPositionVC);
 float admDet = admBaseDx.x * admBaseDy.y - admBaseDx.y * admBaseDy.x;
 vec3 admCross = cross(admPosDx, admPosDy);
+vec3 admBaseT = vec3(1.0, 0.0, 0.0);
+vec3 admBaseB = vec3(0.0, 1.0, 0.0);
+vec3 admBaseN = vec3(0.0, 0.0, 1.0);
 vec3 admView = vec3(0.0);
 if (abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
     vec3 n = normalize(admCross);
@@ -252,6 +258,9 @@ if (abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
     if (length(tangent) > 1e-12 && length(b0) > 1e-12) {
         vec3 t = normalize(tangent);
         vec3 b = normalize(cross(n, t)) * (dot(cross(n, t), b0) < 0.0 ? -1.0 : 1.0);
+        admBaseT = t;
+        admBaseB = b;
+        admBaseN = n;
         vec3 v = cameraParallel == 1 ? vec3(0.0, 0.0, 1.0) : normalize(-admPositionVC);
         admView = normalize(vec3(dot(v, t), dot(v, b), dot(v, n)));
     }
@@ -261,7 +270,8 @@ if (abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
 
 def install_layered_preview(actor, pv, surfaces, weights, material, *, height_blend, transition, strength,
                             texture_units, vertex_weights=None, uv_scales=None, diagnostic=None,
-                            texture_cache=None, texture_budget_bytes=None, control_map_pixels=None):
+                            texture_cache=None, texture_budget_bytes=None, control_map_pixels=None,
+                            asset_position_attribute=None):
     """Bind independent layer textures and evaluate the material at each fragment."""
     if material.parallax_mode not in ("NONE", "PARALLAX", "PARALLAX_OCCLUSION"):
         raise ValueError(f"Unsupported layered parallax mode: {material.parallax_mode}")
@@ -306,6 +316,10 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
     macro_enabled = bool(macro.path)
     if macro_enabled:
         macro.validate()
+    macro_normal = material.macro_normal
+    macro_normal_enabled = bool(macro_normal.path)
+    if macro_normal_enabled:
+        macro_normal.validate()
 
     textures = {}
     lines = [_LAYER_FRAME]
@@ -420,6 +434,63 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
             "vec2 admMacroDy = dFdy(admMacroUv);",
             "vec4 admMacroSample = textureGrad(admMacroColor, admMacroUv, admMacroDx, admMacroDy);",
         ]
+    if macro_normal_enabled:
+        color_map("admMacroNormal", macro_normal.path, normal=True)
+        if macro_normal.projection == "LOCAL_UV":
+            macro_normal_source = "admBaseUv"
+        elif macro_normal.projection == "SHARED_WORLD_XZ":
+            macro_normal_source = (
+                f"(admAssetPosition.xz - vec2({number(macro_normal.origin[0])}, "
+                f"{number(macro_normal.origin[1])}))")
+        else:
+            raise ValueError(f"Unknown Macro Normal projection: {macro_normal.projection}")
+        lines += [
+            f"vec2 admMacroNormalUv = {macro_normal_source} * vec2("
+            f"{number(macro_normal.scale[0])}, {number(macro_normal.scale[1])}) + "
+            f"vec2({number(macro_normal.offset[0])}, {number(macro_normal.offset[1])});",
+            "vec2 admMacroNormalDx = dFdx(admMacroNormalUv);",
+            "vec2 admMacroNormalDy = dFdy(admMacroNormalUv);",
+            "vec2 admMacroNormalSample = textureGrad(admMacroNormal, admMacroNormalUv, "
+            "admMacroNormalDx, admMacroNormalDy).rg * 2.0 - 1.0;",
+            "if (dot(admMacroNormalSample, admMacroNormalSample) > 1.0) "
+            "admMacroNormalSample = normalize(admMacroNormalSample);",
+            "float admMacroNormalZ = sqrt(max(0.0, 1.0 - dot(admMacroNormalSample, "
+            "admMacroNormalSample)));",
+            "vec3 admMacroN = admBaseN;",
+            "vec3 admMacroT = admBaseT;",
+            "vec3 admMacroB = admBaseB;",
+            "float admMacroDet = admMacroNormalDx.x * admMacroNormalDy.y - "
+            "admMacroNormalDx.y * admMacroNormalDy.x;",
+            "vec3 admMacroDpu = vec3(0.0);",
+            "vec3 admMacroDpv = vec3(0.0);",
+            "if (abs(admMacroDet) > 1e-12) {",
+            "  admMacroDpu = (admPosDx * admMacroNormalDy.y - admPosDy * "
+            "admMacroNormalDx.y) / admMacroDet;",
+            "  admMacroDpv = (admPosDy * admMacroNormalDx.x - admPosDx * "
+            "admMacroNormalDy.x) / admMacroDet;",
+            "}",
+            "vec3 admMacroTangent = admMacroDpu - admMacroN * dot(admMacroDpu, admMacroN);",
+            "vec3 admMacroBitangent = admMacroDpv - admMacroN * dot(admMacroDpv, admMacroN);",
+            "float admMacroHandedness = 1.0;",
+            "if (length(admMacroTangent) > 1e-12) {",
+            "  admMacroT = normalize(admMacroTangent);",
+            "  if (length(admMacroBitangent) > 1e-12 && "
+            "dot(cross(admMacroT, admMacroBitangent), admMacroN) < 0.0) "
+            "admMacroHandedness = -1.0;",
+            "} else {",
+            "  vec3 admMacroWorldX = mat3(MCVCMatrix) * vec3(1.0, 0.0, 0.0);",
+            "  vec3 admMacroWorldZ = mat3(MCVCMatrix) * vec3(0.0, 0.0, 1.0);",
+            "  vec3 admMacroAxis = abs(dot(normalize(admMacroWorldX), admMacroN)) > 0.9 "
+            "? admMacroWorldZ : admMacroWorldX;",
+            "  vec3 admMacroFallbackT = admMacroAxis - admMacroN * "
+            "dot(admMacroAxis, admMacroN);",
+            "  if (length(admMacroFallbackT) <= 1e-12) "
+            "admMacroFallbackT = admBaseT - admMacroN * dot(admBaseT, admMacroN);",
+            "  if (length(admMacroFallbackT) > 1e-12) "
+            "admMacroT = normalize(admMacroFallbackT);",
+            "}",
+            "admMacroB = admMacroHandedness * normalize(cross(admMacroN, admMacroT));",
+        ]
 
     total = sum(weights)
     mode = {"NONE": 0, "PARALLAX": 1, "PARALLAX_OCCLUSION": 2}[material.parallax_mode]
@@ -510,6 +581,31 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
             else:
                 lines.append(f"admAlbedo{i} = mix(admAlbedo{i}, admMacroSample.rgb, "
                              f"{factor} * admMacroSample.a);")
+    if macro_normal_enabled:
+        for i in range(len(surfaces)):
+            factor = number(float(macro_normal.strength) * float(macro_normal.layer_influence[i]))
+            lines += [
+                f"vec3 admBaseNormalView{i} = normalize(admBaseT * admNormal{i}.x + "
+                f"admBaseB * admNormal{i}.y + admBaseN * admNormal{i}.z);",
+                f"vec3 admBaseNormalMacro{i} = normalize(vec3(dot(admBaseNormalView{i}, admMacroT), "
+                f"dot(admBaseNormalView{i}, admMacroB), dot(admBaseNormalView{i}, admMacroN)));",
+                f"vec3 admDetailNormal{i} = normalize(vec3(admMacroNormalSample * {factor}, "
+                f"sqrt(max(0.0, 1.0 - dot(admMacroNormalSample * {factor}, "
+                f"admMacroNormalSample * {factor})))));",
+                f"vec3 admRnmT{i} = admBaseNormalMacro{i} + vec3(0.0, 0.0, 1.0);",
+                f"vec3 admRnmU{i} = admDetailNormal{i} * vec3(-1.0, -1.0, 1.0);",
+                f"vec3 admRnmResult{i} = admBaseNormalMacro{i};",
+                f"if (length(admRnmT{i}) > 1e-8) {{",
+                f"  vec3 admRnmCandidate{i} = admRnmT{i} * dot(admRnmT{i}, admRnmU{i}) "
+                f"- admRnmU{i} * admRnmT{i}.z;",
+                f"  if (length(admRnmCandidate{i}) > 1e-8) "
+                f"admRnmResult{i} = normalize(admRnmCandidate{i});",
+                "}",
+                f"vec3 admRnmView{i} = admMacroT * admRnmResult{i}.x + "
+                f"admMacroB * admRnmResult{i}.y + admMacroN * admRnmResult{i}.z;",
+                f"admNormal{i} = normalize(vec3(dot(admRnmView{i}, admBaseT), "
+                f"dot(admRnmView{i}, admBaseB), dot(admRnmView{i}, admBaseN)));",
+            ]
     lines += ["vec3 admMixedAlbedo = vec3(0.0);", "vec3 admMixedNormal = vec3(0.0);",
               "vec3 admMixedEmission = vec3(0.0);", "vec3 admMixedOrm = vec3(0.0);"]
     for i in range(count):
@@ -522,7 +618,26 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
     for name, texture in textures.items():
         actor.prop.SetTexture(name, texture)
     shader = actor.GetShaderProperty()
-    _install_view_position(shader, asset_position=macro_enabled and macro.projection == "SHARED_WORLD_XZ")
+    shared_world_macro = ((macro_enabled and macro.projection == "SHARED_WORLD_XZ")
+                          or (macro_normal_enabled and macro_normal.projection == "SHARED_WORLD_XZ"))
+    if asset_position_attribute:
+        if not shared_world_macro:
+            raise ValueError("Asset-position attributes require a shared-world Macro projection")
+        if not hasattr(actor.mapper, "MapDataArrayToVertexAttribute"):
+            raise ValueError("Shared-world Macro maps require a VTK polydata mapper")
+        from vtkmodules.vtkCommonDataModel import vtkDataObject
+
+        dataset = pv.wrap(actor.mapper.GetInput())
+        if asset_position_attribute not in dataset.point_data:
+            raise ValueError(f"Missing point-position array: {asset_position_attribute}")
+        values = np.asarray(dataset.point_data[asset_position_attribute])
+        if values.shape != (dataset.n_points, 3) or not np.isfinite(values).all():
+            raise ValueError("Shared-world Macro positions must be finite 3D points")
+        actor.mapper.MapDataArrayToVertexAttribute(
+            "admAssetPositionMC", asset_position_attribute, vtkDataObject.FIELD_ASSOCIATION_POINTS, -1)
+    _install_view_position(
+        shader, asset_position=shared_world_macro,
+        asset_position_attribute=asset_position_attribute)
     if vertex_weights is not None:
         from vtkmodules.vtkCommonDataModel import vtkDataObject
 
@@ -536,8 +651,10 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         shader.AddFragmentShaderReplacement(
             "//VTK::Color::Dec", True, "//VTK::Color::Dec\nin vec4 admWeightsVC;", False)
     position_inputs = "in vec3 admPositionVC;"
-    if macro_enabled and macro.projection == "SHARED_WORLD_XZ":
+    if shared_world_macro:
         position_inputs += "\nin vec3 admAssetPosition;"
+    if macro_normal_enabled:
+        position_inputs += "\nuniform mat4 MCVCMatrix;"
     shader.AddFragmentShaderReplacement(
         "//VTK::PositionVC::Dec", True,
         "//VTK::PositionVC::Dec\n" + position_inputs + "\n" + _LAYER_FUNCTIONS, False)

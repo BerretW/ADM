@@ -274,12 +274,15 @@ def prepare_adm_texture(path: str, role: str, gpu_container: str = "DDS",
     from adm_blender.core import gputex
 
     color_role = role in ("albedo", "macro_color")
-    compression = {"albedo": "AUTO", "macro_color": "AUTO", "normal": "RGBA8", "data": "BC3"}.get(role)
+    compression = {
+        "albedo": "AUTO", "macro_color": "AUTO", "macro_normal": "BC5",
+        "normal": "RGBA8", "data": "BC3",
+    }.get(role)
     if compression is None:
         raise ValueError(f"Unknown texture role {role!r}")
     if gpu_container not in GPU_CONTAINERS or gpu_encoding not in GPU_ENCODINGS:
         raise ValueError("Unsupported GPU container or encoding")
-    if gpu_encoding == "BC5" and role != "normal":
+    if gpu_encoding == "BC5" and role not in ("normal", "macro_normal"):
         raise ValueError("BC5 encoding is available only for normal maps")
     if gpu_encoding in SCALAR_GPU_ENCODINGS and (
             role != "data" or type(selected_channel) is not int or selected_channel not in (0, 1, 2, 3)):
@@ -327,9 +330,11 @@ def prepare_adm_texture(path: str, role: str, gpu_container: str = "DDS",
         rgba = gputex.decode(source_bytes, source_mime, strict=True)[0]
         fallback = _png_image(rgba, name)
         pbr_normal = None
-        if source_info["kind"] == "BC5" and role == "normal":
+        if source_info["kind"] == "BC5" and role in ("normal", "macro_normal"):
             normal = gputex.reconstruct_bc5_normal(rgba.astype(np.float32) / 255.0)
             pbr_normal = _png_image(np.rint(normal * 255.0).astype(np.uint8), name + "_pbr_normal")
+        if role == "macro_normal" and pbr_normal is not None:
+            fallback = pbr_normal
         primary = PreparedImage(source_bytes, source_mime, hashlib.sha256(source_bytes).hexdigest(),
                                 source_info["width"], source_info["height"], name)
         return PreparedTexture(primary, fallback, pbr_normal=pbr_normal)
@@ -352,7 +357,7 @@ def prepare_adm_texture(path: str, role: str, gpu_container: str = "DDS",
         else:
             rgba = gputex.decode(source_bytes, source_mime, strict=True)[0]
             fallback = _png_image(rgba, name)
-            if source_info["kind"] == "BC5" and role == "normal":
+            if source_info["kind"] == "BC5" and role in ("normal", "macro_normal"):
                 normal = gputex.reconstruct_bc5_normal(rgba.astype(np.float32) / 255.0)
                 pbr_normal = _png_image(np.rint(normal * 255.0).astype(np.uint8), name + "_pbr_normal")
             blob, _kind = gputex.encode(rgba, gpu_mime, compression, srgb=color_role, mipmaps=True)
@@ -360,6 +365,8 @@ def prepare_adm_texture(path: str, role: str, gpu_container: str = "DDS",
                                 source_info["width"], source_info["height"], name)
         if compression == "BC5":
             fallback, pbr_normal = _bc5_fallbacks(blob, gpu_mime, name)
+        if role == "macro_normal" and pbr_normal is not None:
+            fallback = pbr_normal
         return PreparedTexture(primary, fallback, pbr_normal=pbr_normal, reencoded_source=True)
 
     if role == "data":
@@ -383,7 +390,15 @@ def prepare_adm_texture(path: str, role: str, gpu_container: str = "DDS",
             return PreparedTexture(primary, fallback, grayscale_source=True)
         if role == "data" and decoded.mime == "image/png" and decoded.data[24] == 16:
             return PreparedTexture(decoded, None)
-        rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+        if role == "macro_normal" and image.mode in ("LA", "La"):
+            channels = np.asarray(image.convert("LA"), dtype=np.uint8)
+            rgba = np.empty((*channels.shape[:2], 4), dtype=np.uint8)
+            rgba[..., 0] = channels[..., 0]
+            rgba[..., 1] = channels[..., 1]
+            rgba[..., 2] = 255
+            rgba[..., 3] = 255
+        else:
+            rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
     if gpu_encoding in SCALAR_GPU_ENCODINGS:
         return _selected_scalar_texture(rgba, selected_channel, gpu_encoding, gpu_mime, name)
     fallback = decoded if decoded.mime == "image/png" else _png_image(rgba, decoded.name)
@@ -392,6 +407,8 @@ def prepare_adm_texture(path: str, role: str, gpu_container: str = "DDS",
                             rgba.shape[1], rgba.shape[0], name)
     if compression == "BC5":
         fallback, pbr_normal = _bc5_fallbacks(blob, gpu_mime, name)
+        if role == "macro_normal":
+            fallback = pbr_normal
         return PreparedTexture(primary, fallback, pbr_normal=pbr_normal)
     return PreparedTexture(primary, fallback)
 
@@ -1215,6 +1232,12 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     if macro_color_enabled:
         macro_key = (material.macro_color.path, "macro_color", settings.gpu_encoding, None)
         macro_texture_index = prepared_texture_index(macro_key, texture_assets[macro_key])
+    macro_normal_texture_index = None
+    macro_normal_enabled = bool(material.macro_normal.path)
+    if macro_normal_enabled:
+        macro_normal_key = (material.macro_normal.path, "macro_normal", "BC5", None)
+        macro_normal_texture_index = prepared_texture_index(
+            macro_normal_key, texture_assets[macro_normal_key])
 
     for i in used:  # stable texture order: surface by surface
         for name in ("albedo", "metallic", "roughness", "normal", "ao", "height", "emission"):
@@ -1228,6 +1251,8 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         if control_map_source is not None:
             slots = slots + [i for i in range(len(surfaces)) if i not in slots][:4 - len(slots)]
         if macro_color_enabled:
+            slots = slots + [i for i in range(len(surfaces)) if i not in slots][:4 - len(slots)]
+        if macro_normal_enabled:
             slots = slots + [i for i in range(len(surfaces)) if i not in slots][:4 - len(slots)]
         palette_slots.append(slots)
         chosen = [surfaces[i] for i in slots]
@@ -1277,6 +1302,23 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
             if macro.projection == "SHARED_WORLD_XZ":
                 macro_extension["origin"] = [float(value) for value in macro.origin]
             exported_material["extensions"][constants.TERRAIN_MACRO_COLOR_EXT] = macro_extension
+        if macro_normal_enabled:
+            macro = material.macro_normal
+            texture_ref = {"index": macro_normal_texture_index}
+            if macro.projection == "LOCAL_UV":
+                texture_ref["texCoord"] = 0
+            macro_extension = {
+                "version": "1.0.0",
+                "texture": texture_ref,
+                "projection": macro.projection,
+                "strength": float(macro.strength),
+                "layerInfluence": [float(value) for value in macro.layer_influence],
+                "scale": [float(value) for value in macro.scale],
+                "offset": [float(value) for value in macro.offset],
+            }
+            if macro.projection == "SHARED_WORLD_XZ":
+                macro_extension["origin"] = [float(value) for value in macro.origin]
+            exported_material["extensions"][constants.TERRAIN_MACRO_NORMAL_EXT] = macro_extension
         if base.albedo:
             exported_material["baseColorTexture"] = {"index": texture_index(base, "albedo")}
         if base.normal:
@@ -1422,6 +1464,9 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     if macro_color_enabled:
         extensions.append(constants.TERRAIN_MACRO_COLOR_EXT)
         required_extensions.append(constants.TERRAIN_MACRO_COLOR_EXT)
+    if macro_normal_enabled:
+        extensions.append(constants.TERRAIN_MACRO_NORMAL_EXT)
+        required_extensions.append(constants.TERRAIN_MACRO_NORMAL_EXT)
     if physical_material_records:
         extensions.append(constants.PHYSICAL_SURFACES_EXT)
         required_extensions.append(constants.PHYSICAL_SURFACES_EXT)
@@ -1567,6 +1612,8 @@ def export_tiles(
                                      for key in _surface_texture_slots(surface, settings.gpu_encoding))
         if material.macro_color.path:
             texture_keys[(material.macro_color.path, "macro_color", settings.gpu_encoding, None)] = None
+        if material.macro_normal.path:
+            texture_keys[(material.macro_normal.path, "macro_normal", "BC5", None)] = None
         for key in texture_keys:
             path, role, encoding, channel = key
             prepared = prepare_adm_texture(path, role, settings.gpu_container, encoding,

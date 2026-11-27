@@ -19,7 +19,8 @@ import bpy
 from ..core import constants as K
 from .materials import (
     MATERIAL_CONTROL_MAP_DATA, MATERIAL_CONTROL_MAP_SAMPLER, MATERIAL_MACRO_COLOR_SAMPLER,
-    PREVIEW_PREFIX, UV_NAMES, _from, material_output, normal_map_node, principled_of, slot_texture_node,
+    MATERIAL_MACRO_NORMAL_SAMPLER, PREVIEW_PREFIX, UV_NAMES, _from, material_output,
+    normal_map_node, principled_of, slot_texture_node,
 )
 
 APPROXIMATE = frozenset({"SKIN", "FUR", "FABRIC"})
@@ -211,17 +212,21 @@ class _Graph:
 
     def uv(self, tex_coord=0):
         if tex_coord:
-            obj = bpy.context.object
-            if obj is None or obj.type != "MESH" or not any(
-                    slot.material == self.mat for slot in obj.material_slots):
-                obj = next((candidate for candidate in bpy.data.objects
-                            if candidate.type == "MESH" and any(
-                                slot.material == self.mat for slot in candidate.material_slots)), None)
-            uv_name = obj.data.uv_layers[1].name if obj is not None and len(obj.data.uv_layers) > 1 \
-                else UV_NAMES[1]
-            n = self.new("ShaderNodeUVMap", "UV1", uv_map=uv_name)
+            n = self.new("ShaderNodeUVMap", f"UV{tex_coord}",
+                         uv_map=self.uv_map_name(tex_coord))
             return n.outputs["UV"]
         return self.new("ShaderNodeTexCoord", "UV").outputs["UV"]
+
+    def uv_map_name(self, tex_coord=0):
+        obj = bpy.context.object
+        if obj is None or obj.type != "MESH" or not any(
+                slot.material == self.mat for slot in obj.material_slots):
+            obj = next((candidate for candidate in bpy.data.objects
+                        if candidate.type == "MESH" and any(
+                            slot.material == self.mat for slot in candidate.material_slots)), None)
+        if obj is not None and len(obj.data.uv_layers) > tex_coord:
+            return obj.data.uv_layers[tex_coord].name
+        return UV_NAMES[tex_coord]
 
     def scale_uv(self, factor_socket):
         self.uv_xform = lambda uv: self.vmath("MULTIPLY", uv, factor_socket)
@@ -482,6 +487,11 @@ def _terrain(g):
     b = g.bsdf()
     control_map_data = _control_map_config(g)
     macro_color_data = _macro_color_config(g)
+    macro_normal_data = _macro_normal_config(g)
+    macro_normal_frame = _macro_normal_frame(g, macro_normal_data) \
+        if macro_normal_data is not None else None
+    macro_normal_xy = _macro_normal_xy(g, macro_normal_data) \
+        if macro_normal_data is not None else None
     mask = g.tex("blend_mask") if control_map_data is None else None
     if g.a.shader == "TWO_LAYER":
         blend = g.math("MINIMUM", g.math("MAXIMUM", g.red(mask), 0.0), 1.0) if mask else 0.0
@@ -610,6 +620,10 @@ def _terrain(g):
         nt = g.tex(f"layer{i}_normal", vector=normal_uv)
         tn = g.vmath("MULTIPLY_ADD", nt.outputs["Color"], (2.0, 2.0, 2.0), (-1.0, -1.0, -1.0)) \
             if nt is not None else g.combine((0.0, 0.0, 1.0))
+        if macro_normal_data is not None:
+            layer_normal = _layer_normal_world(g, tn, normal_param, scales[i])
+            tn = _macro_normal_apply(
+                g, layer_normal, i, macro_normal_data, macro_normal_frame, macro_normal_xy)
         normal = acc(normal, wvec(i, tn))
     g.link(albedo, b.inputs["Base Color"])
     g.link(alpha, b.inputs["Alpha"])
@@ -620,10 +634,14 @@ def _terrain(g):
     if layer_ao is not None:
         g.link(g.vmath("MULTIPLY", albedo, g.combine((layer_ao, layer_ao, layer_ao))),
                b.inputs["Base Color"])
-    enc = g.vmath("MULTIPLY_ADD", g.vmath("NORMALIZE", normal), (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    nm = g.new("ShaderNodeNormalMap", "Terrain Normal")
-    g.link(enc, nm.inputs["Color"])
-    g.link(nm.outputs["Normal"], b.inputs["Normal"])
+    if macro_normal_data is not None:
+        g.link(g.vmath("NORMALIZE", normal), b.inputs["Normal"])
+    else:
+        enc = g.vmath("MULTIPLY_ADD", g.vmath("NORMALIZE", normal),
+                      (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        nm = g.new("ShaderNodeNormalMap", "Terrain Normal")
+        g.link(enc, nm.inputs["Color"])
+        g.link(nm.outputs["Normal"], b.inputs["Normal"])
     return b
 
 
@@ -801,7 +819,12 @@ def _macro_color_apply(g, base, layer_index, data):
     if data["blend_mode"] != "MULTIPLY":
         amount = g.math("MULTIPLY", amount, texture.outputs["Alpha"])
     if data["blend_mode"] == "LERP":
-        return g.mix("RGBA", base, texture.outputs["Color"], amount)
+        inverse = g.math("SUBTRACT", 1.0, amount)
+        base_term = g.vmath("SCALE", base)
+        g.link(inverse, base_term.node.inputs["Scale"])
+        macro_term = g.vmath("SCALE", texture.outputs["Color"])
+        g.link(amount, macro_term.node.inputs["Scale"])
+        return g.vmath("ADD", base_term, macro_term)
     inverse = g.math("SUBTRACT", 1.0, amount)
     amount_vector = g.combine((amount, amount, amount))
     inverse_vector = g.combine((inverse, inverse, inverse))
@@ -809,6 +832,201 @@ def _macro_color_apply(g, base, layer_index, data):
         "MULTIPLY_ADD", texture.outputs["Color"], amount_vector, inverse_vector,
     )
     return g.vmath("MULTIPLY", base, factor)
+
+
+def _macro_normal_config(g):
+    props = g.a
+    if not props.macro_normal_enabled:
+        return None
+    image = props.macro_normal_preview_image or props.macro_normal_image
+    if image is None:
+        g.mat["_adm_macro_normal_preview_fallback"] = "Macro Normal image is not assigned"
+        return None
+    if "_adm_macro_normal_preview_fallback" in g.mat:
+        del g.mat["_adm_macro_normal_preview_fallback"]
+    if props.macro_normal_projection not in ("LOCAL_UV", "SHARED_WORLD_XZ"):
+        raise ValueError(f"material '{g.mat.name}' has unsupported Macro Normal projection "
+                         f"{props.macro_normal_projection!r}")
+    try:
+        sampler = json.loads(g.mat.get(MATERIAL_MACRO_NORMAL_SAMPLER, "null")) or {}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"material '{g.mat.name}' has invalid Macro Normal sampler metadata") from exc
+    if not isinstance(sampler, dict):
+        raise ValueError(f"material '{g.mat.name}' has invalid Macro Normal sampler metadata")
+    wrap_s = sampler.get("wrapS", "REPEAT")
+    wrap_t = sampler.get("wrapT", "REPEAT")
+    if wrap_s != wrap_t:
+        g.mat["_adm_macro_normal_preview_fallback"] = (
+            "Blender uses one wrap mode for both texture axes")
+    return {
+        "image": image,
+        "projection": props.macro_normal_projection,
+        "strength": float(props.macro_normal_strength),
+        "layer_influence": tuple(props.macro_normal_layer_influence),
+        "scale": tuple(props.macro_normal_scale),
+        "offset": tuple(props.macro_normal_offset),
+        "origin": tuple(props.macro_normal_origin),
+        "tex_coord": int(props.macro_normal_tex_coord),
+        "wrap": wrap_s,
+    }
+
+
+def _macro_normal_xy(g, data):
+    if data["projection"] == "SHARED_WORLD_XZ":
+        geometry = g.new("ShaderNodeNewGeometry", "Macro Normal World Position")
+        position = g.separate(geometry.outputs["Position"])
+        uv = g.combine((
+            g.math("SUBTRACT", position[0], data["origin"][0]),
+            g.math("SUBTRACT", position[2], data["origin"][1]),
+            0.0,
+        ))
+    else:
+        uv = g.uv(data["tex_coord"])
+    uv = g.vmath("MULTIPLY_ADD", uv, (data["scale"][0], data["scale"][1], 1.0),
+                 (data["offset"][0], data["offset"][1], 0.0))
+    texture = g.new("ShaderNodeTexImage", "Macro Normal")
+    texture.image = data["image"]
+    texture.interpolation = "Linear"
+    texture.extension = {"CLAMP_TO_EDGE": "EXTEND", "MIRRORED_REPEAT": "MIRROR"}.get(
+        data["wrap"], "REPEAT")
+    g.link(uv, texture.inputs["Vector"])
+
+    xy = g.separate(g.vmath(
+        "MULTIPLY_ADD", texture.outputs["Color"], (2.0, 2.0, 2.0), (-1.0, -1.0, -1.0)))
+    radius_squared = g.math(
+        "ADD", g.math("MULTIPLY", xy[0], xy[0]), g.math("MULTIPLY", xy[1], xy[1]))
+    inverse_radius = g.math(
+        "DIVIDE", 1.0, g.math("SQRT", g.math("MAXIMUM", radius_squared, 1e-8)))
+    disk_scale = g.math("MINIMUM", 1.0, inverse_radius)
+    return (
+        g.math("MULTIPLY", xy[0], disk_scale),
+        g.math("MULTIPLY", xy[1], disk_scale),
+    )
+
+
+def _macro_normal_frame(g, data):
+    geometry = g.new("ShaderNodeNewGeometry", "Macro Normal Geometric Frame")
+    normal = g.vmath("NORMALIZE", geometry.outputs["Normal"])
+    if data["projection"] == "LOCAL_UV":
+        uv_map = g.uv_map_name(data["tex_coord"])
+        tangent = _normal_map_basis(g, uv_map, (1.0, 0.0, 0.0))
+        bitangent = _normal_map_basis(g, uv_map, (0.0, 1.0, 0.0))
+        if data["scale"][0] == 0.0:
+            tangent = _macro_fallback_tangent(g, normal)
+        else:
+            tangent = g.vmath("SCALE", tangent)
+            tangent_sign = -1.0 if data["scale"][0] < 0.0 else 1.0
+            g.link(tangent_sign, tangent.node.inputs["Scale"])
+        if data["scale"][1] == 0.0:
+            bitangent = g.vmath("CROSS_PRODUCT", normal, tangent)
+        else:
+            bitangent = g.vmath("SCALE", bitangent)
+            bitangent_sign = -1.0 if data["scale"][1] < 0.0 else 1.0
+            g.link(bitangent_sign, bitangent.node.inputs["Scale"])
+        return (g.vmath("NORMALIZE", tangent),
+                g.vmath("NORMALIZE", bitangent), normal)
+
+    du = (data["scale"][0], 0.0, 0.0)
+    dv = (0.0, 0.0, data["scale"][1])
+    normal_u = g.vmath("SCALE", normal)
+    g.link(g.vmath("DOT_PRODUCT", du, normal), normal_u.node.inputs["Scale"])
+    projected_u = g.vmath("SUBTRACT", du, normal_u)
+    projected_fallback = _macro_fallback_tangent(g, normal)
+    tangent = g.vmath("NORMALIZE", g.mix(
+        "VECTOR", projected_u, projected_fallback,
+        g.math("LESS_THAN", g.vmath("LENGTH", projected_u), 1e-12)))
+    normal_v = g.vmath("SCALE", normal)
+    g.link(g.vmath("DOT_PRODUCT", dv, normal), normal_v.node.inputs["Scale"])
+    projected_v = g.vmath("SUBTRACT", dv, normal_v)
+    normalized_v = g.vmath("NORMALIZE", projected_v)
+    handedness_dot = g.vmath(
+        "DOT_PRODUCT", g.vmath("CROSS_PRODUCT", tangent, normalized_v), normal)
+    handedness = g.mix(
+        "FLOAT", 1.0, -1.0, g.math("LESS_THAN", handedness_dot, 0.0))
+    handedness = g.mix(
+        "FLOAT", handedness, 1.0,
+        g.math("LESS_THAN", g.vmath("LENGTH", projected_v), 1e-12))
+    bitangent = g.vmath("CROSS_PRODUCT", normal, tangent)
+    bitangent = g.vmath("SCALE", bitangent)
+    g.link(handedness, bitangent.node.inputs["Scale"])
+    return tangent, g.vmath("NORMALIZE", bitangent), normal
+
+
+def _macro_fallback_tangent(g, normal):
+    axis_z = g.math("GREATER_THAN", g.math("ABSOLUTE", g.separate(normal)[0]), 0.9)
+    fallback_axis = g.combine((g.math("SUBTRACT", 1.0, axis_z), 0.0, axis_z))
+    normal_component = g.vmath("SCALE", normal)
+    g.link(g.vmath("DOT_PRODUCT", fallback_axis, normal),
+           normal_component.node.inputs["Scale"])
+    return g.vmath("SUBTRACT", fallback_axis, normal_component)
+
+
+def _normal_map_basis(g, uv_map, tangent_normal):
+    encoded = tuple(component * 0.5 + 0.5 for component in tangent_normal)
+    normal_map = g.new("ShaderNodeNormalMap", "Macro Normal UV Basis", uv_map=uv_map)
+    g.link(encoded, normal_map.inputs["Color"])
+    return g.vmath("NORMALIZE", normal_map.outputs["Normal"])
+
+
+def _layer_normal_world(g, tangent_normal, normal_param, scale):
+    geometry_normal = g.new("ShaderNodeNewGeometry", "Layer Geometric Normal").outputs["Normal"]
+    if normal_param is None or normal_param.image is None:
+        return geometry_normal
+    components = g.separate(tangent_normal)
+    flip = g.mix("FLOAT", 1.0, -1.0, g.math("LESS_THAN", scale, 0.0))
+    tangent_normal = g.combine((
+        g.math("MULTIPLY", components[0], flip),
+        g.math("MULTIPLY", components[1], flip),
+        components[2],
+    ))
+    encoded = g.vmath("MULTIPLY_ADD", tangent_normal, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    uv_map = g.uv_map_name(normal_param.tex_coord)
+    normal_map = g.new("ShaderNodeNormalMap", "Layer Normal World", uv_map=uv_map)
+    g.link(encoded, normal_map.inputs["Color"])
+    return normal_map.outputs["Normal"]
+
+
+def _macro_normal_apply(g, base_world, layer_index, data, frame, macro_xy):
+    if layer_index >= len(data["layer_influence"]):
+        return base_world
+    tangent_axis, bitangent_axis, normal_axis = frame
+    base = g.combine(tuple(
+        g.vmath("DOT_PRODUCT", base_world, axis)
+        for axis in (tangent_axis, bitangent_axis, normal_axis)
+    ))
+    influence = data["strength"] * data["layer_influence"][layer_index]
+    x = g.math("MULTIPLY", macro_xy[0], influence)
+    y = g.math("MULTIPLY", macro_xy[1], influence)
+    z_squared = g.math(
+        "MAXIMUM", 0.0,
+        g.math("SUBTRACT", 1.0,
+               g.math("ADD", g.math("MULTIPLY", x, x), g.math("MULTIPLY", y, y))))
+    z = g.math("SQRT", z_squared)
+    detail = g.combine((x, y, z))
+
+    base = g.vmath("NORMALIZE", base)
+    tangent = g.vmath("ADD", base, (0.0, 0.0, 1.0))
+    reoriented_detail = g.vmath("MULTIPLY", detail, (-1.0, -1.0, 1.0))
+    dot = g.vmath("DOT_PRODUCT", tangent, reoriented_detail)
+    tangent_term = g.vmath("SCALE", tangent)
+    g.link(dot, tangent_term.node.inputs["Scale"])
+    tangent_z = g.separate(tangent)[2]
+    detail_term = g.vmath("SCALE", reoriented_detail)
+    g.link(tangent_z, detail_term.node.inputs["Scale"])
+    candidate = g.vmath("SUBTRACT", tangent_term, detail_term)
+    tangent_length = g.vmath("LENGTH", tangent)
+    candidate_length = g.vmath("LENGTH", candidate)
+    degenerate = g.math(
+        "MAXIMUM", g.math("LESS_THAN", tangent_length, 1e-8),
+        g.math("LESS_THAN", candidate_length, 1e-8))
+    result = g.mix("VECTOR", g.vmath("NORMALIZE", candidate), base, degenerate)
+    world_terms = [
+        g.vmath("SCALE", axis) for axis in (tangent_axis, bitangent_axis, normal_axis)
+    ]
+    for component, term in zip(g.separate(result), world_terms):
+        g.link(component, term.node.inputs["Scale"])
+    return g.vmath("NORMALIZE", g.vmath(
+        "ADD", g.vmath("ADD", world_terms[0], world_terms[1]), world_terms[2]))
 
 
 def _thin_fresnel(g, b, tint_a, tint_b, transparency, ior, base_alpha):

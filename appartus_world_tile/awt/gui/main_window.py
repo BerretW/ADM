@@ -20,7 +20,8 @@ from .. import texturing
 from ..adm_export import Cancelled as ExportCancelled
 from ..adm_export import ExportSettings, changed_tiles, export_tiles, rules_outdated
 from ..heightmap import Heightmap, load_heightmap, preview
-from ..material import IMAGE_FILTER, PAINT_AUTO, Band, MacroColorSettings, TerrainMaterial
+from ..material import (IMAGE_FILTER, PAINT_AUTO, Band, MacroColorSettings, MacroNormalSettings,
+                        TerrainMaterial)
 from ..pipeline import (BuildParams, Cancelled, build, estimate_memory, fit_material, height_transform, hillshade,
                         load_manifest, tile_grid)
 from ..project import PROJECT_EXTENSION, PROJECT_FILTER, Project, load_project
@@ -483,6 +484,18 @@ class MainWindow(QMainWindow):
         self.macro_color_scale = [_spin(-1_000_000, 1_000_000, 1.0, 0.01, 4) for _ in range(2)]
         self.macro_color_offset = [_spin(-1_000_000_000, 1_000_000_000, 0.0, 0.1, 4) for _ in range(2)]
         self.macro_color_origin = [_spin(-1_000_000_000, 1_000_000_000, 0.0, 0.1, 4) for _ in range(2)]
+        self.macro_normal_path = QLineEdit()
+        self.macro_normal_path.setPlaceholderText("Optional PNG or BC5 Macro Normal image")
+        self.browse_macro_normal = QPushButton("…")
+        self.browse_macro_normal.setFixedWidth(32)
+        self.macro_normal_projection = QComboBox()
+        self.macro_normal_projection.addItem("Local UV", "LOCAL_UV")
+        self.macro_normal_projection.addItem("Shared world XZ", "SHARED_WORLD_XZ")
+        self.macro_normal_strength = _spin(0.0, 1.0, 1.0, 0.05, 3)
+        self.macro_normal_layer_influence = [_spin(0.0, 1.0, 1.0, 0.05, 3) for _ in range(4)]
+        self.macro_normal_scale = [_spin(-1_000_000, 1_000_000, 1.0, 0.01, 4) for _ in range(2)]
+        self.macro_normal_offset = [_spin(-1_000_000_000, 1_000_000_000, 0.0, 0.1, 4) for _ in range(2)]
+        self.macro_normal_origin = [_spin(-1_000_000_000, 1_000_000_000, 0.0, 0.1, 4) for _ in range(2)]
         self.gpu_container = QComboBox()
         self.gpu_container.addItem("DDS", "DDS")
         self.gpu_container.addItem("KTX2", "KTX2")
@@ -630,6 +643,22 @@ class MainWindow(QMainWindow):
         for label, boxes in (("Macro scale", self.macro_color_scale),
                              ("Macro offset", self.macro_color_offset),
                              ("World XZ origin", self.macro_color_origin)):
+            row = QHBoxLayout()
+            row.addWidget(boxes[0])
+            row.addWidget(boxes[1])
+            form.addRow(label, row)
+        row = QHBoxLayout()
+        row.addWidget(self.macro_normal_path)
+        row.addWidget(self.browse_macro_normal)
+        form.addRow("Macro Normal image", row)
+        form.addRow("Normal projection", self.macro_normal_projection)
+        form.addRow("Normal strength", self.macro_normal_strength)
+        for index, box in enumerate(self.macro_normal_layer_influence, 1):
+            box.setToolTip(f"Influence for local terrain layer {index} in each four-layer palette")
+            form.addRow(f"Normal layer {index} influence", box)
+        for label, boxes in (("Normal scale", self.macro_normal_scale),
+                             ("Normal offset", self.macro_normal_offset),
+                             ("Normal world XZ origin", self.macro_normal_origin)):
             row = QHBoxLayout()
             row.addWidget(boxes[0])
             row.addWidget(boxes[1])
@@ -839,6 +868,7 @@ class MainWindow(QMainWindow):
         self.browse_export.clicked.connect(self._choose_export)
         self.browse_external_control_map.clicked.connect(self._choose_external_control_map)
         self.browse_macro_color.clicked.connect(self._choose_macro_color)
+        self.browse_macro_normal.clicked.connect(self._choose_macro_normal)
         self.export_changed.clicked.connect(lambda: self._start_export("changed"))
         self.export_selected.clicked.connect(lambda: self._start_export("selected"))
         self.export_all.clicked.connect(lambda: self._start_export("all"))
@@ -880,6 +910,19 @@ class MainWindow(QMainWindow):
             signal.connect(self._material_changed)
             signal.connect(self._schedule_check)
         self.macro_color_projection.currentIndexChanged.connect(self._update_macro_origin_enabled)
+        self.macro_normal_path.textChanged.connect(self._mark_dirty)
+        self.macro_normal_path.textChanged.connect(self._material_changed)
+        self.macro_normal_path.textChanged.connect(self._schedule_check)
+        macro_normal_signals = [self.macro_normal_projection.currentIndexChanged,
+                                self.macro_normal_strength.valueChanged]
+        macro_normal_signals.extend(box.valueChanged for box in (
+            self.macro_normal_layer_influence + self.macro_normal_scale
+            + self.macro_normal_offset + self.macro_normal_origin))
+        for signal in macro_normal_signals:
+            signal.connect(self._mark_dirty)
+            signal.connect(self._material_changed)
+            signal.connect(self._schedule_check)
+        self.macro_normal_projection.currentIndexChanged.connect(self._update_macro_normal_origin_enabled)
 
         # Anything stored in the project marks it modified; the tile selection does not.
         for box in (self.spacing, self.height_min, self.height_max, self.threads, self.texture_error,
@@ -889,6 +932,7 @@ class MainWindow(QMainWindow):
         for box in (self.remap, self.embed, self.validate, self.convert_gpu_sources):
             box.toggled.connect(self._mark_dirty)
         self._update_macro_origin_enabled()
+        self._update_macro_normal_origin_enabled()
         for edit in (self.lods, self.out_dir, self.export_dir):
             edit.textChanged.connect(self._mark_dirty)
         for combo in (self.origin, self.tile_cells, self.gpu_container, self.gpu_encoding,
@@ -936,6 +980,15 @@ class MainWindow(QMainWindow):
             offset=[box.value() for box in self.macro_color_offset],
             origin=[box.value() for box in self.macro_color_origin],
         )
+        material.macro_normal = MacroNormalSettings(
+            path=self.macro_normal_path.text().strip(),
+            projection=self.macro_normal_projection.currentData(),
+            strength=self.macro_normal_strength.value(),
+            layer_influence=[box.value() for box in self.macro_normal_layer_influence],
+            scale=[box.value() for box in self.macro_normal_scale],
+            offset=[box.value() for box in self.macro_normal_offset],
+            origin=[box.value() for box in self.macro_normal_origin],
+        )
         return material
 
     def _refresh_macro_color_widgets(self, material: TerrainMaterial) -> None:
@@ -967,6 +1020,35 @@ class MainWindow(QMainWindow):
     def _update_macro_origin_enabled(self, *_args) -> None:
         enabled = self.macro_color_projection.currentData() == "SHARED_WORLD_XZ"
         for box in self.macro_color_origin:
+            box.setEnabled(enabled)
+
+    def _refresh_macro_normal_widgets(self, material: TerrainMaterial) -> None:
+        macro = material.macro_normal
+        was_blocked = self.macro_normal_path.blockSignals(True)
+        self.macro_normal_path.setText(macro.path)
+        self.macro_normal_path.blockSignals(was_blocked)
+        was_blocked = self.macro_normal_projection.blockSignals(True)
+        index = self.macro_normal_projection.findData(macro.projection)
+        if index < 0:
+            self.macro_normal_projection.addItem(f"Unsupported: {macro.projection}", macro.projection)
+            index = self.macro_normal_projection.count() - 1
+        self.macro_normal_projection.setCurrentIndex(index)
+        self.macro_normal_projection.blockSignals(was_blocked)
+        for box, value in (
+            [(self.macro_normal_strength, macro.strength)]
+            + list(zip(self.macro_normal_layer_influence, macro.layer_influence))
+            + list(zip(self.macro_normal_scale, macro.scale))
+            + list(zip(self.macro_normal_offset, macro.offset))
+            + list(zip(self.macro_normal_origin, macro.origin))
+        ):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self._update_macro_normal_origin_enabled()
+
+    def _update_macro_normal_origin_enabled(self, *_args) -> None:
+        enabled = self.macro_normal_projection.currentData() == "SHARED_WORLD_XZ"
+        for box in self.macro_normal_origin:
             box.setEnabled(enabled)
 
     def _refresh_external_control_map_channels(self, material: TerrainMaterial) -> None:
@@ -1113,6 +1195,12 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Open Macro Color image", start, IMAGE_FILTER)
         if path:
             self.macro_color_path.setText(path)
+
+    def _choose_macro_normal(self) -> None:
+        start = self.macro_normal_path.text().strip() or self.settings.value("last_dir", "")
+        path, _ = QFileDialog.getOpenFileName(self, "Open Macro Normal image", start, IMAGE_FILTER)
+        if path:
+            self.macro_normal_path.setText(path)
 
     def _load_source(self, path: str, raw_size: tuple[int, int] | None = None) -> None:
         material = self._material()
@@ -2173,6 +2261,7 @@ class MainWindow(QMainWindow):
         self.external_control_map_path.blockSignals(False)
         self._refresh_external_control_map_channels(project.material)
         self._refresh_macro_color_widgets(project.material)
+        self._refresh_macro_normal_widgets(project.material)
         self._material_changed()
         self.export_dir.setText(export.out_dir)
         self.lod_distance.setValue(export.lod_distance_m)

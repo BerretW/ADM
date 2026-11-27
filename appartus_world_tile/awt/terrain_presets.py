@@ -10,11 +10,11 @@ import re
 import tempfile
 import unicodedata
 
-from .material import TerrainMaterial, prepare_texture
+from .material import MAX_TEXTURE_BYTES, TerrainMaterial, prepare_texture
 
 PRESET_FILE = "preset.json"
 PRESET_FORMAT = "appartus-world-tile-terrain-preset"
-PRESET_VERSION = 6
+PRESET_VERSION = 7
 MAX_PRESET_BYTES = 5 * 1024 * 1024
 _KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -44,7 +44,7 @@ def _document(path: str) -> dict:
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
     if (not isinstance(data, dict) or data.get("format") != PRESET_FORMAT
-            or data.get("version") not in (1, 2, 3, 4, 5, PRESET_VERSION)
+            or data.get("version") not in tuple(range(1, PRESET_VERSION + 1))
             or not isinstance(data.get("material"), dict)
             or not isinstance(data.get("name"), str)):
         raise ValueError("This is not a supported AWT terrain preset")
@@ -61,6 +61,33 @@ def _texture_paths(surface) -> list[tuple[object, str]]:
         (surface.height_map, "path"),
         (surface, "emission"),
     ]
+
+
+def _copy_texture(folder: str, source: str, *, preserve_source: bool = False) -> str:
+    if preserve_source:
+        with open(source, "rb") as handle:
+            data = handle.read(MAX_TEXTURE_BYTES + 1)
+        if len(data) > MAX_TEXTURE_BYTES:
+            raise ValueError(f"Texture is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+        digest = hashlib.sha256(data).hexdigest()
+        extension = os.path.splitext(source)[1].lower()
+    else:
+        prepared = prepare_texture(source)
+        data, digest, extension = prepared.data, prepared.sha256, prepared.extension
+    relative = os.path.join("textures", digest + extension)
+    target = os.path.join(folder, relative)
+    if not _inside(folder, target):
+        raise ValueError("Texture path is outside the preset folder")
+    if os.path.lexists(target):
+        if os.path.islink(target) or not os.path.isfile(target):
+            raise ValueError("Preset texture target is not a regular file")
+        with open(target, "rb") as handle:
+            if handle.read() != data:
+                raise ValueError("Existing preset texture has unexpected content")
+    else:
+        with open(target, "xb") as handle:
+            handle.write(data)
+    return target
 
 
 def save_preset(root: str, name: str, material: TerrainMaterial, overwrite: bool = False) -> str:
@@ -99,21 +126,10 @@ def save_preset(root: str, name: str, material: TerrainMaterial, overwrite: bool
             source = getattr(slot, attr)
             if not source:
                 continue
-            prepared = prepare_texture(source)
-            relative = os.path.join("textures", prepared.sha256 + prepared.extension)
-            target = os.path.join(folder, relative)
-            if not _inside(folder, target):
-                raise ValueError("Texture path is outside the preset folder")
-            if os.path.lexists(target):
-                if os.path.islink(target) or not os.path.isfile(target):
-                    raise ValueError("Preset texture target is not a regular file")
-                with open(target, "rb") as handle:
-                    if handle.read() != prepared.data:
-                        raise ValueError("Existing preset texture has unexpected content")
-            else:
-                with open(target, "xb") as handle:
-                    handle.write(prepared.data)
-            setattr(slot, attr, target)
+            setattr(slot, attr, _copy_texture(folder, source))
+    for settings in (prepared_material.macro_color, prepared_material.macro_normal):
+        if settings.path:
+            settings.path = _copy_texture(folder, settings.path, preserve_source=True)
 
     document = {
         "format": PRESET_FORMAT,
@@ -175,5 +191,8 @@ def load_preset(root: str, key: str) -> TerrainMaterial:
             if not _inside(folder, path):
                 raise ValueError(f"Preset texture is outside its folder: {path}")
             prepare_texture(path)
+    for settings in (material.macro_color, material.macro_normal):
+        if settings.path and not _inside(folder, settings.path):
+            raise ValueError(f"Preset texture is outside its folder: {settings.path}")
     material.validate()
     return material

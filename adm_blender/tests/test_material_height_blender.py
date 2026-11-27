@@ -625,6 +625,11 @@ def main():
         })
         macro_texture_index = len(macro_doc["textures"])
         macro_doc["textures"].append({"source": macro_image_index})
+        macro_sampler_index = len(macro_doc.get("samplers", []))
+        macro_doc.setdefault("samplers", []).append({
+            "wrapS": "CLAMP_TO_EDGE", "wrapT": "REPEAT",
+        })
+        macro_doc["textures"][macro_texture_index]["sampler"] = macro_sampler_index
         macro_material["extensions"][K.TERRAIN_MACRO_COLOR_EXT] = {
             "version": "1.0.0", "texture": {"index": macro_texture_index, "texCoord": 0},
             "projection": "LOCAL_UV", "blendMode": "MULTIPLY",
@@ -644,7 +649,9 @@ def main():
         macro_path = os.path.join(folder, "required_macro_color.adm")
         with open(macro_path, "wb") as stream:
             stream.write(macro_fixture)
-        macro_root = ModelImporter(bpy.context, macro_path, ImportOptions()).run()
+        macro_importer = ModelImporter(bpy.context, macro_path, ImportOptions())
+        macro_root = macro_importer.run()
+        assert any("MACRO_COLOR_PREVIEW_FALLBACK" in warning for warning in macro_importer.warnings)
         macro_blender_material = next(
             material for material in bpy.data.materials
             if material.get(M.MATERIAL_MACRO_COLOR_DATA)
@@ -654,6 +661,7 @@ def main():
         assert macro_blender_material.adm.macro_color_image is not None
         assert macro_blender_material.adm.macro_color_preview_image is not None
         assert macro_blender_material.adm.macro_color_preview_image.colorspace_settings.name == "sRGB"
+        assert macro_blender_material.adm.macro_color_preview_image.alpha_mode == "CHANNEL_PACKED"
         macro_preview_nodes = [
             node for node in macro_blender_material.node_tree.nodes
             if node.name.startswith("ADM Preview")
@@ -669,6 +677,9 @@ def main():
         assert exported_macro["projection"] == "LOCAL_UV"
         assert exported_macro["texture"]["texCoord"] == 0
         assert exported_macro["texture"]["index"] < len(macro_exported["textures"])
+        macro_texture = macro_exported["textures"][exported_macro["texture"]["index"]]
+        assert macro_exported["samplers"][macro_texture["sampler"]] == \
+            {"wrapS": "CLAMP_TO_EDGE", "wrapT": "REPEAT"}
         assert macro_exported["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] == \
             macro_doc["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"]
         macro_blender_material.adm.macro_color_blend_mode = "TINT"
@@ -683,6 +694,16 @@ def main():
         assert abs(edited_macro_ext["strength"] - 0.6) < 1e-6
         assert edited_macro["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"][0] == \
             "surface.macro-color-roundtrip"
+        macro_blender_material.adm.macro_color_projection = "SHARED_WORLD_XZ"
+        macro_blender_material.adm.macro_color_origin = (12.5, -8.25)
+        shared_macro_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
+        shared_macro_encoded, shared_macro_report = shared_macro_exporter.export()
+        assert shared_macro_report.ok, shared_macro_report.errors
+        shared_macro, _ = read_container(shared_macro_encoded, K.ADM_MAGIC)
+        shared_macro_ext = shared_macro["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]
+        assert shared_macro_ext["projection"] == "SHARED_WORLD_XZ"
+        assert shared_macro_ext["origin"] == [12.5, -8.25]
+        assert "texCoord" not in shared_macro_ext["texture"]
         macro_blend_path = os.path.join(folder, "macro_color.blend")
         macro_root_name = macro_root.name
         macro_material_name = macro_blender_material.name
@@ -692,6 +713,8 @@ def main():
         macro_blender_material = bpy.data.materials[macro_material_name]
         assert macro_blender_material.adm.macro_color_enabled
         assert macro_blender_material.adm.macro_color_blend_mode == "TINT"
+        assert macro_blender_material.adm.macro_color_projection == "SHARED_WORLD_XZ"
+        assert tuple(macro_blender_material.adm.macro_color_origin) == (12.5, -8.25)
         assert abs(macro_blender_material.adm.macro_color_strength - 0.6) < 1e-6
         assert macro_blender_material.adm.macro_color_image is not None
         assert macro_blender_material.adm.macro_color_preview_image is not None
@@ -701,8 +724,54 @@ def main():
         reloaded_macro, _ = read_container(reloaded_macro_encoded, K.ADM_MAGIC)
         reloaded_macro_ext = reloaded_macro["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]
         assert reloaded_macro_ext["blendMode"] == "TINT"
+        assert reloaded_macro_ext["projection"] == "SHARED_WORLD_XZ"
+        assert reloaded_macro_ext["origin"] == [12.5, -8.25]
         assert abs(reloaded_macro_ext["strength"] - 0.6) < 1e-6
         assert reloaded_macro_ext["texture"]["index"] < len(reloaded_macro["textures"])
+
+        print("PHASE export authored terrain Macro Normal", flush=True)
+        normal_image = bpy.data.images.new("macro_normal_authoring", 2, 2, alpha=True)
+        normal_image.colorspace_settings.name = "Non-Color"
+        normal_image.pixels[:] = [0.75, 0.5, 1.0, 1.0] * 4
+        normal_image.pack()
+        macro_blender_material.adm.macro_normal_enabled = True
+        macro_blender_material.adm.macro_normal_image = normal_image
+        macro_blender_material.adm.macro_normal_projection = "SHARED_WORLD_XZ"
+        macro_blender_material.adm.macro_normal_strength = 0.7
+        macro_blender_material.adm.macro_normal_layer_influence = (1.0, 0.5, 0.25, 0.0)
+        macro_blender_material.adm.macro_normal_origin = (3.0, -6.0)
+        normal_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
+        normal_encoded, normal_export_report = normal_exporter.export()
+        assert normal_export_report.ok, normal_export_report.errors
+        normal_exported, _ = read_container(normal_encoded, K.ADM_MAGIC)
+        assert K.TERRAIN_MACRO_NORMAL_EXT in normal_exported["extensionsRequired"]
+        normal_ext = normal_exported["materials"][0]["extensions"][K.TERRAIN_MACRO_NORMAL_EXT]
+        assert normal_ext["projection"] == "SHARED_WORLD_XZ"
+        assert normal_ext["origin"] == [3.0, -6.0]
+        assert normal_ext["layerInfluence"] == [1.0, 0.5, 0.25, 0.0]
+        assert normal_ext["texture"]["index"] < len(normal_exported["textures"])
+        normal_blend_path = os.path.join(folder, "macro_normal.blend")
+        normal_root_name = macro_root.name
+        normal_material_name = macro_blender_material.name
+        bpy.ops.wm.save_as_mainfile(filepath=normal_blend_path)
+        bpy.ops.wm.open_mainfile(filepath=normal_blend_path)
+        macro_root = bpy.data.objects[normal_root_name]
+        macro_blender_material = bpy.data.materials[normal_material_name]
+        assert macro_blender_material.adm.macro_normal_enabled
+        assert macro_blender_material.adm.macro_normal_projection == "SHARED_WORLD_XZ"
+        assert tuple(macro_blender_material.adm.macro_normal_origin) == (3.0, -6.0)
+        assert abs(macro_blender_material.adm.macro_normal_strength - 0.7) < 1e-6
+        assert macro_blender_material.adm.macro_normal_image is not None
+        reloaded_normal_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
+        reloaded_normal_encoded, reloaded_normal_report = reloaded_normal_exporter.export()
+        assert reloaded_normal_report.ok, reloaded_normal_report.errors
+        reloaded_normal, _ = read_container(reloaded_normal_encoded, K.ADM_MAGIC)
+        reloaded_normal_ext = reloaded_normal["materials"][0]["extensions"][K.TERRAIN_MACRO_NORMAL_EXT]
+        assert reloaded_normal_ext["projection"] == "SHARED_WORLD_XZ"
+        assert reloaded_normal_ext["origin"] == [3.0, -6.0]
+        assert reloaded_normal_ext["layerInfluence"] == [1.0, 0.5, 0.25, 0.0]
+        assert abs(reloaded_normal_ext["strength"] - 0.7) < 1e-6
+        assert reloaded_normal_ext["texture"]["index"] < len(reloaded_normal["textures"])
 
         print("PHASE reject required terrain Macro Normal", flush=True)
         normal_doc = copy.deepcopy(macro_doc)

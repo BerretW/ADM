@@ -297,14 +297,12 @@ rejection test pass.
 
 Macro Color now has a versioned shared/local projection and sRGB blending
 contract, reference math, independent vectors, profile/image/sampler
-validation, and a Blender pre-mutation rejection test for required data.
-Focused material tests (85 passed, one Windows symlink-permission skip),
-independent vectors (2 passed), and Blender 5.2.3 integration passed. Macro
-Color renderer/authoring integration and Control Map renderer conformance
-remain open. Macro Normal's contract/reference slice is now implemented, but
-its renderer/authoring integration remains open. M2's broader palette
-comparison and all later milestones remain open. No release build or package
-was created.
+validation. World Tile and Blender author/import/export and preview paths are
+implemented with rendered tests; exact mip/gutter behavior, additional seam
+cases, and cross-reader parity remain open. Control Map renderer conformance
+also remains open. Macro Normal's current partial integration is recorded
+below. M2's broader palette comparison and all later milestones remain open.
+No release build or package was created.
 
 The M2 architecture is now explicit: keep four stable slots; use face-mask
 reduction with disclosed error when over capacity; use future Control Maps to
@@ -314,16 +312,23 @@ resource packing rather than increased surface capacity. This decision does
 not close M2's comparative benchmark, which still needs shared-edge,
 tile/LOD, irregular-edge, noise, biome-transition, and export-cost evidence.
 
-Macro Normal v1 now has a normative BC5 UNORM/local-or-shared projection
-contract, deterministic tangent frames, RNM, profile/ID/image/sampler
-validation, independent vectors, and Blender's required-extension
-pre-mutation rejection. Focused Python suites passed 90 tests with one existing
-Windows symlink-permission skip; three independent vectors and the Blender
-5.2.3 integration passed. Renderers and authoring are still unsupported, and
-Macro Normal has not been used for physical classification.
-The contract requires Macro Normal in `extensionsRequired`, and the validator
-rejects an optional declaration; the importer therefore cannot silently
-discard a conforming optional Macro Normal payload.
+Macro Normal v1 has a normative BC5 UNORM/local-or-shared projection contract,
+deterministic tangent frames, RNM, profile/ID/image/sampler validation, and
+independent vectors. World Tile now persists authoring in AWTP v16, validates
+two-channel PNGs, exports BC5 UNORM with a reconstructed RGB fallback,
+preserves compatible BC5 source bytes, packages maps in preset v7, and previews
+local/shared projection with RNM. Focused regressions confirm neutral behavior,
+parallax independence, and unchanged collider assignments. Blender now
+authors/exports the required extension, preserves settings through `.blend`
+save/reload, and previews local/shared sampling with RNM for aligned tangent
+frames; Cycles pixel tests match the independent vector and confirm unchanged
+terrain weights. The preview also transforms a UV1 layer normal through the
+shared Macro Normal frame and matches a rotated-surface frame vector. Blender
+still rejects required Macro Normal on import because mirrored/degenerate UV
+frame handling and BC5/fallback round-trip conformance remain incomplete.
+Filtered mip/gutter behavior, adjacent-tile continuity, portable-fallback
+equivalence, cross-reader parity, and full Blender import/render conformance
+remain open. Macro Normal does not participate in physical classification.
 
 World Tile now integrates Control Maps with an opt-in export resolution, AWTP
 v13 persistence, CLI, export-change fingerprints, and its Detailed material
@@ -458,6 +463,36 @@ or asset-space XZ coordinates before per-layer parallax and applies the
 Multiply, Tint, and Lerp equations to albedo only. Focused tests confirm neutral
 and enabled renders, unchanged `COLOR_1` weights and collider assignments, and
 project round-trip. The full World Tile suite passes 171 tests with five
-existing PyVista future warnings. Blender authoring/rendering and Macro Color
-tile-edge mip/gutter and cross-reader conformance remain open. No release build
-or package was produced.
+existing PyVista future warnings.
+
+Blender now imports required Macro Color data without pre-mutation rejection,
+preserves its texture/sampler and stable surface IDs, exposes projection,
+blend, strength, influence and coordinate controls, and builds an sRGB
+channel-packed preview texture. The terrain node preview samples local UV or
+shared world XZ before weighted albedo composition and implements Multiply,
+Tint and Lerp without changing `COLOR_1`. Cycles pixel tests match the
+independent linear reference equations; Blender import/export and `.blend`
+save/reload tests preserve editable settings and texture references. Focused
+Blender tests pass. Control Map filtering/seam and Macro Color tile-edge
+mip/gutter, parallax-ordering and cross-reader conformance remain open, as do
+Macro Normal and later material technologies. Blender Cycles also renders a
+high-frequency Control Map to normalized averaged weights under minification
+and verifies continuity across adjacent meshes using shared world-XZ
+coordinates. It does not expose a mip-level diagnostic, so exact mip selection
+and cross-reader sampling parity remain open. The Blender terrain preview does
+not implement POM, so parallax ordering cannot yet be rendered against an
+active parallax effect. No release build or package was produced.
+
+The World Tile shared-world Macro Color seam regression initially measured an
+81/255 median edge jump. Each tile is a separate preview actor, so the preview
+now passes each tile's source-space vertex positions as an explicit vertex
+attribute instead of relying on the shader's model-coordinate input. The test
+renders a seamless periodic Macro Color texture across adjacent tile meshes at
+magnified and minified views; the median shared-edge RGB difference remains
+below 8/255 and the 95th percentile below 20/255 at both scales. Focused
+Macro Color and Control Map render regressions pass (5 tests). Macro Color's
+exact mip selection, separately tiled image gutters, and cross-reader parity
+remain open. A separate rendered comparison confirms that Macro Color output
+stays unchanged within 2/255 when per-layer Parallax or POM is enabled, while
+both effects visibly alter the base albedo without Macro Color. Physical
+collider assignments remain based on authored data and are unaffected.

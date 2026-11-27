@@ -3,6 +3,7 @@
 Builds every profile preview with all parameters overridden, checks the exported PBR fallback is
 unaffected, and bakes Brick / Terrain with Cycles to verify the node math against the contracts.
 """
+import math
 import os
 import sys
 import tempfile
@@ -126,7 +127,10 @@ def preview_bsdf(mat, materials):
 def main():
     adm_blender.register()
     from adm_blender.core import constants as K
-    from adm_blender.core.material_math import height_blend_weights, terrain_macro_color
+    from adm_blender.core.material_math import (
+        height_blend_weights, terrain_macro_color, terrain_macro_normal,
+        terrain_macro_normal_frame,
+    )
     from adm_blender.blender import materials as M
     from adm_blender.blender import shader_preview as SP
     from adm_blender.blender.export_adm import ExportOptions, ModelExporter
@@ -273,6 +277,42 @@ def main():
     pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
     check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: world-planar remains stable after floating-origin shift ({pixel})")
     plane.location.x = 0.0
+    control_mat.adm.control_map_mode = "TEXTURE_RGBA"
+    control_mat.adm.control_map_mapping = "UV"
+    control_mat.adm.control_map_scale = (8.0, 8.0)
+    control_mat.adm.control_map_offset = (0.0, 0.0)
+    control_mat.adm.control_map_image = image(
+        "control_map_minified_checker",
+        lambda x, y: (1.0, 0.0, 0.0, 0.0) if (x + y) % 2 else (0.0, 1.0, 0.0, 0.0),
+    )
+    M.refresh_shader_preview(control_mat)
+    bsdf = preview_bsdf(control_mat, M)
+    minified = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(minified, (0.5, 0.5, 0.0), tol=0.08),
+          f"TERRAIN_4: minified linear Control Map resolves to averaged weights ({minified})")
+
+    control_mat.adm.control_map_mapping = "WORLD_PLANAR_XZ"
+    control_mat.adm.control_map_origin = (0.0, 0.0)
+    control_mat.adm.control_map_scale = (0.1, 1.0)
+    control_mat.adm.control_map_image = image(
+        "control_map_shared_edge_gradient",
+        lambda x, y: (x / (RES - 1), 1.0 - x / (RES - 1), 0.0, 0.0),
+    )
+    M.refresh_shader_preview(control_mat)
+    bpy.ops.mesh.primitive_plane_add(size=2.0, location=(2.0, 0.0, 0.0))
+    seam_plane = bpy.context.object
+    seam_plane.data.materials.append(control_mat)
+    bpy.context.view_layer.update()
+    bsdf = preview_bsdf(control_mat, M)
+    left_edge = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, RES - 1, :3]
+    right_edge = bake_socket(seam_plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 0, :3]
+    check(float(np.max(np.abs(left_edge - right_edge))) < 0.08,
+          f"TERRAIN_4: shared world-XZ Control Map stays continuous across adjacent tiles "
+          f"({left_edge}, {right_edge})")
+    bpy.data.objects.remove(seam_plane, do_unlink=True)
+
+    control_mat.adm.control_map_mapping = "WORLD_PLANAR_XZ"
+    control_mat.adm.control_map_scale = (1.0, 1.0)
     control_mat.adm.control_map_origin = (-0.75, 0.0)
     bpy.context.view_layer.update()
     M.refresh_shader_preview(control_mat)
@@ -738,6 +778,103 @@ def main():
     check(close(world[8, 3, :3], (1.0, 0.0, 0.0)) and close(world[8, 12, :3], (0.0, 0.0, 1.0)),
           f"TERRAIN_4: Macro Color samples shared world XZ ({world[8, 3, :3]}, {world[8, 12, :3]})")
     mat.adm.macro_color_enabled = False
+
+    # Macro Normal reconstructs BC5 XY and composes each active layer with RNM.
+    macro_normal_sample = (0.75, 0.5, 0.5, 1.0)
+    mat.adm.macro_normal_enabled = True
+    mat.adm.macro_normal_image = image(
+        "macro_normal_rnm", lambda x, y: macro_normal_sample)
+    mat.adm.macro_normal_projection = "LOCAL_UV"
+    mat.adm.macro_normal_tex_coord = 0
+    mat.adm.macro_normal_strength = 0.5
+    mat.adm.macro_normal_layer_influence = (1.0, 0.5, 1.0, 1.0)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    normal_socket = bsdf.inputs["Normal"].links[0].from_socket
+    macro_normal_pixel = bake_socket(plane, mat, normal_socket)[8, 8, :3]
+    expected_normal = terrain_macro_normal(
+        (None, None, None, None), (0.0, 1.0, 0.0, 0.0),
+        macro_normal_sample[:2], 0.5, (1.0, 0.5, 1.0, 1.0))
+    check(close(macro_normal_pixel, expected_normal),
+          f"TERRAIN_4: Macro Normal RNM matches independent vector ({macro_normal_pixel})")
+    original_rotation = plane.rotation_euler.copy()
+    plane.rotation_euler = (math.radians(90.0), 0.0, 0.0)
+    mat.adm.macro_normal_projection = "SHARED_WORLD_XZ"
+    mat.adm.macro_normal_origin = (0.0, 0.0)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    rotated_normal = bake_socket(
+        plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
+    tangent_frame = terrain_macro_normal_frame(
+        (0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+    expected_tangent = terrain_macro_normal(
+        (None, None, None, None), (0.0, 1.0, 0.0, 0.0),
+        macro_normal_sample[:2], 0.5, (1.0, 0.5, 1.0, 1.0))
+    expected_world = tuple(sum(axis[i] * component for axis, component in
+                               zip(tangent_frame, expected_tangent)) for i in range(3))
+    check(close(rotated_normal, expected_world),
+          f"TERRAIN_4: shared-world RNM follows the projection tangent frame ({rotated_normal})")
+    plane.rotation_euler = original_rotation
+    uv0 = plane.data.uv_layers[0]
+    uv1 = plane.data.uv_layers[1]
+    for source_uv, target_uv in zip(uv0.data, uv1.data):
+        target_uv.uv = (source_uv.uv.y, 1.0 - source_uv.uv.x)
+    set_param(mat, "layer1_normal", image(
+        "layer1_rotated_uv_normal",
+        lambda x, y: (0.75, 0.5, 0.5 * math.sqrt(0.75) + 0.5, 1.0)))
+    mat.adm.params["layer1_normal"].tex_coord = 1
+    mat.adm.macro_normal_projection = "SHARED_WORLD_XZ"
+    mat.adm.macro_normal_strength = 0.0
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    uv1_normal = bake_socket(plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
+    check(close(uv1_normal, (0.0, 0.5, math.sqrt(0.75))),
+          f"TERRAIN_4: layer UV1 normal transforms through the shared Macro Normal frame ({uv1_normal})")
+    bpy.context.view_layer.update()
+    normal_weights = np.array([tuple(item.color) for item in color1.data], dtype=np.float32)
+    mat.adm.macro_normal_strength = 0.0
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    neutral_normal = bake_socket(plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
+    check(close(neutral_normal, (0.0, 0.5, math.sqrt(0.75))),
+          f"TERRAIN_4: zero Macro Normal strength preserves the base normal ({neutral_normal})")
+    check(np.array_equal(normal_weights, np.array([tuple(item.color) for item in color1.data],
+                                                   dtype=np.float32)),
+          "TERRAIN_4: Macro Normal does not modify COLOR_1 terrain weights")
+    split_normal = image(
+        "macro_normal_projection",
+        lambda x, y: (0.5, 0.5, 1.0, 1.0) if x < RES // 2 else (0.75, 0.5, 1.0, 1.0))
+    mat.adm.macro_normal_image = split_normal
+    mat.adm.macro_normal_strength = 1.0
+    mat.adm.macro_normal_layer_influence = (1.0, 1.0, 1.0, 1.0)
+    mat.adm.macro_normal_projection = "LOCAL_UV"
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    local_normal = bake_socket(plane, mat, bsdf.inputs["Normal"].links[0].from_socket)
+    check(local_normal[8, 3, 0] < 0.03 and local_normal[8, 12, 0] > 0.2,
+          "TERRAIN_4: Macro Normal samples local UV coordinates")
+    mat.adm.macro_normal_projection = "SHARED_WORLD_XZ"
+    mat.adm.macro_normal_origin = (-1.0, 0.0)
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    world_normal = bake_socket(plane, mat, bsdf.inputs["Normal"].links[0].from_socket)
+    check(world_normal[8, 3, 0] < 0.03 and world_normal[8, 12, 0] > 0.2,
+          "TERRAIN_4: Macro Normal samples shared world XZ coordinates")
+    mat.adm.params["layer1_normal"].image = None
+    for source_uv, target_uv in zip(uv0.data, uv1.data):
+        target_uv.uv = (1.0 - source_uv.uv.x, source_uv.uv.y)
+    mat.adm.macro_normal_image = image(
+        "macro_normal_mirrored_uv", lambda x, y: macro_normal_sample)
+    mat.adm.macro_normal_projection = "LOCAL_UV"
+    mat.adm.macro_normal_tex_coord = 1
+    mat.adm.macro_normal_strength = 0.5
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    mirrored_normal = bake_socket(
+        plane, mat, bsdf.inputs["Normal"].links[0].from_socket)[8, 8, :3]
+    check(close(mirrored_normal, (-0.25, 0.0, math.sqrt(0.9375))),
+          f"TERRAIN_4: mirrored UV handedness follows the tangent frame ({mirrored_normal})")
+    mat.adm.macro_normal_enabled = False
 
     # Terrain scalar maps use their own UV set, layer tiling and normalized layer weights.
     for version in ("1.0.0", K.SHADER_PROFILE_V2):

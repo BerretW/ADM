@@ -1476,10 +1476,41 @@ def draw_material(lay, context, mat):
                 macro_color.prop(p, "macro_color_origin")
             if p.macro_color_image is None:
                 macro_color.label(text="Choose an sRGB image to render and export Macro Color", icon="ERROR")
+            if "_adm_macro_color_preview_fallback" in mat:
+                macro_color.label(text=mat["_adm_macro_color_preview_fallback"], icon="ERROR")
             if p.shader_key() not in K.TERRAIN_MACRO_COLOR_PROFILES:
                 macro_color.label(text="The active shader profile cannot preview Macro Color", icon="ERROR")
             macro_color.label(text="Changes albedo only; weights and collider assignments stay unchanged",
                               icon="INFO")
+
+    if p.shader_key() in K.TERRAIN_MACRO_NORMAL_PROFILES or p.macro_normal_enabled:
+        macro_normal = lay.box()
+        macro_normal.label(text="Terrain Macro Normal", icon="NORMALS_FACE")
+        macro_normal.prop(p, "macro_normal_enabled")
+        if p.macro_normal_enabled:
+            macro_normal.template_ID(p, "macro_normal_image", new="image.new", open="image.open")
+            macro_normal.prop(p, "macro_normal_projection")
+            macro_normal.prop(p, "macro_normal_strength")
+            macro_normal.prop(p, "macro_normal_layer_influence")
+            macro_normal.prop(p, "macro_normal_scale")
+            macro_normal.prop(p, "macro_normal_offset")
+            if p.macro_normal_projection == "LOCAL_UV":
+                macro_normal.prop(p, "macro_normal_tex_coord")
+            else:
+                macro_normal.prop(p, "macro_normal_origin")
+            if p.macro_normal_image is None:
+                macro_normal.label(text="Choose a linear PNG or BC5 UNORM image", icon="ERROR")
+            if "_adm_macro_normal_preview_fallback" in mat:
+                macro_normal.label(text=mat["_adm_macro_normal_preview_fallback"], icon="ERROR")
+            if p.shader_key() not in K.TERRAIN_MACRO_NORMAL_PROFILES:
+                macro_normal.label(text="The active shader profile cannot preview Macro Normal", icon="ERROR")
+            else:
+                macro_normal.label(text="Mirrored and degenerate UV tangent-frame cases are not verified",
+                                   icon="INFO")
+                macro_normal.label(text="Required import remains disabled pending frame and BC5 fallback conformance",
+                                   icon="INFO")
+            macro_normal.label(text="Changes normals only; terrain weights and collider assignments stay unchanged",
+                               icon="INFO")
 
     controls = lay.box()
     controls.label(text="ADM Vertex Control", icon="COLOR")

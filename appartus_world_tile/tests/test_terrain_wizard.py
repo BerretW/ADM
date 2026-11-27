@@ -30,8 +30,8 @@ except ImportError:
 
 import numpy as np
 
-from awt.material import (Band, MacroColorSettings, MapSlot, PhysicalMaterial, Surface, TerrainMaterial,
-                          normal_preview_array)
+from awt.material import (Band, MacroColorSettings, MacroNormalSettings, MapSlot, PhysicalMaterial, Surface,
+                          TerrainMaterial, normal_preview_array)
 from awt.heightmap import Heightmap
 from awt.project import load_project
 
@@ -307,7 +307,7 @@ raise SystemExit(app.exec())
             path = os.path.join(directory, "world.awtp")
             self.assertTrue(window._write_project(path))
             loaded = load_project(path)
-            self.assertEqual(loaded.to_dict()["format_version"], 15)
+            self.assertEqual(loaded.to_dict()["format_version"], 16)
             self.assertEqual(loaded.material.biomes[0].noise, 0.65)
             window._open_project_file(path)
             window.material_panel.biome_list.setCurrentRow(0)
@@ -335,7 +335,9 @@ raise SystemExit(app.exec())
         self.assertTrue(window._dirty)
         with tempfile.TemporaryDirectory() as directory:
             macro_path = os.path.join(directory, "macro.png")
+            macro_normal_path = os.path.join(directory, "macro-normal.png")
             Image.new("RGB", (4, 4), (90, 130, 170)).save(macro_path)
+            Image.new("RGB", (4, 4), (180, 128, 255)).save(macro_normal_path)
             window.macro_color_path.setText(macro_path)
             window.macro_color_projection.setCurrentIndex(
                 window.macro_color_projection.findData("SHARED_WORLD_XZ"))
@@ -343,10 +345,18 @@ raise SystemExit(app.exec())
             window.macro_color_layer_influence[2].setValue(0.5)
             window.macro_color_scale[0].setValue(0.025)
             window.macro_color_origin[1].setValue(-120.0)
+            window.macro_normal_path.setText(macro_normal_path)
+            window.macro_normal_projection.setCurrentIndex(
+                window.macro_normal_projection.findData("SHARED_WORLD_XZ"))
+            window.macro_normal_strength.setValue(0.65)
+            window.macro_normal_layer_influence[0].setValue(0.25)
+            window.macro_normal_scale[1].setValue(0.05)
+            window.macro_normal_offset[0].setValue(3.0)
+            window.macro_normal_origin[1].setValue(-64.0)
             path = os.path.join(directory, "world.awtp")
             self.assertTrue(window._write_project(path))
             project = load_project(path)
-            self.assertEqual(project.to_dict()["format_version"], 15)
+            self.assertEqual(project.to_dict()["format_version"], 16)
             self.assertEqual(project.params.collision_max_error_m, 0.75)
             self.assertEqual(project.params.collision_boundary_max_edge_m, 2.5)
             self.assertEqual(project.params.collision_max_triangles_per_tile, 4096)
@@ -355,12 +365,21 @@ raise SystemExit(app.exec())
             self.assertEqual(project.material.macro_color.blend_mode, "LERP")
             self.assertEqual(project.material.macro_color.layer_influence[2], 0.5)
             self.assertEqual(project.material.macro_color.origin[1], -120.0)
+            self.assertEqual(project.material.macro_normal.path, macro_normal_path)
+            self.assertEqual(project.material.macro_normal.projection, "SHARED_WORLD_XZ")
+            self.assertEqual(project.material.macro_normal.strength, 0.65)
+            self.assertEqual(project.material.macro_normal.layer_influence[0], 0.25)
+            self.assertEqual(project.material.macro_normal.scale[1], 0.05)
+            self.assertEqual(project.material.macro_normal.offset[0], 3.0)
+            self.assertEqual(project.material.macro_normal.origin[1], -64.0)
             window._apply_widgets(project)
             self.assertEqual(window.collision_boundary_edge.value(), 2.5)
             self.assertEqual(window.gpu_container.currentData(), "KTX2")
             self.assertEqual(window.gpu_encoding.currentData(), "BC7")
             self.assertEqual(window.macro_color_projection.currentData(), "SHARED_WORLD_XZ")
             self.assertEqual(window.macro_color_blend_mode.currentData(), "LERP")
+            self.assertEqual(window.macro_normal_projection.currentData(), "SHARED_WORLD_XZ")
+            self.assertAlmostEqual(window.macro_normal_strength.value(), 0.65)
             self.assertEqual(window.palette_conflict_policy.currentData(), "APPROXIMATE")
             self.assertTrue(window.convert_gpu_sources.isChecked())
         project = Project(BuildParams(input_path="", out_dir=""))
@@ -1203,6 +1222,200 @@ raise SystemExit(app.exec())
             self.assertGreater(np.count_nonzero(np.abs(enabled - baseline) > 10), 100)
             self.assertGreater(enabled[48, 48, 1], enabled[48, 48, 0])
             self.assertGreater(shared[48, 48, 1], shared[48, 48, 0])
+
+    def test_macro_color_is_sampled_independently_of_per_layer_parallax(self):
+        import pyvista as pv
+        from PIL import Image
+        from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            albedo_path = os.path.join(directory, "albedo.png")
+            height_path = os.path.join(directory, "height.png")
+            macro_path = os.path.join(directory, "macro.png")
+            albedo = np.broadcast_to(
+                np.arange(256, dtype=np.uint8)[None, :, None], (32, 256, 3))
+            Image.fromarray(albedo).save(albedo_path)
+            Image.new("L", (32, 32), 51).save(height_path)
+            Image.fromarray(np.broadcast_to(
+                np.linspace(32, 224, 64, dtype=np.uint8)[None, :, None], (64, 64, 3))
+            ).save(macro_path)
+            surface = Surface("base", albedo=albedo_path, repeat_m=2,
+                              height_map=MapSlot(height_path), parallax_scale=0.2)
+
+            def render(parallax_mode, macro_enabled):
+                plotter = pv.Plotter(off_screen=True, window_size=(128, 128))
+                plotter.set_background("black")
+                white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                white.SetUseSRGBColorSpace(True)
+                actor = plotter.add_mesh(pv.Plane(i_size=2, j_size=2), pbr=True,
+                                         metallic=1, roughness=1, render=False)
+                mapper = vtkPolyDataMapper()
+                mapper.SetInputData(actor.mapper.GetInput())
+                mapper.ScalarVisibilityOff()
+                actor.SetMapper(mapper)
+                actor.prop.SetTexture("albedoTex", white)
+                actor.prop.SetORMTexture(pv.numpy_to_texture(
+                    np.full((2, 2, 3), 255, dtype=np.uint8)))
+                material = TerrainMaterial(parallax_mode=parallax_mode, height_blend_enabled=False)
+                if macro_enabled:
+                    material.macro_color = MacroColorSettings(
+                        path=macro_path, projection="SHARED_WORLD_XZ", blend_mode="LERP",
+                        scale=[1.0, 1.0])
+                install_layered_preview(
+                    actor, pv, [surface], [1], material, height_blend=False,
+                    transition=0.2, strength=1, texture_units=8)
+                plotter.camera_position = [(12, 0, 20), (0, 0, 0), (0, 1, 0)]
+                plotter.camera.parallel_projection = True
+                plotter.camera.parallel_scale = 1.5
+                plotter.show(auto_close=False)
+                result = plotter.screenshot(return_img=True).astype(np.int16)
+                plotter.close()
+                return result
+
+            base = render("NONE", False)
+            parallax_base = render("PARALLAX", False)
+            pom_base = render("PARALLAX_OCCLUSION", False)
+            macro = render("NONE", True)
+            parallax_macro = render("PARALLAX", True)
+            pom_macro = render("PARALLAX_OCCLUSION", True)
+            self.assertGreater(np.count_nonzero(np.abs(parallax_base - base) > 5), 100)
+            self.assertGreater(np.count_nonzero(np.abs(pom_base - base) > 5), 100)
+            np.testing.assert_allclose(parallax_macro, macro, atol=2)
+            np.testing.assert_allclose(pom_macro, macro, atol=2)
+
+    def test_macro_normal_preview_is_independent_of_per_layer_parallax(self):
+        import pyvista as pv
+        from PIL import Image
+        from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
+        from awt.gui.material_panel import _mesh_with_tangents
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            normal_path = os.path.join(directory, "macro-normal.png")
+            height_path = os.path.join(directory, "height.png")
+            normals = np.full((32, 64, 3), 128, dtype=np.uint8)
+            normals[..., 0] = np.broadcast_to(np.linspace(64, 224, 64, dtype=np.uint8), (32, 64))
+            normals[..., 2] = 255
+            Image.fromarray(normals).save(normal_path)
+            Image.new("L", (32, 32), 51).save(height_path)
+            surface = Surface("base", repeat_m=2, height_map=MapSlot(height_path), parallax_scale=0.2)
+
+            def render(parallax_mode, macro_enabled):
+                plotter = pv.Plotter(off_screen=True, window_size=(128, 128))
+                plotter.set_background("black")
+                plotter.add_light(pv.Light(position=(3, 5, 2), focal_point=(0, 0, 0)))
+                mesh = _mesh_with_tangents(
+                    pv.Plane(i_size=2, j_size=2, direction=(0, 1, 0)), pv)
+                mesh.point_data["assetPosition"] = np.asarray(mesh.points).copy()
+                actor = plotter.add_mesh(mesh, pbr=True, metallic=0, roughness=1, render=False)
+                mapper = vtkPolyDataMapper()
+                mapper.SetInputData(mesh)
+                mapper.ScalarVisibilityOff()
+                actor.SetMapper(mapper)
+                white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                white.SetUseSRGBColorSpace(True)
+                actor.prop.SetTexture("albedoTex", white)
+                actor.prop.SetORMTexture(pv.numpy_to_texture(
+                    np.full((2, 2, 3), 255, dtype=np.uint8)))
+                actor.prop.SetNormalTexture(pv.numpy_to_texture(
+                    np.full((2, 2, 3), (128, 128, 255), dtype=np.uint8)))
+                material = TerrainMaterial(parallax_mode=parallax_mode, height_blend_enabled=False)
+                if macro_enabled:
+                    material.macro_normal = MacroNormalSettings(
+                        path=normal_path, projection="SHARED_WORLD_XZ", scale=[1.0, 1.0])
+                install_layered_preview(
+                    actor, pv, [surface], [1], material, height_blend=False,
+                    transition=0.2, strength=1, texture_units=8,
+                    asset_position_attribute="assetPosition" if macro_enabled else None)
+                plotter.camera_position = [(3, 5, 2), (0, 0, 0), (0, 0, 1)]
+                plotter.camera.parallel_projection = True
+                plotter.camera.parallel_scale = 1.5
+                plotter.show(auto_close=False)
+                result = plotter.screenshot(return_img=True).astype(np.int16)
+                plotter.close()
+                return result
+
+            baseline = render("NONE", False)
+            macro = render("NONE", True)
+            parallax_macro = render("PARALLAX", True)
+            pom_macro = render("PARALLAX_OCCLUSION", True)
+            self.assertGreater(np.count_nonzero(np.abs(macro - baseline) > 5), 100,
+                               f"max_diff={np.abs(macro - baseline).max()}, "
+                               f"baseline={baseline[64, 64].tolist()}, macro={macro[64, 64].tolist()}")
+            np.testing.assert_allclose(parallax_macro, macro, atol=2)
+            np.testing.assert_allclose(pom_macro, macro, atol=2)
+
+    def test_macro_color_render_is_continuous_across_adjacent_tiles(self):
+        import pyvista as pv
+        from PIL import Image
+        from types import SimpleNamespace
+        from awt.gui.viewer3d import Viewer3D, load_tiles
+        from awt.pipeline import BuildParams, build, load_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            height_path = os.path.join(directory, "height.npy")
+            macro_path = os.path.join(directory, "macro.png")
+            np.save(height_path, np.zeros((33, 65), dtype=np.float32))
+            wave = np.rint(
+                128 + 80 * np.sin(2 * math.pi * 8 * (np.arange(128) + 0.5) / 128)
+            ).astype(np.uint8)
+            gradient = np.broadcast_to(
+                wave[None, :, None], (128, 128, 3))
+            Image.fromarray(gradient).save(macro_path)
+
+            material = TerrainMaterial(height_blend_enabled=False)
+            for surface in material.surfaces[:4]:
+                surface.color = [255, 255, 255]
+            material.macro_color = MacroColorSettings(
+                path=macro_path, projection="SHARED_WORLD_XZ", blend_mode="LERP",
+                scale=[1 / 4, 1.0])
+            params = BuildParams(input_path=height_path, out_dir=os.path.join(directory, "build"),
+                                 tile_cells=32, max_errors_m=[0.1], spacing_m=1.0)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            tiles = sorted(manifest["tiles"], key=lambda tile: tile["ix"])
+            self.assertEqual(len(tiles), 2)
+
+            data = load_tiles(manifest, [(tile["ix"], tile["iy"]) for tile in tiles],
+                              0, detailed=True)
+            plotter = pv.Plotter(off_screen=True, window_size=(480, 240))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+            preview = SimpleNamespace(
+                _manifest=manifest, _material=material, _control_map_resolution=32,
+                _data=data, plotter=plotter, wire=SimpleNamespace(isChecked=lambda: False),
+            )
+            Viewer3D._draw_detailed(preview, pv)
+            plotter.show(auto_close=False)
+
+            points = data["points"]
+            x_min, x_max = float(points[:, 0].min()), float(points[:, 0].max())
+            y_min, y_max = float(points[:, 1].min()), float(points[:, 1].max())
+            seam_x = max(float(tile["points"][:, 0].max())
+                         for tile in data["material_tiles"] if tile["ix"] == tiles[0]["ix"])
+            center_x = (x_min + x_max) / 2
+            center_y = (y_min + y_max) / 2
+            self.assertAlmostEqual(seam_x, center_x, places=4)
+            camera = plotter.camera
+            camera.parallel_projection = True
+            camera.parallel_scale = 18
+            plotter.camera_position = [
+                (center_x, center_y, 100), (center_x, center_y, 0), (0, 1, 0)]
+
+            for scale in (0.5, 32):
+                camera.parallel_scale = scale
+                plotter.render()
+                pixels = plotter.screenshot(return_img=True).astype(np.int16)
+                self.assertEqual(pixels.shape[1], 480)
+                left = pixels[30:-30, 239, :3]
+                right = pixels[30:-30, 241, :3]
+                differences = np.max(np.abs(left - right), axis=1)
+                self.assertLess(float(np.median(differences)), 8,
+                                f"Rendered Macro Color seam differs at scale {scale}: {differences}; "
+                                f"left={left[len(left) // 2]}, right={right[len(right) // 2]}")
+                self.assertLess(float(np.percentile(differences, 95)), 20,
+                                f"Rendered Macro Color seam outliers at scale {scale}: {differences}")
 
     def test_control_map_minification_uses_mip_levels(self):
         import pyvista as pv

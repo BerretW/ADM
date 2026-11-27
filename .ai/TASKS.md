@@ -63,7 +63,8 @@ design, metadata-only support, or skipped test does not count as completion.
       behavior.
 - [x] Macro Color: define shared/local projection, color space, Multiply/Tint/
       Lerp equations, neutral defaults, per-layer influence, validation, and
-      independent golden vectors. Renderer and authoring integration remain open.
+      independent golden vectors. Renderer and authoring conformance is tracked
+      under M6 and M7.
 - [x] Macro Normal: define coordinate space, strength, BC5 reconstruction,
       RNM composition, degeneracy handling, and missing-map behavior.
 - [ ] Anti-tiling: define deterministic cell/hash transforms, seeds, derivatives,
@@ -146,12 +147,21 @@ design, metadata-only support, or skipped test does not count as completion.
 - [x] Macro Color: render neutral/enabled local and shared-world previews for
       all blend modes; verify exported weights and collision assignments stay
       unchanged.
-- [ ] Macro Color: verify mip/gutter continuity at tile borders, parallax
-      ordering, and cross-reader output.
-- [ ] Macro Normal: author/import BC5 and portable fallback data and preserve
-      source bytes.
-- [ ] Macro Normal: render neutral/enabled previews and verify collision
-      geometry remains unchanged.
+- [x] Macro Color: render one shared-world map across adjacent terrain tiles at
+      magnified and minified views; measure shared-edge pixel continuity.
+- [x] Macro Color: verify the rendered overlay stays fixed with per-layer
+      Parallax and POM enabled while those effects visibly alter the base map.
+- [ ] Macro Color: verify exact mip selection and border gutters for separately
+      tiled images.
+- [ ] Macro Color: compare rendered output across World Tile and Blender.
+- [x] Macro Normal: author project settings in AWTP v16, validate two-channel
+      PNG input, export BC5 UNORM plus reconstructed RGB fallback, and preserve
+      compatible BC5 source bytes.
+- [x] Macro Normal: package maps in preset v7 and preserve BC5 source bytes.
+- [x] Macro Normal: render local/shared World Tile previews, RNM, neutral
+      behavior, parallax independence, and unchanged collider assignments.
+- [ ] Macro Normal: verify filtered mip/gutter and adjacent-tile continuity,
+      portable fallback equivalence, and cross-reader output.
 - [ ] Anti-tiling: expose bounded controls and render camera-, LOD-, and
       tile-seam regressions.
 - [ ] Stochastic sampling: expose bounded tap/sample controls and render
@@ -189,12 +199,23 @@ design, metadata-only support, or skipped test does not count as completion.
 - [x] Blender Control Maps: render all supported modes and verify UV selection,
       coordinate offsets, transformed world positions, and floating-origin
       stability.
-- [ ] Blender Control Maps: verify sampler filtering, mip selection, tile seams,
-      and per-layer parallax ordering.
-- [ ] Blender Macro Color: preserve metadata and implement nodes.
-- [ ] Blender Macro Color: verify rendered output and import/export/save/reload.
-- [ ] Blender Macro Normal: preserve BC5/fallback metadata and implement nodes.
-- [ ] Blender Macro Normal: verify rendered output and import/export/save/reload.
+- [x] Blender Control Maps: render filtered minification and shared world-XZ
+      samples across adjacent tile meshes.
+- [ ] Blender Control Maps: verify explicit mip selection, per-layer parallax
+      ordering, and cross-reader sampling parity; Blender's current preview does
+      not implement POM.
+- [x] Blender Macro Color: preserve metadata, authoring settings and nodes.
+- [x] Blender Macro Color: verify rendered output and import/export/save/reload.
+- [x] Blender Macro Normal: author projection/settings, export the required
+      extension, and preserve authoring data through `.blend` save/reload.
+- [x] Blender Macro Normal: preview local/shared sampling and RNM for the
+      aligned-tangent fixture, rotated surface, and differing UV1 layer normal;
+      verify neutral strength and unchanged weights.
+- [ ] Blender Macro Normal: verify mirrored/degenerate tangent-frame handling,
+      preserve BC5/fallback metadata, and import required data without losing
+      behavior.
+- [ ] Blender Macro Normal: verify full frame, mip/filter, import/export, and
+      rendered round-trip conformance.
 - [ ] Blender anti-tiling: implement nodes or report unsupported behavior.
 - [ ] Blender stochastic sampling: implement bounded nodes or report unsupported
       behavior.

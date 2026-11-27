@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from awt.material import PhysicalMaterial, TerrainMaterial
+from awt.material import MacroColorSettings, MacroNormalSettings, PhysicalMaterial, TerrainMaterial
 from awt.roads import Road
 from awt.terrain_presets import list_presets, load_preset, save_preset
 from awt.terrain_setup import apply_profile
@@ -75,9 +75,9 @@ class TerrainSetupTest(unittest.TestCase):
         self.assertEqual(loaded.biomes[0].surface_names(), material.biomes[0].surface_names())
         self.assertEqual(loaded.biomes[0].noise, 0.65)
         with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["version"], 6)
+            self.assertEqual(json.load(handle)["version"], 7)
 
-    def test_advanced_shader_settings_round_trip_in_preset_version_six(self):
+    def test_advanced_shader_settings_round_trip_in_preset_version_seven(self):
         material = TerrainMaterial()
         texture = os.path.join(self.tmp.name, "height.png")
         Image.fromarray(np.full((4, 4), 128, np.uint8)).save(texture)
@@ -89,7 +89,7 @@ class TerrainSetupTest(unittest.TestCase):
         material.parallax_mode = "PARALLAX"
         folder = save_preset(os.path.join(self.tmp.name, "presets"), "Layered", material)
         with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["version"], 6)
+            self.assertEqual(json.load(handle)["version"], 7)
         loaded = load_preset(os.path.dirname(folder), "layered")
         self.assertTrue(loaded.height_blend_enabled)
         self.assertEqual(loaded.parallax_mode, "PARALLAX")
@@ -97,14 +97,43 @@ class TerrainSetupTest(unittest.TestCase):
         self.assertEqual(loaded.surface("grass").ao_strength, 0.6)
         self.assertTrue(loaded.surface("grass").height_map.path.startswith(os.path.join(folder, "textures")))
 
-    def test_per_map_gpu_encodings_round_trip_in_preset_version_six(self):
+    def test_per_map_gpu_encodings_round_trip_in_preset_version_seven(self):
         material = TerrainMaterial()
         material.surface("grass").gpu_encodings = {"albedo": "BC7", "height": "RGBA8"}
         folder = save_preset(os.path.join(self.tmp.name, "presets"), "GPU", material)
         with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["version"], 6)
+            self.assertEqual(json.load(handle)["version"], 7)
         loaded = load_preset(os.path.dirname(folder), "gpu")
         self.assertEqual(loaded.surface("grass").gpu_encodings, {"albedo": "BC7", "height": "RGBA8"})
+
+    def test_macro_maps_are_packaged_and_macro_normal_bc5_bytes_are_preserved(self):
+        from adm_blender.core import gputex
+
+        macro_color_path = os.path.join(self.tmp.name, "macro-color.png")
+        Image.new("RGB", (8, 8), (90, 130, 170)).save(macro_color_path)
+        normal_pixels = np.full((8, 8, 4), (128, 128, 255, 255), dtype=np.uint8)
+        normal_bytes, _kind = gputex.encode(
+            normal_pixels, gputex.MIME_DDS, "BC5", srgb=False, mipmaps=True)
+        macro_normal_path = os.path.join(self.tmp.name, "macro-normal.dds")
+        with open(macro_normal_path, "wb") as handle:
+            handle.write(normal_bytes)
+        material = TerrainMaterial(
+            macro_color=MacroColorSettings(path=macro_color_path),
+            macro_normal=MacroNormalSettings(
+                path=macro_normal_path, projection="SHARED_WORLD_XZ", origin=[20.0, -5.0]))
+
+        folder = save_preset(os.path.join(self.tmp.name, "presets"), "Macro Terrain", material)
+        loaded = load_preset(os.path.dirname(folder), "macro-terrain")
+
+        self.assertEqual(loaded.macro_color.projection, "LOCAL_UV")
+        self.assertTrue(loaded.macro_color.path.startswith(os.path.join(folder, "textures")))
+        self.assertEqual(loaded.macro_normal.projection, "SHARED_WORLD_XZ")
+        self.assertEqual(loaded.macro_normal.origin, [20.0, -5.0])
+        self.assertTrue(loaded.macro_normal.path.startswith(os.path.join(folder, "textures")))
+        with open(loaded.macro_normal.path, "rb") as handle:
+            self.assertEqual(handle.read(), normal_bytes)
+        with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["version"], 7)
 
     def test_preset_rejects_texture_paths_outside_its_directory(self):
         root = os.path.join(self.tmp.name, "presets")
