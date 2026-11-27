@@ -21,6 +21,7 @@ PREVIEW_PREFIX = "ADM Preview"
 MATERIAL_HEIGHT_DATA = "_adm_material_height_json"
 MATERIAL_HEIGHT_IMAGE = "_adm_material_height_image"
 MATERIAL_HEIGHT_SAMPLER = "_adm_material_height_sampler_json"
+MATERIAL_UNKNOWN_EXTENSIONS = "_adm_unknown_material_extensions_json"
 
 
 # ================================================================================================
@@ -391,7 +392,7 @@ class MaterialExporter:
         self._mat_cache = {}
         self._mat_uv_names = {}
         self._img_cache = {}
-        self._bc5_images = set()
+        self._bc5_images = {}
         self._tex_cache = {}
         self._sampler_cache = {}
         self.normal_mapped = set()
@@ -500,7 +501,7 @@ class MaterialExporter:
             blob, mime = preserved
             primary = self._add_blob(name, blob, mime)
             if gputex.parse(blob, mime, strict=True)["kind"] == "BC5":
-                self._bc5_images.add(primary)
+                self._bc5_images[primary] = (blob, mime)
             fallback_image = image.get("_adm_gpu_fallback") or image
             if not isinstance(fallback_image, bpy.types.Image):
                 raise TextureExportError(f"image '{image.name}': preserved fallback is invalid")
@@ -513,6 +514,13 @@ class MaterialExporter:
             scalar_r16 = (high_precision and pixels is None and not color_role
                           and self.gpu_compression == "AUTO"
                           and np.all(px[..., 1:3] == 0) and np.all(px[..., 3] == 1))
+            if high_precision and self.gpu_compression == "AUTO" and not scalar_r16:
+                self.warn(f"image '{name}': automatic GPU export retains a 16-bit PNG because "
+                          "R16 cannot represent all source channels")
+                png, png_mime = self._encode_image_bytes(image, color_role)
+                entry = (self._add_blob(name, png, png_mime, image), None)
+                self._img_cache[key] = entry
+                return entry
             if scalar_r16:
                 scalar = (np.clip(px[..., 0], 0.0, 1.0) * 65535.0 + 0.5).astype(np.uint16)
                 blob, _ = gputex.encode_scalar(scalar, gpu_mime, "R16", self.gpu_mipmaps)
@@ -525,7 +533,7 @@ class MaterialExporter:
                 blob, kind = gputex.encode(rgba, gpu_mime, self.gpu_compression, color_role, self.gpu_mipmaps)
             primary = self._add_blob(name, blob, gpu_mime)
             if kind == "BC5":
-                self._bc5_images.add(primary)
+                self._bc5_images[primary] = (blob, gpu_mime)
             if kind in ("R8", "R16", "BC4", "BC5"):
                 px = px.copy()
                 px[..., 1 if kind != "BC5" else 2:3] = 0.0
@@ -673,6 +681,40 @@ class MaterialExporter:
     def export_material(self, mat, uv_names):
         out = self._export_pbr(mat, uv_names)
         self._export_shader(mat, out)
+        normal = out.get("normalTexture")
+        if normal is not None:
+            texture = self.textures[normal["index"]]
+            bc5 = self._bc5_images.get(texture["source"])
+            if bc5 is not None:
+                used_elsewhere = any(
+                    isinstance(value, dict) and isinstance(value.get("index"), int)
+                    and 0 <= value["index"] < len(self.textures)
+                    and self._bc5_images.get(self.textures[value["index"]]["source"]) == bc5
+                    for value in out.get("shaderParameters", {}).values()
+                )
+                if used_elsewhere:
+                    blob, mime = bc5
+                    rgba = gputex.decode(blob, mime, strict=True)[0].astype(np.float32) / 255.0
+                    rgb = gputex.reconstruct_bc5_normal(rgba)
+                    png, png_mime = self._encode_pixels(rgb)
+                    image = self._add_blob(mat.name + "_pbr_normal", png, png_mime)
+                    normal["index"] = self._texture((image, None), texture.get("sampler"))
+                else:
+                    self.warn(f"material '{mat.name}': core PBR normal uses BC5; portable readers without "
+                              "BC5 normal reconstruction may display its two-channel fallback incorrectly")
+        if MATERIAL_UNKNOWN_EXTENSIONS in mat:
+            try:
+                unknown = json.loads(mat[MATERIAL_UNKNOWN_EXTENSIONS])
+                if not isinstance(unknown, dict) or any(
+                        not isinstance(name, str) or name in K.SUPPORTED_EXTENSIONS for name in unknown):
+                    raise ValueError("invalid unknown material extensions")
+            except (TypeError, ValueError) as exc:
+                raise ShaderExportError(f"material '{mat.name}': cannot preserve unknown extensions: {exc}") from exc
+            if unknown:
+                out.setdefault("extensions", {}).update(unknown)
+                self.extensions_used.update(unknown)
+                self.warn(f"material '{mat.name}': unknown material extensions are preserved, "
+                          "but their internal references cannot be remapped")
         if MATERIAL_HEIGHT_DATA in mat:
             try:
                 height = json.loads(mat[MATERIAL_HEIGHT_DATA])
@@ -953,9 +995,6 @@ class MaterialExporter:
                 ct = trace(nm.inputs["Color"])
                 if ct and ct["node"] is not None and ct["node"].image:
                     ti = self.texture_from_node(ct["node"], False)
-                    if self.textures[ti]["source"] in self._bc5_images:
-                        self.warn(f"material '{mat.name}': core PBR normal uses BC5; portable readers without "
-                                  "BC5 normal reconstruction may display its two-channel fallback incorrectly")
                     strength = float(nm.inputs["Strength"].default_value)
                     extra = {"scale": max(0.0, strength)} if abs(strength - 1.0) > 1e-6 else None
                     ref = self._ref(ti, ct["node"], uv_names, extra, interactive)
@@ -1510,6 +1549,10 @@ def build_material(m, resolve_texture, resolve_normal_texture):
     ``resolve_texture(textureRef) -> (bpy.types.Image, sampler_dict)``.
     """
     mat = bpy.data.materials.new(m.get("name", "ADM Material"))
+    unknown = {name: value for name, value in m.get("extensions", {}).items()
+               if name not in K.SUPPORTED_EXTENSIONS}
+    if unknown:
+        mat[MATERIAL_UNKNOWN_EXTENSIONS] = json.dumps(unknown, ensure_ascii=False)
     missing_textures = []
 
     def _resolve_texture(ref):

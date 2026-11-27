@@ -1,6 +1,50 @@
 # Mission verification record
 
 ## Completed so far
+- Blender's bounded texture-format regression reproduced automatic 8-bit
+  primary conversion for edited multichannel 16-bit data. With the fix, AUTO
+  retains a 16-bit PNG primary for DDS and KTX2 requests, and ADM reimport
+  retains both tested channels. Scalar R16 primary/mip round trips and explicit
+  lossy conversions continue to pass.
+- A bounded Blender 5.2.3 regression verifies a separate reconstructed RGB
+  core-PBR normal when a shader parameter retains matching BC5 DDS/KTX2 bytes.
+  It covers embedded and external textures, sampler preservation, conversion,
+  reimport and project reload. With no matching shader reference, it verifies
+  that core-only BC5 remains byte-preserved and produces a compatibility warning.
+- After the BC5 change, `build.bat` produced `dist/adm_tools-1.24.37.zip`:
+  36 steps passed, 2,145 reported cases passed, and 10 external-asset cases
+  were skipped. ZIP integrity and implementation byte comparisons passed.
+  Blender 5.2.3 installed and re-enabled it in an isolated configuration.
+  Bounded BC5 and material-height regressions passed against extracted ZIP
+  implementation; their test helpers were loaded from the checkout.
+- The full World Tile suite passed 114 tests with five PyVista future warnings
+  after the shared ADM package registration changes.
+- World Tile candidate 11 includes the updated shared package entry point.
+  ZIP integrity and runtime byte comparisons passed. Its relocated reference
+  project exported four tiles, and its GUI retained precise surface values and
+  opaque shader settings while rejecting their validation. It is not a release.
+- Blender 5.2.3 retained unknown material-extension JSON through ADM export,
+  Blender project save/reload and selected-object export. The bounded
+  regression also verifies explicit rejection of invalid saved metadata;
+  opaque references are not remapped.
+- After that change, `build.bat` produced `dist/adm_tools-1.24.36.zip`:
+  36 steps passed, 2,145 reported cases passed, and 10 external-asset cases
+  were skipped. ZIP integrity and implementation byte comparisons passed.
+  Blender 5.2.3 installed, enabled, disabled and re-enabled the archive in an
+  isolated user configuration. Blender also reported the unrelated missing
+  `sollumz_rdr_dev` add-on in this test configuration.
+- Blender 5.2.3 reproduced the `_RestrictData.materials` failure through
+  `addon_utils.enable`. A bounded regression now enables and disables the
+  add-on through that loader, checks deferred migration and timer cleanup, and
+  injects registration failures in property, operator, file I/O, and UI
+  classes. Each failure permits a subsequent successful enable.
+- `build.bat` produced `dist/adm_tools-1.24.35.zip`: 36 steps passed,
+  2,145 reported cases passed, and 10 external-asset cases were skipped.
+  The ZIP passed integrity and registration-source byte checks. Blender
+  5.2.3 installed and enabled it in an isolated user configuration; a fresh
+  Blender process confirmed it was enabled and disabled/re-enabled it. Blender
+  also reported an unrelated missing `sollumz_rdr_dev` add-on in this test
+  configuration.
 - The World Tile suite passed 114 tests with five PyVista future warnings
   after adding opaque terrain-shader setting preservation and independent
   global and surface control updates. Regressions save and reopen the project, verify that
@@ -40,8 +84,9 @@
   The World Tile suite also passed 111 tests with five PyVista future warnings.
   The shader ENUM and profile logs contained no enum mismatch or recursion
   errors. Blender dependency-cycle warnings remain.
-- The height regression confirms the unknown-extension warning and documents
-  that an arbitrary unknown material extension is not preserved on export.
+- An earlier height regression confirmed the unknown-extension warning and
+  demonstrated loss of an unknown material extension; the regression now
+  verifies preservation after the material-level change.
   The warning persists through project reload and selected-object export.
   Import-transaction and interactive-material Blender regressions also passed.
 - After the persistent-warning changes, a fresh check-only build passed 34
@@ -458,8 +503,8 @@
 - Blender texture-format tests passed with R16 DDS/KTX2 loading, project
   save/reload, 16-bit PNG ADM export/import, edited PNG export, R16 GPU
   primary/fallback round-trips, R16 mip values, repeated export after importing
-  the PNG fallback, and a warning for 8-bit GPU conversion. Edited non-scalar
-  channels do not get discarded by R16 conversion.
+  the PNG fallback, and a warning for explicit 8-bit GPU conversion. Edited
+  non-scalar channels retain their precision in AUTO mode.
 - World Tile normal-map regression passed: all three preview shapes have
   tangents, and a lit plane renders differently for flat and sideways normals.
 - Layered PBR tests passed for weighted maps, inversion, zero-weight layers, and

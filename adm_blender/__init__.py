@@ -8,6 +8,7 @@ except ImportError:  # imported outside Blender, e.g. ``python -m adm_blender.co
 if bpy is not None:
     import importlib
     import sys
+    from contextlib import ExitStack
 
     from bpy.props import StringProperty
 
@@ -33,12 +34,16 @@ if bpy is not None:
             self.layout.prop(self, "sidebar_category")
 
     def register():
-        bpy.utils.register_class(ADMPreferences)
-        _blender.register()
-        prefs = bpy.context.preferences.addons.get(__package__)
-        if prefs is not None and prefs.preferences.sidebar_category.strip() not in ("", "ADM"):
-            from .blender import ui
-            ui.set_sidebar_category(prefs.preferences.sidebar_category.strip())
+        with ExitStack() as rollback:
+            bpy.utils.register_class(ADMPreferences)
+            rollback.callback(bpy.utils.unregister_class, ADMPreferences)
+            _blender.register()
+            rollback.callback(_blender.unregister)
+            prefs = bpy.context.preferences.addons.get(__package__)
+            if prefs is not None and prefs.preferences.sidebar_category.strip() not in ("", "ADM"):
+                from .blender import ui
+                ui.set_sidebar_category(prefs.preferences.sidebar_category.strip())
+            rollback.pop_all()
 
     def unregister():
         _blender.unregister()

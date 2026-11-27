@@ -12,7 +12,7 @@ sys.path.insert(0, REPO)
 
 import adm_blender
 from adm_blender.blender import materials as M
-from adm_blender.blender.export_adm import ExportOptions, ModelExporter
+from adm_blender.blender.export_adm import ExportError, ExportOptions, ModelExporter
 from adm_blender.blender.import_adm import ImportError_, ImportOptions, ModelImporter
 from adm_blender.core import constants as K
 from adm_blender.core.buffers import read_accessor_np, read_view
@@ -60,7 +60,8 @@ def main():
               "extras": {"uneditable": ["keep", 3]},
               "extensions": {"EXAMPLE_height_metadata": {"value": "keep"}}}
     material.setdefault("extensions", {})[K.MATERIAL_HEIGHT_EXT] = height
-    material["extensions"]["EXAMPLE_unknown_material"] = {"unrecognized": True}
+    unknown_material = {"unrecognized": True, "future": {"values": [0.2, "text"]}}
+    material["extensions"]["EXAMPLE_unknown_material"] = unknown_material
     doc.setdefault("extensionsUsed", []).append(K.MATERIAL_HEIGHT_EXT)
     doc["extensionsUsed"].append("EXAMPLE_height_metadata")
     doc["extensionsUsed"].append("EXAMPLE_unknown_material")
@@ -95,6 +96,8 @@ def main():
         assert read_view(exported, binary, source["bufferView"]) == source_blob
         assert K.MATERIAL_HEIGHT_EXT in exported["extensionsUsed"]
         assert "EXAMPLE_height_metadata" in exported["extensionsUsed"]
+        assert exported["materials"][0]["extensions"]["EXAMPLE_unknown_material"] == unknown_material
+        assert "EXAMPLE_unknown_material" in exported["extensionsUsed"]
         check_uv1_tangent(exported, binary)
 
     with tempfile.TemporaryDirectory(prefix="adm_material_height_") as folder:
@@ -113,10 +116,9 @@ def main():
         encoded, report = exporter.export()
         assert report.ok, report.errors
         assert any("unknown material-height fields" in warning for warning in exporter.warnings)
+        assert any("unknown material extensions are preserved" in warning for warning in exporter.warnings)
         assert any("OPTIONAL_EXTENSIONS_UNSUPPORTED" in warning and "EXAMPLE_unknown_material" in warning
                    for warning in exporter.warnings)
-        exported, _ = read_container(encoded, K.ADM_MAGIC)
-        assert "EXAMPLE_unknown_material" not in exported["materials"][0].get("extensions", {})
         check_export(encoded)
         print("PHASE save and reopen Blender project", flush=True)
         root_name = importer.root.name
@@ -134,10 +136,23 @@ def main():
         imported_mesh = next(obj for obj in imported_root.children_recursive if obj.type == "MESH")
         imported_mesh.select_set(True)
         exporter = ModelExporter(bpy.context, None, ExportOptions(selected_only=True))
-        _, report = exporter.export()
+        selected_data, report = exporter.export()
         assert report.ok, report.errors
         assert any("OPTIONAL_EXTENSIONS_UNSUPPORTED" in warning and "EXAMPLE_unknown_material" in warning
                    for warning in exporter.warnings)
+        selected_doc, _ = read_container(selected_data, K.ADM_MAGIC)
+        assert selected_doc["materials"][0]["extensions"]["EXAMPLE_unknown_material"] == unknown_material
+        imported_mat = imported_mesh.data.materials[0]
+        saved_extensions = imported_mat[M.MATERIAL_UNKNOWN_EXTENSIONS]
+        imported_mat[M.MATERIAL_UNKNOWN_EXTENSIONS] = "{broken"
+        exporter = ModelExporter(bpy.context, imported_root, ExportOptions())
+        try:
+            exporter.export()
+        except ExportError as exc:
+            assert "cannot preserve unknown extensions" in str(exc)
+        else:
+            raise AssertionError("Invalid unknown extension metadata was accepted")
+        imported_mat[M.MATERIAL_UNKNOWN_EXTENSIONS] = saved_extensions
         print("PHASE differing normal and height UV sets", flush=True)
         material["normalTexture"] = ref
         path = os.path.join(folder, "mixed_uv.adm")

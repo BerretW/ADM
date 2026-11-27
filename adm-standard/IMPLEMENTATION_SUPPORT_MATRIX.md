@@ -33,8 +33,9 @@ represented as complete renderer conformance.
   Unknown optional height fields and nested extension data are retained, but
   their internal references are not remapped.
 - Blender warns on import and export when optional extensions are not
-  recognized, including after saving and reopening a project. It does not
-  generally preserve arbitrary unknown extensions through export.
+  recognized, including after saving and reopening a project. It retains
+  unknown material-level extension JSON without remapping its internal
+  references. It does not generally preserve unknown extensions elsewhere.
 - Blender retains inactive profile parameters in the project when you switch
   profiles, restoring values whose shader and type match. An ADM export includes
   only parameters supported by the selected profile and warns about inactive
@@ -64,9 +65,13 @@ represented as complete renderer conformance.
 - Portable PBR fallback textures preserve only data representable in portable PBR and must
   be labeled as a fallback, never as layered shader conformance.
 - DDS/KTX2 primary bytes are preserved only when the source role and color space match.
+- Blender's automatic GPU conversion uses R16 for eligible scalar data and retains a
+  16-bit PNG for other 16-bit images. Explicit 8-bit GPU compression is lossy and warns.
 - For a BC5 terrain normal, World Tile retains the BC5 source and its
   two-channel fallback for the shader, and emits a separate reconstructed RGB
-  PNG for the top-level PBR normal. Blender's standalone core-PBR BC5 export
+  PNG for the top-level PBR normal. Blender also emits a separate RGB PNG
+  when an exported shader parameter retains the same BC5 bytes. Blender's
+  standalone core-PBR BC5 export
   does not yet provide both a preserved BC5 primary and an RGB fallback under
   the current two-channel fallback rule. Blender warns when exporting a BC5
   core normal because portable readers might display that fallback incorrectly.

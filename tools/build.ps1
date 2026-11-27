@@ -440,6 +440,7 @@ try {
         "test_workflow.py",
         "test_terrain_workflow.py",
         "test_skeleton_blender.py",
+        "test_registration_blender.py",
         "test_material_slots.py",
         "test_shader_harness.py",
         "test_shader_enums_blender.py",
@@ -467,7 +468,7 @@ try {
                 $env:ADM_QA_METRICS = "1"
             }
             $testPath = ".\adm_blender\tests\$test"
-            if ($test -in @("test_shader_enums_blender.py", "test_shader_profiles.py",
+            if ($test -in @("test_registration_blender.py", "test_shader_enums_blender.py", "test_shader_profiles.py",
                            "test_shader_preview.py", "test_advanced_reference_blender.py",
                            "test_bc5_normal_import_blender.py", "test_material_height_blender.py")) {
                 Invoke-Step -Name "Blender: $test" -Executable $pythonExe -Arguments @(

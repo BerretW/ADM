@@ -64,15 +64,30 @@ def main():
             assert bpy.ops.adm.material_shader_texture_open(name="layer0_ao_texture", filepath=path) == {"FINISHED"}
             assert np.max(M.image_pixels(mat.adm.params["layer0_ao_texture"].image)[..., 2]) < 0.01
             assert bpy.ops.adm.material_texture_open(slot="NORMAL", filepath=path) == {"FINISHED"}
-            assert np.min(M.image_pixels(M.slot_texture_node(mat, "NORMAL").image)[..., 2]) > 0.9
+            normal_node = M.slot_texture_node(mat, "NORMAL")
+            normal_node.extension = "EXTEND"
+            assert np.min(M.image_pixels(normal_node.image)[..., 2]) > 0.9
             print(f"PHASE {extension}: export directly opened BC5 normals", flush=True)
             exporter = ModelExporter(bpy.context, root, ExportOptions())
             exported, report = exporter.export()
             assert report.ok, report.errors
-            assert any("core PBR normal uses BC5" in warning for warning in exporter.warnings)
+            assert not any("core PBR normal uses BC5" in warning for warning in exporter.warnings)
             direct_doc, direct_chunks = read_container(exported, K.ADM_MAGIC)
             direct_mat = direct_doc["materials"][0]
-            for ref in (direct_mat["normalTexture"], direct_mat["shaderParameters"]["layer0_normal"]):
+            core_texture = direct_doc["textures"][direct_mat["normalTexture"]["index"]]
+            assert direct_doc["samplers"][core_texture["sampler"]]["wrapS"] == "CLAMP_TO_EDGE"
+            core_source = direct_doc["images"][core_texture["source"]]
+            assert core_source["mimeType"] == "image/png"
+            core_path = os.path.join(tmp, "direct_pbr_normal.png")
+            with open(core_path, "wb") as stream:
+                stream.write(read_view(direct_doc, direct_chunks, core_source["bufferView"]))
+            core_image = bpy.data.images.load(core_path, check_existing=False)
+            try:
+                expected = gputex.reconstruct_bc5_normal(gputex.decode(blob, mime, strict=True)[0] / 255.0)
+                np.testing.assert_allclose(M.image_pixels(core_image), expected, atol=1 / 255)
+            finally:
+                bpy.data.images.remove(core_image)
+            for ref in (direct_mat["shaderParameters"]["layer0_normal"],):
                 texture = direct_doc["textures"][ref["index"]]
                 source = direct_doc["images"][texture["source"]]
                 assert read_view(direct_doc, direct_chunks, source["bufferView"]) == blob
@@ -87,16 +102,48 @@ def main():
                                                atol=1 / 255)
                 finally:
                     bpy.data.images.remove(fallback_image)
+            print(f"PHASE {extension}: export split normal with external textures", flush=True)
+            exporter = ModelExporter(bpy.context, root, ExportOptions(embed_textures=False))
+            external, report = exporter.export()
+            assert report.ok, report.errors
+            external_doc, _ = read_container(external, K.ADM_MAGIC)
+            external_mat = external_doc["materials"][0]
+            pbr_tex = external_doc["textures"][external_mat["normalTexture"]["index"]]
+            layer_tex = external_doc["textures"][external_mat["shaderParameters"]["layer0_normal"]["index"]]
+            pbr_image = external_doc["images"][pbr_tex["source"]]
+            layer_image = external_doc["images"][layer_tex["source"]]
+            assert pbr_image["mimeType"] == "image/png"
+            assert exporter.mat.external_files[layer_image["uri"]] == blob
+            assert exporter.mat.external_files[pbr_image["uri"]].startswith(b"\x89PNG\r\n\x1a\n")
+            print(f"PHASE {extension}: unreferenced core-only BC5 remains preserved", flush=True)
+            for name in ("layer0_normal", "layer0_ao_texture"):
+                mat.adm.params[name].use = False
+            exporter = ModelExporter(bpy.context, root, ExportOptions())
+            core_only, report = exporter.export()
+            assert report.ok, report.errors
+            assert any("core PBR normal uses BC5" in warning for warning in exporter.warnings)
+            core_only_doc, core_only_chunks = read_container(core_only, K.ADM_MAGIC)
+            core_ref = core_only_doc["materials"][0]["normalTexture"]
+            primary = core_only_doc["images"][core_only_doc["textures"][core_ref["index"]]["source"]]
+            assert read_view(core_only_doc, core_only_chunks, primary["bufferView"]) == blob
+            for name in ("layer0_normal", "layer0_ao_texture"):
+                mat.adm.params[name].use = True
             for kind in ("BC4", "BC5"):
                 print(f"PHASE {extension}: export converted {kind} normals", flush=True)
                 exporter = ModelExporter(
                     bpy.context, root, ExportOptions(image_format=extension.upper(), gpu_compression=kind))
                 converted, report = exporter.export()
                 assert report.ok, report.errors
-                assert any("core PBR normal uses BC5" in warning for warning in exporter.warnings) == (kind == "BC5")
+                assert not any("core PBR normal uses BC5" in warning for warning in exporter.warnings)
                 converted_doc, converted_chunks = read_container(converted, K.ADM_MAGIC)
                 converted_mat = converted_doc["materials"][0]
-                for ref in (converted_mat["normalTexture"], converted_mat["shaderParameters"]["layer0_normal"]):
+                refs = [converted_mat["shaderParameters"]["layer0_normal"]]
+                if kind == "BC4":
+                    refs.append(converted_mat["normalTexture"])
+                else:
+                    core = converted_doc["textures"][converted_mat["normalTexture"]["index"]]
+                    assert converted_doc["images"][core["source"]]["mimeType"] == "image/png"
+                for ref in refs:
                     texture = converted_doc["textures"][ref["index"]]
                     source = converted_doc["images"][texture["source"]]
                     assert gputex.parse(read_view(converted_doc, converted_chunks, source["bufferView"]),
@@ -253,8 +300,9 @@ def main():
             assert report.ok, report.errors
             exported_doc, exported_chunks = read_container(encoded, K.ADM_MAGIC)
             parameters = exported_doc["materials"][0]["shaderParameters"]
-            refs = (exported_doc["materials"][0]["normalTexture"], parameters["layer0_normal"],
-                    parameters["layer0_ao_texture"])
+            pbr = exported_doc["textures"][exported_doc["materials"][0]["normalTexture"]["index"]]
+            assert exported_doc["images"][pbr["source"]]["mimeType"] == "image/png"
+            refs = (parameters["layer0_normal"], parameters["layer0_ao_texture"])
             for ref in refs:
                 tex = exported_doc["textures"][ref["index"]]
                 source_image = exported_doc["images"][tex["source"]]

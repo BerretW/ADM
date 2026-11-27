@@ -20,6 +20,7 @@ checkboxes track verification and delivery, not merely code changes.
     and World Tile targeted tests preserve supported source bytes and R16 values.
   - World Tile now exports a separate reconstructed RGB normal for core PBR,
     while retaining the BC5 primary and its specified `(R,G,0,1)` shader fallback.
+    Blender does the same when a shader parameter retains the matching BC5.
     Blender's standalone core-PBR BC5 path still needs resolution: a single
     texture cannot both retain the BC5 primary and offer an RGB fallback under
     the current two-channel fallback rule.
@@ -117,7 +118,9 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Record full/partial/fallback/not-applicable support per consumer.
 - [ ] Prevent unsupported fields from being silently discarded.
   - Blender warns on import and export about unrecognized optional extensions,
-    including after reload, but does not generally preserve them through export.
+    including after reload. Material-level unknown extension JSON is retained
+    without remapping opaque references; other locations are not generally
+    preserved through export.
 
 ## M11 - Fixtures and documentation
 - [x] Create original procedural Rock, Sand, Dirt, Grass, and Cobblestone maps.

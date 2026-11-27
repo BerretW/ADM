@@ -1,6 +1,7 @@
 """Authoring of linear ADM vertex controls on Blender color attributes."""
 
 import math
+from contextlib import ExitStack
 
 import bmesh
 import bpy
@@ -374,9 +375,13 @@ CLASSES = (ADM_OT_vertex_colors, ADM_OT_initialize_shader_masks, ADM_OT_tint_pal
 
 
 def register():
-    bpy.app.handlers.depsgraph_update_post.append(_queue_sync)
-    bpy.app.handlers.load_post.append(_load_post)
-    _queue_sync(None)
+    with ExitStack() as rollback:
+        bpy.app.handlers.depsgraph_update_post.append(_queue_sync)
+        rollback.callback(bpy.app.handlers.depsgraph_update_post.remove, _queue_sync)
+        bpy.app.handlers.load_post.append(_load_post)
+        rollback.callback(bpy.app.handlers.load_post.remove, _load_post)
+        _queue_sync(None)
+        rollback.pop_all()
 
 
 def unregister():

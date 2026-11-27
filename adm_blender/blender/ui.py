@@ -1,6 +1,7 @@
 """Sollumz-style UI: 3D View sidebar tab "ADM", Properties editor panels, Add menu."""
 
 import json
+from contextlib import ExitStack
 
 import bpy
 
@@ -1605,9 +1606,13 @@ def set_sidebar_category(name):
 
 
 def register():
-    for c in CLASSES:
-        bpy.utils.register_class(c)
-    bpy.types.VIEW3D_MT_add.append(menu_add)
+    with ExitStack() as rollback:
+        for c in CLASSES:
+            bpy.utils.register_class(c)
+            rollback.callback(bpy.utils.unregister_class, c)
+        bpy.types.VIEW3D_MT_add.append(menu_add)
+        rollback.callback(bpy.types.VIEW3D_MT_add.remove, menu_add)
+        rollback.pop_all()
 
 
 def unregister():

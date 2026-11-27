@@ -393,20 +393,31 @@ def main(tmp):
     edited = M.image_pixels(image).copy()
     edited[..., 1] = 0.25
     image.pixels.foreach_set(edited[::-1].ravel())
-    gpu_exporter = ModelExporter(bpy.context, root, ExportOptions(image_format="KTX2"))
-    gpu_data, report = gpu_exporter.export()
-    gpu_doc, gpu_chunks = read_container(gpu_data, K.ADM_MAGIC)
-    primary, gpu_mime, _ = tex_blob(gpu_doc, gpu_chunks, "occlusionTexture")
-    fb, _, _ = tex_blob(gpu_doc, gpu_chunks, "occlusionTexture", "fallbackSource")
-    edited_path = os.path.join(tmp, "edited_fallback.png")
-    with open(edited_path, "wb") as fh:
-        fh.write(fb)
-    edited_fallback = bpy.data.images.load(edited_path, check_existing=False)
-    edited_fallback.colorspace_settings.name = "Non-Color"
-    check(report.ok and G.parse(primary, gpu_mime)["kind"] != "R16" and fb[24] == 16
-          and np.allclose(M.image_pixels(edited_fallback)[..., 1], 0.25, atol=1e-5)
-          and any("converts 16-bit samples to 8-bit" in warning for warning in gpu_exporter.warnings),
-          "edited non-scalar channels are not discarded by R16 conversion")
+    for fmt in ("KTX2", "DDS"):
+        gpu_exporter = ModelExporter(bpy.context, root, ExportOptions(image_format=fmt))
+        gpu_data, report = gpu_exporter.export()
+        gpu_doc, gpu_chunks = read_container(gpu_data, K.ADM_MAGIC)
+        primary, gpu_mime, _ = tex_blob(gpu_doc, gpu_chunks, "occlusionTexture")
+        edited_path = os.path.join(tmp, f"edited_primary_{fmt}.png")
+        with open(edited_path, "wb") as fh:
+            fh.write(primary)
+        edited_primary = bpy.data.images.load(edited_path, check_existing=False)
+        edited_primary.colorspace_settings.name = "Non-Color"
+        check(report.ok and gpu_mime == "image/png" and primary[24] == 16
+              and np.allclose(M.image_pixels(edited_primary)[..., 0], expected, atol=1e-6)
+              and np.allclose(M.image_pixels(edited_primary)[..., 1], 0.25, atol=1e-5)
+              and any("retains a 16-bit PNG" in warning for warning in gpu_exporter.warnings),
+              f"{fmt} AUTO preserves all 16-bit channels without an 8-bit primary")
+        edited_adm = os.path.join(tmp, f"edited_{fmt}.adm")
+        with open(edited_adm, "wb") as fh:
+            fh.write(gpu_data)
+        imported = ModelImporter(bpy.context, edited_adm, ImportOptions())
+        imported.run()
+        imported_image = M.slot_texture_node(imported.materials[0], "OCCLUSION").image
+        imported_pixels = M.image_pixels(imported_image)
+        check(np.allclose(imported_pixels[..., 0], expected, atol=1e-6)
+              and np.allclose(imported_pixels[..., 1], 0.25, atol=1e-5),
+              f"{fmt} AUTO 16-bit PNG primary retains both channels on ADM import")
     adm_blender.unregister()
 
 

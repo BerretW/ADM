@@ -1,5 +1,7 @@
 """ADM data model stored on Blender datablocks (objects, bones, armatures, materials, scene)."""
 
+from contextlib import ExitStack
+
 import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty,
                        IntProperty, PointerProperty, StringProperty)
@@ -873,18 +875,27 @@ CLASSES = (
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
-    bpy.types.Object.adm = PointerProperty(type=ADMObjectProps)
-    bpy.types.Bone.adm = PointerProperty(type=ADMBoneProps)
-    bpy.types.EditBone.adm = PointerProperty(type=ADMBoneProps)
-    bpy.types.Armature.adm = PointerProperty(type=ADMSkeletonProps)
-    bpy.types.Material.adm = PointerProperty(type=ADMMaterialProps)
-    bpy.types.Scene.adm_anim = PointerProperty(type=ADMSceneProps)
-    bpy.types.Scene.adm_humanoid_wizard = PointerProperty(type=ADMHumanoidWizardState)
-    bpy.types.WindowManager.adm = PointerProperty(type=ADMWindowProps)
-    from . import humanoid_wizard
-    humanoid_wizard.register_freshness_handler()
+    with ExitStack() as rollback:
+        for cls in CLASSES:
+            bpy.utils.register_class(cls)
+            rollback.callback(bpy.utils.unregister_class, cls)
+        properties = (
+            (bpy.types.Object, "adm", ADMObjectProps),
+            (bpy.types.Bone, "adm", ADMBoneProps),
+            (bpy.types.EditBone, "adm", ADMBoneProps),
+            (bpy.types.Armature, "adm", ADMSkeletonProps),
+            (bpy.types.Material, "adm", ADMMaterialProps),
+            (bpy.types.Scene, "adm_anim", ADMSceneProps),
+            (bpy.types.Scene, "adm_humanoid_wizard", ADMHumanoidWizardState),
+            (bpy.types.WindowManager, "adm", ADMWindowProps),
+        )
+        for owner, name, cls in properties:
+            setattr(owner, name, PointerProperty(type=cls))
+            rollback.callback(delattr, owner, name)
+        from . import humanoid_wizard
+        humanoid_wizard.register_freshness_handler()
+        rollback.callback(humanoid_wizard.unregister_freshness_handler)
+        rollback.pop_all()
 
 
 def unregister():

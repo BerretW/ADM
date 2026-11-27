@@ -4,6 +4,7 @@ import math
 import os
 import re
 import uuid
+from contextlib import ExitStack
 
 import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
@@ -1134,10 +1135,15 @@ CLASSES = (ADM_OT_import, ADM_OT_export, ADM_OT_import_anim, ADM_BVHClipOption,
 
 
 def register():
-    for c in CLASSES:
-        bpy.utils.register_class(c)
-    bpy.types.TOPBAR_MT_file_import.append(menu_import)
-    bpy.types.TOPBAR_MT_file_export.append(menu_export)
+    with ExitStack() as rollback:
+        for c in CLASSES:
+            bpy.utils.register_class(c)
+            rollback.callback(bpy.utils.unregister_class, c)
+        bpy.types.TOPBAR_MT_file_import.append(menu_import)
+        rollback.callback(bpy.types.TOPBAR_MT_file_import.remove, menu_import)
+        bpy.types.TOPBAR_MT_file_export.append(menu_export)
+        rollback.callback(bpy.types.TOPBAR_MT_file_export.remove, menu_export)
+        rollback.pop_all()
 
 
 def unregister():

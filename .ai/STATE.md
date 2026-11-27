@@ -1,5 +1,27 @@
 # Mission state
 
+- Blender add-on registration no longer reads materials inside Blender's
+  restricted registration context. Existing shader parameter ownership is
+  initialized on the first timer tick and on project load. Registration rolls
+  back completed classes and handlers on failure.
+- The Blender 1.24.35 ZIP passed the full build and an isolated installation
+  and activation test. This fixes the registration incident; it does not close
+  the remaining advanced-material mission items documented below.
+- Blender retains unrecognized material-level extension JSON through ADM
+  export and Blender project reload. Opaque references are not remapped;
+  other unknown extension locations are not generally preserved.
+- The subsequent Blender 1.24.36 build passed all 36 steps and its ZIP passed
+  an isolated installation and activation test. This is not completion of the
+  remaining advanced-material mission items.
+- Blender exports a separate reconstructed RGB core-PBR normal if a shader
+  parameter retains the same BC5 source bytes. The shader's BC5 primary and
+  two-channel fallback remain intact. A core-only BC5 source still retains its
+  original two-channel fallback and warns about portable-reader limitations.
+- The Blender 1.24.37 build and isolated installation passed. Bounded BC5 and
+  height regressions also passed against the packaged implementation.
+- Blender's automatic DDS/KTX2 conversion now keeps 16-bit PNG data when R16
+  cannot represent all source channels. Explicit 8-bit compression still
+  converts with a warning and a 16-bit fallback.
 - World Tile now retains unrecognized `terrain_shader` settings as opaque
   project data, includes them in the material fingerprint, and rejects
   validation, build, and export rather than silently dropping them. Opaque
@@ -34,8 +56,8 @@
   release ZIP.
 - Blender warns on import and export when a model declares unrecognized
   optional extensions. The warning survives project reload and selected-object
-  export. Arbitrary unknown extensions outside the preserved material-height
-  object can still be lost; the warning does not claim general round-trip
+  export. Unknown extensions outside material-level data can still be lost;
+  the warning does not claim general round-trip
   support.
 - The check-only build also passed after the persistent-warning change:
   34 steps, 2,145 reported passing cases, and 10 external-asset skips.
@@ -51,7 +73,7 @@
   other-platform verification remain open.
 - Blender now retains a raw `(R,G,0,1)` fallback when directly opening a BC5
   normal, while its editable preview reconstructs Z. Explicit BC4/BC5 conversion
-  also clears missing fallback channels. Core-PBR BC5 export warns that portable
+  also clears missing fallback channels. Core-only BC5 export warns that portable
   readers might display the two-channel fallback incorrectly; this warning does
   not resolve the single-texture fallback conflict described below.
 - The standalone ADM reference was regenerated with the corrected fallback.
