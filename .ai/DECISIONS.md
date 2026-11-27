@@ -17,9 +17,9 @@ implementation ambiguity. Link each decision to its source and tests.
   a reader only implements v1.
 - Keep shader-only AO/height/parallax settings out of `rules_digest`; include
   their serialized fields and referenced image content in material fingerprints.
-- Until advanced profile export is implemented, reject an advanced World Tile
-  export with an explicit error rather than emitting a legacy material that
-  silently loses its settings.
+- Reject advanced World Tile settings with the legacy terrain profile instead
+  of emitting a material that silently loses those settings. Version 2.1.0
+  exports the advanced profile.
 - Expose R8/R16 through a separate scalar codec API instead of routing R16
   through the uint8 RGBA interface; reject R16 RGBA decoding to avoid silent
   precision loss.
@@ -40,10 +40,10 @@ implementation ambiguity. Link each decision to its source and tests.
 
 ## World Tile preview renderer audit
 
-- The surface preview uses PyVista's VTK PBR actor, with generated tangents
-  for normal maps and separately bound albedo, ORM, normal, and emission
-  textures. The multi-surface preview precomposes maps on the CPU and sends a
-  single material to VTK. The terrain inspection view is a separate path.
+- The surface preview uses PyVista's VTK PBR actor with separately bound
+  albedo, ORM, normal, and emission textures. The multi-surface final view
+  samples separate layer textures in a VTK shader; its CPU weight views are
+  diagnostic approximations. The terrain inspection view is a separate path.
 - VTK 9.7.2 on Windows exposes fragment and vertex shader replacements,
   named texture bindings and custom uniforms. An offscreen experiment sampled
   a separately bound height texture in a custom fragment replacement. Another
@@ -71,8 +71,9 @@ implementation ambiguity. Link each decision to its source and tests.
   than claiming shader compilation succeeded.
 - The multi-surface final view binds each layer's original-resolution maps
   separately and computes each parallax ray, map sample and height-adjusted
-  weight in the fragment shader. Weight inspection and displayed mean weights
-  remain CPU estimates at unshifted UVs. Texture-unit exhaustion is reported
+  weight in the fragment shader. Shader diagnostics inspect per-fragment
+  weights and offsets; the separate CPU weight views and displayed mean weights
+  remain estimates at unshifted UVs. Texture-unit exhaustion is reported
   rather than silently dropping maps; when a Qt context is not yet available,
   the OpenGL minimum of 16 units is used conservatively.
 - The VTK layered shader can also read a four-component point-weight attribute
@@ -80,6 +81,16 @@ implementation ambiguity. Link each decision to its source and tests.
   test of exported `COLOR_1` weights without changing the existing preview
   controls. Zero total weight selects layer zero, as required by the shader
   contract. Mapper and weight-array prerequisites are checked explicitly.
+- The opt-in detailed terrain view uses this same shader and the exporter's
+  per-tile palette selection and quantized vertex weights. It retains a separate
+  250,000-triangle budget, while the existing fast albedo bake and geometry
+  views remain available for larger selections. The UI reports incompatible
+  material data, texture-unit exhaustion, and over-four-surface conflicts.
+  Palette actors share texture objects within each redraw; the cache is discarded
+  on redraw so changed source files are reloaded. This avoids duplicate texture
+  allocations. Unique decoded texture base levels are capped at 512 MiB per
+  redraw; transient decoding allocations, renderer overhead, and GPU mipmaps
+  are not included in that estimate.
 - Five simultaneously nonzero surface weights at a shared vertex cannot all
   fit in a four-layer primitive. A rendered synthetic POM example confirms
   that the exporter's per-triangle trimming can choose different palettes and

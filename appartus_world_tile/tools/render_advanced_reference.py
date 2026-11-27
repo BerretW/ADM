@@ -6,6 +6,7 @@ This is a fixture-specific visualization, not a general ADM renderer.
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
 import tempfile
@@ -19,14 +20,22 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "appartus_world_tile"))
 
-from adm_blender.core import constants as K  # noqa: E402
+from adm_blender.core import constants as K, gputex  # noqa: E402
 from adm_blender.core.buffers import read_accessor_np, read_view  # noqa: E402
 from adm_blender.core.container import read_container  # noqa: E402
 from adm_blender.core.validate import validate_adm  # noqa: E402
 from awt.bake import _linear_to_srgb  # noqa: E402
 from awt.gui.material_panel import _mesh_with_tangents  # noqa: E402
 from awt.gui.preview_shader import install_layered_preview  # noqa: E402
-from awt.material import MapSlot, Surface, TerrainMaterial  # noqa: E402
+from awt.material import MAX_TEXTURE_PIXELS, MapSlot, Surface, TerrainMaterial  # noqa: E402
+
+
+def _bc5_normal_fallback(data: bytes) -> np.ndarray:
+    with Image.open(io.BytesIO(data)) as decoded:
+        if decoded.width * decoded.height > MAX_TEXTURE_PIXELS:
+            raise ValueError(f"Reference normal exceeds the {MAX_TEXTURE_PIXELS:,}-pixel limit")
+        rgba = np.asarray(decoded.convert("RGBA"), dtype=np.float32) / 255.0
+    return np.rint(gputex.reconstruct_bc5_normal(rgba) * 255).astype(np.uint8)
 
 
 def render_reference(path: Path, output: Path, *, disable_parallax: bool = False,
@@ -51,7 +60,7 @@ def render_reference(path: Path, output: Path, *, disable_parallax: bool = False
         plotter.add_light(pv.Light(position=(-4, 8, 5), focal_point=(0, 0, 0), intensity=4))
         plotter.add_light(pv.Light(position=(4, 5, 6), focal_point=(0, 0, 0), intensity=3))
         with tempfile.TemporaryDirectory(prefix="adm_reference_render_") as tmp:
-            def texture(ref):
+            def texture(ref, *, normal_map=False):
                 if ref is None:
                     return ""
                 if ref.get("texCoord", 0) != 0:
@@ -63,10 +72,21 @@ def render_reference(path: Path, output: Path, *, disable_parallax: bool = False
                 image = doc["images"][index]
                 if image["mimeType"] != "image/png" or "bufferView" not in image:
                     raise ValueError("Reference visualization needs embedded PNG fallbacks")
-                out = os.path.join(tmp, f"{index}.png")
+                source = doc["images"][tex["source"]]
+                bc5_normal = False
+                if normal_map and source["mimeType"] in (gputex.MIME_DDS, gputex.MIME_KTX2):
+                    if "bufferView" not in source:
+                        raise ValueError("Reference visualization needs embedded GPU sources")
+                    blob = read_view(doc, chunks, source["bufferView"])
+                    bc5_normal = gputex.parse(blob, source["mimeType"], strict=True)["kind"] == "BC5"
+                out = os.path.join(tmp, f"{index}{'_normal' if bc5_normal else ''}.png")
                 if not os.path.exists(out):
-                    with open(out, "wb") as stream:
-                        stream.write(read_view(doc, chunks, image["bufferView"]))
+                    fallback = read_view(doc, chunks, image["bufferView"])
+                    if bc5_normal:
+                        Image.fromarray(_bc5_normal_fallback(fallback)).save(out)
+                    else:
+                        with open(out, "wb") as stream:
+                            stream.write(fallback)
                 return out
 
             for node in doc["nodes"]:
@@ -144,7 +164,7 @@ def render_reference(path: Path, output: Path, *, disable_parallax: bool = False
                     surfaces.append(Surface(
                         str(i), color=color, repeat_m=15.0,
                         albedo=texture(value(prefix + "texture")),
-                        normal=texture(value(prefix + "normal")),
+                        normal=texture(value(prefix + "normal"), normal_map=True),
                         ao_map=MapSlot(texture(value(prefix + "ao_texture")),
                                        channel=int(value(prefix + "ao_channel")),
                                        invert=value(prefix + "ao_invert")),

@@ -65,6 +65,54 @@ def main():
             assert np.max(M.image_pixels(mat.adm.params["layer0_ao_texture"].image)[..., 2]) < 0.01
             assert bpy.ops.adm.material_texture_open(slot="NORMAL", filepath=path) == {"FINISHED"}
             assert np.min(M.image_pixels(M.slot_texture_node(mat, "NORMAL").image)[..., 2]) > 0.9
+            print(f"PHASE {extension}: export directly opened BC5 normals", flush=True)
+            exporter = ModelExporter(bpy.context, root, ExportOptions())
+            exported, report = exporter.export()
+            assert report.ok, report.errors
+            assert any("core PBR normal uses BC5" in warning for warning in exporter.warnings)
+            direct_doc, direct_chunks = read_container(exported, K.ADM_MAGIC)
+            direct_mat = direct_doc["materials"][0]
+            for ref in (direct_mat["normalTexture"], direct_mat["shaderParameters"]["layer0_normal"]):
+                texture = direct_doc["textures"][ref["index"]]
+                source = direct_doc["images"][texture["source"]]
+                assert read_view(direct_doc, direct_chunks, source["bufferView"]) == blob
+                fallback = direct_doc["images"][texture["fallbackSource"]]
+                fallback_path = os.path.join(tmp, "direct_fallback.png")
+                with open(fallback_path, "wb") as stream:
+                    stream.write(read_view(direct_doc, direct_chunks, fallback["bufferView"]))
+                fallback_image = bpy.data.images.load(fallback_path, check_existing=False)
+                try:
+                    actual = M.image_pixels(fallback_image)
+                    np.testing.assert_allclose(actual, gputex.decode(blob, mime, strict=True)[0] / 255.0,
+                                               atol=1 / 255)
+                finally:
+                    bpy.data.images.remove(fallback_image)
+            for kind in ("BC4", "BC5"):
+                print(f"PHASE {extension}: export converted {kind} normals", flush=True)
+                exporter = ModelExporter(
+                    bpy.context, root, ExportOptions(image_format=extension.upper(), gpu_compression=kind))
+                converted, report = exporter.export()
+                assert report.ok, report.errors
+                assert any("core PBR normal uses BC5" in warning for warning in exporter.warnings) == (kind == "BC5")
+                converted_doc, converted_chunks = read_container(converted, K.ADM_MAGIC)
+                converted_mat = converted_doc["materials"][0]
+                for ref in (converted_mat["normalTexture"], converted_mat["shaderParameters"]["layer0_normal"]):
+                    texture = converted_doc["textures"][ref["index"]]
+                    source = converted_doc["images"][texture["source"]]
+                    assert gputex.parse(read_view(converted_doc, converted_chunks, source["bufferView"]),
+                                        mime, strict=True)["kind"] == kind
+                    fallback = converted_doc["images"][texture["fallbackSource"]]
+                    fallback_path = os.path.join(tmp, "converted_fallback.png")
+                    with open(fallback_path, "wb") as stream:
+                        stream.write(read_view(converted_doc, converted_chunks, fallback["bufferView"]))
+                    fallback_image = bpy.data.images.load(fallback_path, check_existing=False)
+                    try:
+                        actual = M.image_pixels(fallback_image)
+                        assert np.max(actual[..., 2]) == 0.0
+                        assert kind != "BC4" or np.max(actual[..., 1]) == 0.0
+                        assert np.min(actual[..., 3]) == 1.0
+                    finally:
+                        bpy.data.images.remove(fallback_image)
             if mime == gputex.MIME_DDS:
                 with open(path, "ab") as stream:
                     stream.write(b"trailing metadata")

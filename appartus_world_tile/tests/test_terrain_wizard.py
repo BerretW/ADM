@@ -1,6 +1,7 @@
 import os
 import math
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +39,53 @@ class TerrainWizardTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_close_waits_for_change_checker_without_blocking_qt(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        script = r"""
+import threading
+import time
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+from awt.gui.main_window import MainWindow, _ChangeCheck
+
+started, release = threading.Event(), threading.Event()
+original_run = _ChangeCheck.run
+def gated_run(self):
+    started.set()
+    release.wait()
+    original_run(self)
+_ChangeCheck.run = gated_run
+
+app = QApplication([])
+window = MainWindow()
+window.show()
+window._open_project_file(r"appartus_world_tile\reference_project\advanced_reference.awtp", confirmed=True)
+timer = QTimer()
+timer.setInterval(10)
+deadline = time.monotonic() + 30
+def check():
+    if window.hm is not None and window.manifest is not None and started.is_set():
+        timer.stop()
+        window._dirty = False
+        QTimer.singleShot(100, release.set)
+        window.close()
+        if not window.isVisible():
+            app.exit(3)
+    elif time.monotonic() > deadline:
+        release.set()
+        app.exit(2)
+timer.timeout.connect(check)
+timer.start()
+raise SystemExit(app.exec())
+"""
+        result = subprocess.run([sys.executable, "-c", script], cwd=root,
+                                capture_output=True, text=True, timeout=45)
+        self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
+
     def test_biome_noise_slider_updates_and_saves_project(self):
         window = MainWindow()
         self.addCleanup(window.close)
@@ -74,8 +122,6 @@ class TerrainWizardTest(unittest.TestCase):
         panel.surface_editor.height.factor.setValue(0.4)
         panel.surface_editor.height_bias.setValue(-0.1)
         panel.surface_editor.parallax_scale.setValue(0.025)
-        panel._surface_edited()
-
         panel.height_blend.setChecked(True)
         panel.height_blend_transition.setValue(0.15)
         panel.parallax_mode.setCurrentIndex(panel.parallax_mode.findData("PARALLAX_OCCLUSION"))
@@ -95,6 +141,77 @@ class TerrainWizardTest(unittest.TestCase):
             panel.terrain_shader_version.findData("2.1.0"))
         self.assertEqual(panel.material().terrain_shader_version, "2.1.0")
         panel.material().validate()
+
+    def test_unsupported_shader_selections_survive_unrelated_edits(self):
+        panel = MaterialPanel()
+        self.addCleanup(panel.close)
+        material = TerrainMaterial()
+        material.terrain_shader_version = "2.9.0"
+        material.parallax_mode = "FUTURE_MODE"
+        material.height_blend_strength = 0.123456
+        material.parallax_max_steps = 300
+        panel.set_material(material)
+        self.assertIn("Unsupported", panel.terrain_shader_version.currentText())
+        self.assertIn("Unsupported", panel.parallax_mode.currentText())
+        panel.double_sided.setChecked(not material.double_sided)
+        self.assertEqual(material.terrain_shader_version, "2.9.0")
+        self.assertEqual(material.parallax_mode, "FUTURE_MODE")
+        self.assertEqual(material.height_blend_strength, 0.123456)
+        self.assertEqual(material.parallax_max_steps, 300)
+        panel.set_material(TerrainMaterial())
+        self.assertEqual(panel.terrain_shader_version.findData("2.9.0"), -1)
+        self.assertEqual(panel.parallax_mode.findData("FUTURE_MODE"), -1)
+
+    def test_surface_edits_preserve_unmodified_shader_precision(self):
+        panel = MaterialPanel()
+        self.addCleanup(panel.close)
+        material = TerrainMaterial()
+        surface = material.surface("grass")
+        surface.ao_strength = 0.123456
+        surface.height_scale = 0.345678
+        surface.height_bias = 0.123456
+        surface.parallax_scale = 0.012345
+        panel.set_material(material)
+        panel.surface_editor.repeat.setValue(5.0)
+        self.assertEqual(surface.ao_strength, 0.123456)
+        self.assertEqual(surface.height_scale, 0.345678)
+        self.assertEqual(surface.height_bias, 0.123456)
+        self.assertEqual(surface.parallax_scale, 0.012345)
+        panel.surface_editor.ao.channel.setCurrentIndex(1)
+        self.assertEqual(surface.ao_map.channel, 1)
+        self.assertEqual(surface.ao_strength, 0.123456)
+        self.assertEqual(surface.height_scale, 0.345678)
+
+    def test_texture_picker_reports_gpu_and_source_metadata(self):
+        from PIL import Image
+        from awt.adm_export import _core
+        from awt.gui.material_panel import TexturePicker
+        _core()
+        from adm_blender.core import gputex
+
+        with tempfile.TemporaryDirectory() as directory:
+            picker = TexturePicker("Height")
+            self.addCleanup(picker.close)
+            values = np.array([[0, 1], [32768, 65535]], dtype=np.uint16)
+            blob, _ = gputex.encode_scalar(values, gputex.MIME_DDS, "R16", mipmaps=True)
+            gpu = os.path.join(directory, "height.dds")
+            with open(gpu, "wb") as stream:
+                stream.write(blob)
+            picker.set_path(gpu)
+            info = picker.info.text()
+            for expected in ("2 x 2", "R16 16-bit", "linear", "2 mip(s)", "10 bytes GPU payload", "external"):
+                self.assertIn(expected, info)
+            source = os.path.join(directory, "height.tiff")
+            Image.fromarray(values).save(source)
+            picker.set_path(source)
+            for expected in ("2 x 2", "TIFF 16-bit/channel", "1 source level", "32 bytes", "external"):
+                self.assertIn(expected, picker.info.text())
+            with open(gpu, "wb") as stream:
+                stream.write(b"DDS ")
+            picker.set_path(gpu)
+            self.assertIn("Texture information unavailable:", picker.info.text())
+            picker.set_path("")
+            self.assertEqual(picker.info.text(), "")
 
     def test_surface_preview_parallax_and_pom_render_view_dependent_offsets(self):
         import pyvista as pv
@@ -169,6 +286,7 @@ class TerrainWizardTest(unittest.TestCase):
             self.assertGreater(abs(lit_none - lit_pom), 3)
 
     def test_parallax_height_sampling_preserves_r16_and_missing_channels(self):
+        from PIL import Image
         from awt.gui.preview_shader import _height_samples
         from awt.adm_export import _core
         _core()
@@ -194,6 +312,9 @@ class TerrainWizardTest(unittest.TestCase):
             np.testing.assert_allclose(_height_samples(MapSlot(path)), values / 65535.0, atol=1e-7)
             np.testing.assert_allclose(_height_samples(MapSlot(path, invert=True)),
                                        1.0 - values / 65535.0, atol=1e-7)
+            path = os.path.join(directory, "height.tiff")
+            Image.fromarray(values).save(path)
+            np.testing.assert_allclose(_height_samples(MapSlot(path)), values / 65535.0, atol=1e-7)
 
     def test_multi_surface_height_blend_retains_r16_precision(self):
         from awt.adm_export import _core
@@ -252,6 +373,222 @@ class TerrainWizardTest(unittest.TestCase):
                 self.assertGreater(np.count_nonzero(images[1]), 1000, f"shape {shape} failed to render")
                 self.assertGreater(np.count_nonzero(np.abs(images[1].astype(int) - images[0]) > 5),
                                    100, f"shape {shape} has no visible POM")
+
+    def test_detailed_terrain_preview_renders_pom_and_keeps_fast_modes(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.gui.viewer3d import DETAILED_MATERIAL_MODE, MATERIAL_MODE, Viewer3D, load_tiles
+        from awt.material import Biome, BiomeSurface
+        from awt.pipeline import BuildParams, build, load_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            heightmap = os.path.join(directory, "terrain.npy")
+            np.save(heightmap, np.zeros((33, 33), dtype=np.float32))
+            albedo = os.path.join(directory, "albedo.png")
+            height = os.path.join(directory, "height.png")
+            pixels = np.broadcast_to(np.arange(256, dtype=np.uint8)[None, :, None], (32, 256, 3)).copy()
+            Image.fromarray(pixels).save(albedo)
+            Image.new("L", (32, 32), 51).save(height)
+            material = TerrainMaterial()
+            material.biomes = [Biome("test", surfaces=[BiomeSurface("grass")])]
+            surface = material.surface("grass")
+            surface.color = [255, 255, 255]
+            surface.albedo = albedo
+            surface.height_map.path = height
+            surface.repeat_m = 32
+            surface.parallax_scale = 0.2
+            params = BuildParams(input_path=heightmap, out_dir=os.path.join(directory, "build"),
+                                 tile_cells=32, max_errors_m=[0.1], spacing_m=1.0)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            viewer = Viewer3D()
+            self.addCleanup(viewer.shutdown)
+            viewer.resize(400, 400)
+            viewer.show()
+            self.app.processEvents()
+            viewer.set_manifest(manifest)
+            viewer._tiles = [(0, 0)]
+            viewer.color.blockSignals(True)
+            viewer.color.setCurrentIndex(DETAILED_MATERIAL_MODE)
+            viewer.color.blockSignals(False)
+            viewer._data = load_tiles(manifest, viewer._tiles, 0, detailed=True)
+            viewer.set_material(material)
+            self.assertIn("Detailed material configured", viewer.status.text())
+            self.assertIsNotNone(viewer._actor)
+            plotter = pv.Plotter(off_screen=True, window_size=(300, 300))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+
+            def render():
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(28, 16, 25), focal_point=(16, 16, 0)))
+                for actor in [viewer._actor] + viewer._extra_actors:
+                    plotter.add_actor(actor, reset_camera=False)
+                plotter.camera_position = [(28, 16, 25), (16, 16, 0), (0, 1, 0)]
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True).astype(int)
+
+            unshifted = render()
+            material.parallax_mode = "PARALLAX_OCCLUSION"
+            viewer.set_material(material)
+            pom = render()
+            self.assertIn("Detailed material configured", viewer.status.text())
+            self.assertGreater(np.count_nonzero(np.abs(pom - unshifted) > 5), 100)
+            Image.new("L", (32, 32), 204).save(height)
+            viewer.set_material(material)
+            changed = render()
+            self.assertGreater(np.count_nonzero(np.abs(changed - pom) > 5), 100)
+            with patch("awt.gui.viewer3d.DETAIL_TEXTURE_BUDGET", 1024):
+                viewer._redraw()
+            self.assertIn("decoded texture budget", viewer.status.text())
+            self.assertIsNone(viewer._actor)
+            material.surfaces = [surface for surface in material.surfaces if surface.name != "grass"]
+            viewer.set_material(material)
+            self.assertIn("no longer in the library", viewer.status.text())
+            self.assertIsNone(viewer._actor)
+            viewer.color.setCurrentIndex(0)
+            self.assertIsNotNone(viewer._actor)
+            self.assertFalse(viewer._extra_actors)
+            self.assertEqual(MATERIAL_MODE, viewer.color.findText("Material"))
+
+    def test_detailed_terrain_preview_loads_two_layers_and_renders_height_blend(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.gui.viewer3d import DETAILED_MATERIAL_MODE, Viewer3D
+        from awt.material import Biome, BiomeSurface
+        from awt.pipeline import BuildParams, build, load_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "terrain.npy")
+            np.save(path, np.zeros((33, 33), dtype=np.float32))
+            material = TerrainMaterial()
+            material.biomes = [Biome("test", surfaces=[BiomeSurface("grass"), BiomeSurface("rock")], noise=0.8)]
+            for name, color, value in (("grass", [240, 40, 30], 30), ("rock", [20, 50, 240], 220)):
+                surface = material.surface(name)
+                surface.color = color
+                surface.repeat_m = 32
+                surface.height_map.path = os.path.join(directory, name + ".png")
+                Image.new("L", (8, 8), value).save(surface.height_map.path)
+            params = BuildParams(input_path=path, out_dir=os.path.join(directory, "build"),
+                                 tile_cells=32, max_errors_m=[0.1], spacing_m=1.0,
+                                 texture_error=0.05)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            viewer = Viewer3D()
+            self.addCleanup(viewer.shutdown)
+            viewer.show()
+            self.app.processEvents()
+            viewer.set_manifest(manifest)
+            viewer.set_material(material)
+            viewer.show_tiles([(0, 0)], 0)
+            viewer.color.setCurrentIndex(DETAILED_MATERIAL_MODE)
+            for _ in range(500):
+                QTest.qWait(10)
+                if "Detailed material configured" in viewer.status.text():
+                    break
+            self.assertIn("Detailed material configured", viewer.status.text())
+            self.assertTrue(any(np.count_nonzero(row) >= 2
+                                for row in viewer._data["material_tiles"][0]["weights"]))
+
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+
+            def render():
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(16, 16, 35), focal_point=(16, 16, 0)))
+                for actor in [viewer._actor] + viewer._extra_actors:
+                    plotter.add_actor(actor, reset_camera=False)
+                plotter.camera_position = [(16, 16, 35), (16, 16, 0), (0, 1, 0)]
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True).astype(int)
+
+            classic = render()
+            material.height_blend_enabled = True
+            viewer.set_material(material)
+            blended = render()
+            self.assertGreater(np.count_nonzero(np.abs(blended - classic) > 5), 100)
+            with patch("awt.gui.viewer3d.DETAIL_PALETTE_BUDGET", 0):
+                viewer._redraw()
+            self.assertIn("palette budget", viewer.status.text())
+            self.assertIsNone(viewer._actor)
+
+    def test_detailed_terrain_preview_discards_stale_multi_tile_load(self):
+        from awt.gui import preview_shader, viewer3d
+        from awt.pipeline import load_manifest
+
+        reference = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "reference_project"))
+        project = load_project(os.path.join(reference, "advanced_reference.awtp"))
+        manifest = load_manifest(project.params.out_dir)
+        for surface in project.material.surfaces:
+            surface.normal = ""
+            surface.roughness_map.path = ""
+            surface.ao_map.path = ""
+        viewer = viewer3d.Viewer3D()
+        self.addCleanup(viewer.shutdown)
+        viewer.show()
+        self.app.processEvents()
+        viewer.set_manifest(manifest)
+        viewer.set_material(project.material)
+        started = threading.Event()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        original_load = viewer3d.load_tiles
+
+        def delayed_load(*args):
+            if not started.is_set():
+                started.set()
+                if not release.wait(10):
+                    raise TimeoutError("Timed out waiting to release the first tile load")
+            return original_load(*args)
+
+        with patch.object(viewer3d, "load_tiles", side_effect=delayed_load), \
+                patch.object(preview_shader, "_height_samples", wraps=preview_shader._height_samples) as samples:
+            viewer.show_tiles([(0, 0)], 0)
+            self.assertTrue(started.wait(5))
+            viewer.show_tiles([(0, 1), (1, 0)], 2)
+            viewer.color.setCurrentIndex(viewer3d.DETAILED_MATERIAL_MODE)
+            release.set()
+            for _ in range(1000):
+                QTest.qWait(10)
+                if "Detailed material configured" in viewer.status.text():
+                    break
+            self.assertIn("Detailed material configured", viewer.status.text())
+            self.assertEqual(len(viewer._data["material_tiles"]), 2)
+            self.assertEqual(len(viewer._data["faces"]),
+                             viewer3d.triangle_count(manifest, [(0, 1), (1, 0)], 2))
+            self.assertEqual(viewer.lod.currentIndex(), 2)
+            self.assertIsNotNone(viewer._actor)
+            textures = [actor.prop.GetTexture(f"admLayerHeight{i}")
+                        for actor in [viewer._actor] + viewer._extra_actors for i in range(4)]
+            textures = [texture for texture in textures if texture is not None]
+            self.assertGreater(len(textures), len({texture.GetAddressAsString("") for texture in textures}))
+            self.assertEqual(samples.call_count, len({texture.GetAddressAsString("") for texture in textures}))
+
+    def test_layer_texture_cache_distinguishes_channel_and_inversion(self):
+        import pyvista as pv
+        from PIL import Image
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "packed.png")
+            Image.new("RGB", (4, 4), (40, 180, 0)).save(path)
+            surfaces = [Surface("red", height_map=MapSlot(path, channel=0)),
+                        Surface("inverted_green", height_map=MapSlot(path, channel=1, invert=True)),
+                        Surface("red_again", height_map=MapSlot(path, channel=0))]
+            material = TerrainMaterial(surfaces=surfaces)
+            plotter = pv.Plotter(off_screen=True)
+            self.addCleanup(plotter.close)
+            actor = plotter.add_mesh(pv.Plane())
+            install_layered_preview(actor, pv, surfaces, [1, 1, 1], material, height_blend=True,
+                                    transition=0.2, strength=1, texture_units=32, texture_cache={})
+            textures = [actor.prop.GetTexture(f"admLayerHeight{i}") for i in range(3)]
+            self.assertEqual(textures[0].GetAddressAsString(""), textures[2].GetAddressAsString(""))
+            self.assertNotEqual(textures[0].GetAddressAsString(""), textures[1].GetAddressAsString(""))
+            values = [vtk_to_numpy(texture.GetInput().GetPointData().GetScalars()).mean() for texture in textures]
+            self.assertAlmostEqual(values[0], 40 / 255, places=2)
+            self.assertAlmostEqual(values[1], 75 / 255, places=2)
 
     def test_multi_surface_parallax_uses_independent_layer_offsets(self):
         import pyvista as pv
@@ -335,6 +672,57 @@ class TerrainWizardTest(unittest.TestCase):
             normal_pom = sample("PARALLAX_OCCLUSION", lit=True)
             self.assertGreater(normal_none, 30)
             self.assertGreater(abs(normal_none - normal_pom), 2)
+
+    def test_shader_weight_and_parallax_diagnostics_render_actual_values(self):
+        import pyvista as pv
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            surfaces = []
+            for index, height in enumerate((51, 204)):
+                path = os.path.join(directory, f"height{index}.png")
+                if index == 0:
+                    gradient = np.broadcast_to(np.arange(256, dtype=np.uint8)[None, :], (8, 256)).copy()
+                    Image.fromarray(gradient).save(path)
+                else:
+                    Image.new("L", (8, 8), height).save(path)
+                surfaces.append(Surface(str(index), repeat_m=15, height_map=MapSlot(path), parallax_scale=0.2))
+            material = TerrainMaterial(surfaces=surfaces, height_blend_enabled=True,
+                                       parallax_mode="PARALLAX_OCCLUSION")
+            preview = HeightBlendPreview(material)
+            self.addCleanup(preview.close)
+            preview.surface[1].setCurrentIndex(1)
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+            plotter.set_background("black")
+
+            def sample(view):
+                preview.view.setCurrentIndex(preview.view.findData(view))
+                self.assertEqual(preview.error.text(), "")
+                self.assertIn("Shader diagnostic", preview.status.text())
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(10, 0, 20), focal_point=(0, 0, 0)))
+                plotter.add_actor(preview._actor, reset_camera=False)
+                plotter.camera_position = [(12, 0, 20), (0, 0, 0), (0, 1, 0)]
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True)[100, 100].astype(int)
+
+            base = sample(10)
+            final = sample(20)
+            self.assertGreater(base[0], final[0] + 30)
+            offset = sample(30)
+            material.parallax_mode = "NONE"
+            preview._render()
+            neutral = sample(30)
+            self.assertGreater(abs(int(offset[0]) - int(neutral[0])), 5)
+            self.assertLess(abs(int(neutral[0]) - int(neutral[1])), 3)
+            unshifted_final = sample(20)
+            self.assertGreater(abs(int(final[0]) - int(unshifted_final[0])), 2)
+            with patch("awt.gui.preview_shader.install_layered_preview", side_effect=ValueError("texture limit")):
+                preview._render()
+            self.assertIn("texture limit", preview.error.text())
+            self.assertIn("could not be configured", preview.status.text())
+            self.assertFalse(preview._actor.GetVisibility())
 
     def test_four_layer_pom_renders_and_reports_texture_exhaustion(self):
         import pyvista as pv
@@ -624,7 +1012,7 @@ class TerrainWizardTest(unittest.TestCase):
                                                path=fallback(shader_params[prefix + "height_texture"])),
                             parallax_scale=shader_params[prefix + "parallax_scale"]))
                     geometry.append((attributes, _accessor(doc, chunks, primitive["indices"]).reshape(-1, 3),
-                                     doc["nodes"][0]["translation"], layers, shader_params))
+                                     doc["nodes"][0]["translation"], layers, shader_params, names))
             self.assertGreater(len(geometry), 1)
             self.assertGreater(np.ptp(np.concatenate([g[0]["POSITION"][:, 1] for g in geometry])), 0.5)
             all_weights = np.concatenate([g[0]["COLOR_1"][:, 0] for g in geometry])
@@ -632,15 +1020,22 @@ class TerrainWizardTest(unittest.TestCase):
             edge_weights = np.concatenate([
                 attrs["COLOR_1"][np.isclose(attrs["POSITION"][:, 0] + translation[0],
                                             manifest["tile_size_m"]), 0]
-                for attrs, _, translation, _, _ in geometry])
+                for attrs, _, translation, _, _, _ in geometry])
             edge_heights = np.concatenate([
                 attrs["POSITION"][np.isclose(attrs["POSITION"][:, 0] + translation[0],
                                               manifest["tile_size_m"]), 1] + translation[1]
-                for attrs, _, translation, _, _ in geometry])
+                for attrs, _, translation, _, _, _ in geometry])
             self.assertGreater(len(edge_weights), 2)
             self.assertGreater(np.ptp(edge_weights), 0.02)
             self.assertLess(edge_heights.min(), 0.88)
             self.assertGreater(edge_heights.max(), 0.88)
+            if disjoint:
+                self.assertEqual(set().union(*(set(g[5]) for g in geometry)), set(names_used))
+                self.assertTrue(any(
+                    len(names) == 4 and np.any(
+                        np.isclose(attrs["POSITION"][:, 0] + translation[0], manifest["tile_size_m"])
+                        & np.all(attrs["COLOR_1"][:, :4] > 0, axis=1))
+                    for attrs, _, translation, _, _, names in geometry))
 
             plotter = pv.Plotter(off_screen=True, window_size=(320, 240))
             self.addCleanup(plotter.close)
@@ -651,7 +1046,7 @@ class TerrainWizardTest(unittest.TestCase):
             def render(reverse_right=False, pom=True):
                 plotter.clear()
                 plotter.add_light(pv.Light(position=(64, 120, -48), focal_point=(64, 0, -48)))
-                for attributes, faces, translation, exported_layers, shader_params in geometry:
+                for attributes, faces, translation, exported_layers, shader_params, _ in geometry:
                     vertices = attributes["POSITION"] + np.asarray(translation)
                     mesh = pv.PolyData(vertices, np.column_stack((np.full(len(faces), 3), faces)).ravel())
                     mesh.active_texture_coordinates = attributes["TEXCOORD_0"]
@@ -848,6 +1243,69 @@ class TerrainWizardTest(unittest.TestCase):
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn("unit UV scales", rejected.stderr)
             self.assertFalse((path / "unsupported.png").exists())
+
+    def test_bundled_reference_adm_renders_pom_without_blender(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+        import pyvista as pv
+        from PIL import Image
+        import io
+        from adm_blender.core import constants as K, gputex
+        from adm_blender.core.buffers import read_view
+        from adm_blender.core.container import read_container
+
+        root = Path(__file__).resolve().parents[2]
+        fixture = root / "appartus_world_tile" / "reference_project" / "advanced_material_reference.adm"
+        doc, chunks = read_container(fixture.read_bytes(), K.ADM_MAGIC)
+        bc5_count = 0
+        for texture in doc["textures"]:
+            source = doc["images"][texture["source"]]
+            if source["mimeType"] not in (gputex.MIME_DDS, gputex.MIME_KTX2):
+                continue
+            blob = read_view(doc, chunks, source["bufferView"])
+            if gputex.parse(blob, source["mimeType"], strict=True)["kind"] != "BC5":
+                continue
+            fallback = doc["images"][texture["fallbackSource"]]
+            with Image.open(io.BytesIO(read_view(doc, chunks, fallback["bufferView"]))) as image:
+                pixels = np.asarray(image.convert("RGBA"))
+            expected = gputex.decode(blob, source["mimeType"], strict=True)[0]
+            np.testing.assert_allclose(pixels[..., :2], expected[..., :2], atol=1)
+            self.assertTrue(np.all(pixels[..., 2] == 0))
+            self.assertTrue(np.all(pixels[..., 3] == 255))
+            bc5_count += 1
+        self.assertGreater(bc5_count, 0)
+        probe = pv.Plotter(off_screen=True)
+        try:
+            probe.show(auto_close=False)
+            units = probe.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
+        finally:
+            probe.close()
+        if units < 17:
+            self.skipTest(f"Reference fixture requires 17 texture units; renderer reports {units}")
+        renderer = root / "appartus_world_tile" / "tools" / "render_advanced_reference.py"
+        with tempfile.TemporaryDirectory() as directory:
+            images = []
+            for name, options in (("pom.png", []), ("no-pom.png", ["--disable-pom"])):
+                output = Path(directory) / name
+                result = subprocess.run([sys.executable, str(renderer), str(fixture), str(output), *options],
+                                        cwd=root, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
+                with Image.open(output) as image:
+                    images.append(np.asarray(image).astype(int))
+            self.assertGreater(np.count_nonzero(images[0]), 10000)
+            self.assertGreater(np.count_nonzero(np.abs(images[0] - images[1]) > 5), 500)
+
+    def test_reference_bc5_normal_decode_rejects_oversized_fallback(self):
+        import io
+        from PIL import Image
+        from appartus_world_tile.tools import render_advanced_reference as renderer
+
+        data = io.BytesIO()
+        Image.new("RGBA", (2, 2), (128, 128, 0, 255)).save(data, format="PNG")
+        with patch.object(renderer, "MAX_TEXTURE_PIXELS", 3):
+            with self.assertRaisesRegex(ValueError, "pixel limit"):
+                renderer._bc5_normal_fallback(data.getvalue())
 
     def test_multi_surface_preview_uses_height_weights_and_preserves_zero_layers(self):
         from PIL import Image

@@ -4,7 +4,7 @@
  "generator": "appartus_world_tile 0.7.6",
  "units": "metres, Z up, tile vertices relative to origin_m",
  "source": {
-  "path": "C:\\Users\\adolf\\GitHub\\ADM\\appartus_world_tile\\reference_project\\heightmap.png",
+  "path": "../heightmap.png",
   "width": 257,
   "height": 257,
   "dtype": "uint8",
@@ -16,7 +16,7 @@
   ]
  },
  "params": {
-  "input_path": "C:\\Users\\adolf\\GitHub\\ADM\\appartus_world_tile\\reference_project\\heightmap.png",
+  "input_path": "../heightmap.png",
   "spacing_m": 2.0,
   "height_min_m": 0.0,
   "height_max_m": 5.0,

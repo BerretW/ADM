@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--save-project", metavar="FILE", help="also save these settings as an .awtp project")
     b.set_defaults(func=_build)
 
-    e = sub.add_parser("export", help="write ADM tiles with the project's four_layer@2.0.0 materials")
+    e = sub.add_parser("export", help="write ADM tiles with the project's selected terrain shader profile")
     e.add_argument("project", help=".awtp project file")
     which = e.add_mutually_exclusive_group()
     which.add_argument("--all", action="store_true", help="export every tile (default: only changed tiles)")

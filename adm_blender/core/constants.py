@@ -113,6 +113,9 @@ SHADER_MASK_CHANNELS = ("R", "G", "B", "A")
 LAYERS_EXT = "ADM_material_layers_v1"
 VERTEX_CONTROL_EXT = "ADM_vertex_control_v1"
 MATERIAL_HEIGHT_EXT = "ADM_material_height_v1"
+MATERIAL_HEIGHT_FIELDS = frozenset(("version", "heightTexture", "channel", "invert", "scale", "bias",
+                                    "referenceHeight", "parallaxMode", "parallaxScale",
+                                    "pomMinSteps", "pomMaxSteps", "extras", "extensions"))
 TINT_PALETTE_MAX_HEIGHT = 5
 VERTEX_CONTROL_PARAMS = {
     "tintOffset": {"type": "F32", "minimum": -1024.0, "maximum": 1024.0, "animatable": True},

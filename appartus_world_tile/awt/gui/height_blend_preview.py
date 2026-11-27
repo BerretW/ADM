@@ -258,7 +258,11 @@ class HeightBlendPreview(QDialog):
         self.view.clear()
         self.view.addItem("Final material", -1)
         for i in range(count):
-            self.view.addItem(f"Layer {i + 1} final weight", i)
+            self.view.addItem(f"Layer {i + 1} final weight (CPU estimate)", i)
+        for i in range(count):
+            self.view.addItem(f"Layer {i + 1} base weight (shader)", 10 + i)
+            self.view.addItem(f"Layer {i + 1} final weight (shader)", 20 + i)
+            self.view.addItem(f"Layer {i + 1} parallax offset (shader)", 30 + i)
         self._render()
 
     def _render(self):
@@ -282,13 +286,20 @@ class HeightBlendPreview(QDialog):
             self.error.setText(str(exc))
             return
         self.error.clear()
+        diagnostic = None
         if selected_view is not None and selected_view >= 0:
-            if selected_view not in indices:
-                self.error.setText(f"Enable Layer {selected_view + 1} to inspect its final weight.")
+            selected_layer = selected_view % 10
+            if selected_layer not in indices:
+                self.error.setText(f"Enable Layer {selected_layer + 1} to inspect it.")
                 return
-            layer = indices.index(selected_view)
-            values = np.clip(final[layer] * 255.0 + 0.5, 0, 255).astype(np.uint8)
-            rgb = np.repeat(values[..., None], 3, axis=2)
+            layer = indices.index(selected_layer)
+            if selected_view < 10:
+                values = np.clip(final[layer] * 255.0 + 0.5, 0, 255).astype(np.uint8)
+                rgb = np.repeat(values[..., None], 3, axis=2)
+            else:
+                kind = {1: "base", 2: "final", 3: "offset"}[selected_view // 10]
+                diagnostic = (kind, layer)
+                rgb = np.full((2, 2, 3), 255, dtype=np.uint8)
         texture = self._pv.numpy_to_texture(rgb)
         texture.SetUseSRGBColorSpace(True)
         texture.repeat = True
@@ -313,8 +324,15 @@ class HeightBlendPreview(QDialog):
                 emission_texture.SetUseSRGBColorSpace(True)
                 self._actor.prop.SetEmissiveTexture(emission_texture)
                 self._actor.prop.SetEmissiveFactor(1.0, 1.0, 1.0)
+        elif diagnostic is not None:
+            white = self._pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+            self._actor.prop.SetORMTexture(white)
+            emission = self._pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+            emission.SetUseSRGBColorSpace(True)
+            self._actor.prop.SetEmissiveTexture(emission)
+            self._actor.prop.SetEmissiveFactor(1.0, 1.0, 1.0)
         configured = False
-        if pbr_maps is not None and self._material.parallax_mode != "NONE":
+        if diagnostic is not None or (pbr_maps is not None and self._material.parallax_mode != "NONE"):
             try:
                 from .preview_shader import install_layered_preview
 
@@ -324,17 +342,27 @@ class HeightBlendPreview(QDialog):
                 install_layered_preview(
                     self._actor, self._pv, surfaces, weights, self._material,
                     height_blend=self.height_blend.isChecked(), transition=self.transition.value(),
-                    strength=self.strength.value(), texture_units=units)
+                    strength=self.strength.value(), texture_units=units, diagnostic=diagnostic)
                 configured = True
             except (OSError, ValueError) as exc:
                 self.error.setText(f"Could not configure layered parallax preview: {exc}")
-        self.status.setText(
-            "Per-layer parallax is configured with independent texture sampling. "
-            "Weight views and mean weights use unshifted coordinates."
-            if configured else
-            "Preview composites albedo, tint, normal, metallic, roughness and emission. "
-            "AO is approximated by darkening the color. "
-            "Layer weight views use unshifted coordinates.")
+        if diagnostic is not None and not configured:
+            self._actor.SetVisibility(False)
+            self.status.setText("Shader diagnostic could not be configured; see the error.")
+        elif diagnostic is not None:
+            detail = ("Red and green encode signed U/V displacement relative to the layer's parallax scale; "
+                      "neutral is 0.5 in linear color." if diagnostic[0] == "offset"
+                      else "Grayscale shows the selected layer's per-fragment weight.")
+            self.status.setText(f"Shader diagnostic: {detail} Mean weights remain unshifted CPU estimates.")
+        elif configured:
+            self.status.setText("Per-layer parallax is configured with independent texture sampling. "
+                                "Mean weights use unshifted coordinates.")
+        elif self.error.text():
+            self.status.setText("Shader configuration failed; showing the CPU approximation.")
+        else:
+            self.status.setText("Preview composites albedo, tint, normal, metallic, roughness and emission. "
+                                "AO is approximated by darkening the color. "
+                                "CPU weight views use unshifted coordinates.")
         self.weight_label.setText("Mean final weights: " + ", ".join(
             f"{surface.name} {float(final[i].mean()):.1%}" for i, surface in enumerate(surfaces)))
         self.plotter.render()

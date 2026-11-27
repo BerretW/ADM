@@ -50,12 +50,62 @@ class PipelineTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
+    def test_standalone_distribution_contains_reference_and_runtime(self):
+        import subprocess
+        import sys
+        import zipfile
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        script = root / "tools" / "build_world_tile.py"
+        first = Path(self.tmp.name) / "first.zip"
+        second = Path(self.tmp.name) / "second.zip"
+        for output in (first, second):
+            subprocess.run([sys.executable, str(script), str(output)], cwd=root, check=True, timeout=60)
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        with zipfile.ZipFile(first) as archive:
+            self.assertIsNone(archive.testzip())
+            for name in ("LICENSE", "adm_blender/core/gputex.py",
+                         "appartus_world_tile/awt/gui/preview_shader.py",
+                         "appartus_world_tile/tools/render_advanced_reference.py",
+                         "appartus_world_tile/reference_project/advanced_reference.awtp",
+                         "appartus_world_tile/reference_project/tiles/manifest.json",
+                         "appartus_world_tile/reference_project/advanced_material_reference.adm"):
+                self.assertEqual(archive.read(name), (root / name).read_bytes())
+        existing = first.read_bytes()
+        result = subprocess.run([sys.executable, str(script), str(first)], cwd=root,
+                                capture_output=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(first.read_bytes(), existing)
+
     def _build(self, data, **kwargs):
         src = os.path.join(self.tmp.name, "src.npy")
         np.save(src, data)
         params = BuildParams(input_path=src, out_dir=os.path.join(self.tmp.name, "out"), **kwargs)
         build(params)
         return load_manifest(params.out_dir)
+
+    def test_manifest_resolves_relative_paths_without_rewriting_absolute_paths(self):
+        manifest_path = os.path.join(self.tmp.name, "manifest.json")
+        manifest = {"format": "apparatus-world-tile", "format_version": 2,
+                    "source": {"path": "../heightmap.png"},
+                    "params": {"input_path": r"C:\terrain\heightmap.png"}}
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        loaded = load_manifest(manifest_path)
+        self.assertEqual(loaded["source"]["path"],
+                         os.path.normpath(os.path.join(self.tmp.name, "../heightmap.png")))
+        self.assertEqual(loaded["params"]["input_path"], r"C:\terrain\heightmap.png")
+        manifest["source"]["path"] = 42
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        with self.assertRaisesRegex(ValueError, "source.path must be a path string"):
+            load_manifest(manifest_path)
+        manifest["source"]["path"] = os.path.join(self.tmp.name, "heightmap.png")
+        manifest["params"]["input_path"] = "heightmap.png"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.assertEqual(load_manifest(manifest_path)["params"]["input_path"], "heightmap.png")
 
     def test_advanced_reference_project_builds_neighboring_tiles(self):
         repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -65,10 +115,20 @@ class PipelineTest(unittest.TestCase):
             shutil.copy2(os.path.join(repo, "appartus_world_tile", "reference_project", name), project_dir)
         shutil.copytree(os.path.join(repo, "appartus_world_tile", "reference_project", "textures"),
                         os.path.join(project_dir, "textures"))
+        shutil.copytree(os.path.join(repo, "appartus_world_tile", "reference_project", "tiles"),
+                        os.path.join(project_dir, "tiles"))
         relocated = os.path.join(self.tmp.name, "relocated")
         shutil.move(project_dir, relocated)
         project_path = os.path.join(relocated, "advanced_reference.awtp")
         project = load_project(project_path)
+        original_manifest = load_manifest(project.params.out_dir)
+        self.assertEqual(os.path.normcase(original_manifest["source"]["path"]),
+                         os.path.normcase(project.params.input_path))
+        self.assertEqual(os.path.normcase(original_manifest["params"]["input_path"]),
+                         os.path.normcase(project.params.input_path))
+        project.export.out_dir = os.path.join(self.tmp.name, "reference_prebuilt_adm")
+        result = export_tiles(original_manifest, project.material, project.export, "all")
+        self.assertEqual(len(result["written"]), 4)
         project.params.out_dir = os.path.join(self.tmp.name, "reference_tiles")
         project.params.threads = 2
         self.assertEqual(len(project.material.surfaces), 5)

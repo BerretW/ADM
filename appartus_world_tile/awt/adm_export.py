@@ -33,7 +33,7 @@ from .ply import read_ply, weight_fields
 
 INDEX_NAME = "world.json"
 INDEX_FORMAT = "apparatus-world-tile-export"
-INDEX_VERSION = 3
+INDEX_VERSION = 4
 TEXTURE_DIR = "textures"
 GENERATOR = f"Apparatus World Tile {__version__} (ADM 1.0)"
 MODES = ("changed", "selected", "all")
@@ -70,6 +70,7 @@ class PreparedTexture:
     primary: PreparedImage
     fallback: PreparedImage
     grayscale_source: bool = False
+    pbr_normal: PreparedImage | None = None
 
 
 def _png_image(rgba: np.ndarray, name: str) -> PreparedImage:
@@ -136,32 +137,32 @@ def prepare_adm_texture(path: str, role: str) -> PreparedTexture:
                                 source_info["width"], source_info["height"], name)
         return PreparedTexture(primary, fallback)
 
-    if source_info and source_mime == gputex.MIME_KTX2 and source_info["srgb"] != color_role:
-        raise ValueError(f"KTX2 texture color space does not match the {role} role")
+    if source_info and source_info["srgb"] != color_role:
+        raise ValueError(f"GPU texture color space does not match the {role} role; convert the source explicitly")
 
     if source_info and source_info["srgb"] == color_role:
         rgba = gputex.decode(source_bytes, source_mime, strict=True)[0]
         fallback = _png_image(rgba, name)
+        pbr_normal = None
+        if source_info["kind"] == "BC5" and role == "normal":
+            normal = gputex.reconstruct_bc5_normal(rgba.astype(np.float32) / 255.0)
+            pbr_normal = _png_image(np.rint(normal * 255.0).astype(np.uint8), name + "_pbr_normal")
         primary = PreparedImage(source_bytes, source_mime, hashlib.sha256(source_bytes).hexdigest(),
                                 source_info["width"], source_info["height"], name)
-        return PreparedTexture(primary, fallback)
+        return PreparedTexture(primary, fallback, pbr_normal=pbr_normal)
 
-    if source_info:
-        rgba = gputex.decode(source_bytes, source_mime, strict=True)[0]
-        fallback = _png_image(rgba, name)
-    else:
-        decoded = prepare_texture(path)
-        with Image.open(io.BytesIO(decoded.data)) as image:
-            image.load()
-            scalar16 = np.asarray(image)
-            if role == "data" and scalar16.ndim == 2 and scalar16.dtype == np.uint16:
-                blob, _kind = gputex.encode_scalar(scalar16, gputex.MIME_DDS, "R16", mipmaps=True)
-                fallback = _png_scalar_image(scalar16, decoded.name)
-                primary = PreparedImage(blob, gputex.MIME_DDS, hashlib.sha256(blob).hexdigest(),
-                                        scalar16.shape[1], scalar16.shape[0], decoded.name)
-                return PreparedTexture(primary, fallback, grayscale_source=True)
-            rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
-        fallback = decoded if decoded.mime == "image/png" else _png_image(rgba, decoded.name)
+    decoded = prepare_texture(path)
+    with Image.open(io.BytesIO(decoded.data)) as image:
+        image.load()
+        scalar16 = np.asarray(image)
+        if role == "data" and scalar16.ndim == 2 and scalar16.dtype == np.uint16:
+            blob, _kind = gputex.encode_scalar(scalar16, gputex.MIME_DDS, "R16", mipmaps=True)
+            fallback = _png_scalar_image(scalar16, decoded.name)
+            primary = PreparedImage(blob, gputex.MIME_DDS, hashlib.sha256(blob).hexdigest(),
+                                    scalar16.shape[1], scalar16.shape[0], decoded.name)
+            return PreparedTexture(primary, fallback, grayscale_source=True)
+        rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+    fallback = decoded if decoded.mime == "image/png" else _png_image(rgba, decoded.name)
     blob, _kind = gputex.encode(rgba, gputex.MIME_DDS, compression, srgb=color_role, mipmaps=True)
     primary = PreparedImage(blob, gputex.MIME_DDS, hashlib.sha256(blob).hexdigest(),
                             rgba.shape[1], rgba.shape[0], name)
@@ -527,6 +528,22 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
             by_slot[key] = len(textures) - 1
         return by_slot[key]
 
+    def pbr_normal_index(path: str) -> int:
+        image = texture_assets[(path, "normal")].pbr_normal
+        if image is None:
+            return texture_index(path, "normal")
+        key = (path, "pbr_normal")
+        if key not in by_slot:
+            if settings.embed_textures:
+                view = b.add_view(image.data, chunk_type="IMAG")
+                images.append({"bufferView": view, "mimeType": image.mime, "name": image.name})
+            else:
+                images.append({"uri": _texture_uri(image), "mimeType": image.mime,
+                               "sha256": image.sha256, "name": image.name})
+            textures.append({"source": len(images) - 1})
+            by_slot[key] = len(textures) - 1
+        return by_slot[key]
+
     for i in used:  # stable texture order: surface by surface
         for path, role in _surface_texture_slots(surfaces[i]):
             texture_index(path, role)
@@ -552,7 +569,7 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         if base.albedo:
             exported_material["baseColorTexture"] = {"index": texture_index(base.albedo, "albedo")}
         if base.normal:
-            exported_material["normalTexture"] = {"index": texture_index(base.normal, "normal")}
+            exported_material["normalTexture"] = {"index": pbr_normal_index(base.normal)}
         if base.emission:
             exported_material["emissiveTexture"] = {"index": texture_index(base.emission, "albedo")}
         materials.append(exported_material)
@@ -682,6 +699,8 @@ def export_tiles(
                 fallback_uri = _texture_uri(prepared.fallback)
                 _write_sidecar(out_dir, primary_uri, prepared.primary.data)
                 _write_sidecar(out_dir, fallback_uri, prepared.fallback.data)
+                if prepared.pbr_normal is not None:
+                    _write_sidecar(out_dir, _texture_uri(prepared.pbr_normal), prepared.pbr_normal.data)
                 texture_uris[key] = (primary_uri, fallback_uri)
 
     def run(tile_id: str):

@@ -31,6 +31,7 @@ from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
 GENERATOR = "ADM Tools for Blender 1.24.33 (ADM 1.0)"
+UNSUPPORTED_EXTENSIONS_PROPERTY = "_adm_unsupported_optional_extensions"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -560,18 +561,50 @@ class ModelExporter:
             elif self.opts.vertex_controls:
                 colors1 = np.tile(DEFAULTS["COLOR_1"], (nloops, 1))
                 columns.append(colors1[tri_loops])
-        normal_mapped = any(m >= 0 and "normalTexture" in self.mat.materials[m] for m in set(prim_mats.tolist()))
+        material_uvs = {}
+        has_height_parallax = False
+        for material_index in set(prim_mats.tolist()):
+            if material_index < 0:
+                continue
+            material = self.mat.materials[material_index]
+            normal_ref = material.get("normalTexture")
+            height = material.get("extensions", {}).get(K.MATERIAL_HEIGHT_EXT, {})
+            parallax = height.get("parallaxMode", "NONE") != "NONE"
+            has_height_parallax |= parallax
+            if normal_ref:
+                material_uvs[material_index] = normal_ref.get("texCoord", 0)
+            height_uvs = []
+            if parallax:
+                height_uvs.append(height["heightTexture"].get("texCoord", 0))
+            shader = material.get("shader", {})
+            shader_key = (shader.get("id"), shader.get("version"))
+            params = material.get("shaderParameters", {})
+            if params.get("parallax_mode", "NONE") != "NONE":
+                for index in range(K.SHADER_LAYERED_HEIGHT_COUNTS.get(shader_key, 0)):
+                    ref = params.get(f"layer{index}_height_texture")
+                    if ref and params.get(f"layer{index}_parallax_scale", 0.0) > 0.0:
+                        height_uvs.append(ref.get("texCoord", 0))
+            has_height_parallax |= bool(height_uvs)
+            for height_uv in height_uvs:
+                if material_index in material_uvs and material_uvs[material_index] != height_uv:
+                    self.warn(f"'{obj.name}': parallax and other tangent-space textures use different UV sets; "
+                              "readers must derive a separate tangent frame for each height UV set")
+                else:
+                    material_uvs[material_index] = height_uv
+        normal_mapped = bool(material_uvs)
         want_tangents = normals is not None and uvs and (
             self.opts.export_tangents == "ALWAYS" or (self.opts.export_tangents == "AUTO" and normal_mapped))
         interactive_tangents = {}
         if want_tangents:
-            if has_interactive:
+            if has_interactive or has_height_parallax or any(uv != 0 for uv in material_uvs.values()):
                 used_uvs = {
-                    self.mat.materials[m].get("normalTexture", {}).get("texCoord", 0) if m >= 0 else 0
+                    material_uvs.get(m, 0)
                     for m, _, _, _ in groups
                 }
                 for uv_index in used_uvs:
-                    layer = uv_layers[uv_index] if uv_index < len(uv_layers) else uv_layers[0]
+                    if uv_index >= len(uvs):
+                        raise ExportError(f"'{obj.name}': tangent UV set {uv_index} is not exported")
+                    layer = uv_layers[uv_index]
                     interactive_tangents[uv_index] = self._tangents(
                         me, [layer], uvs[uv_index], normals, loop_vert, tri_loops, co, obj)
             else:
@@ -622,7 +655,7 @@ class ModelExporter:
             group_tangents = tangents
             row_columns = [c[corner_sel] for c in columns]
             if interactive_tangents:
-                tangent_uv = self.mat.materials[m].get("normalTexture", {}).get("texCoord", 0) if m >= 0 else 0
+                tangent_uv = material_uvs.get(m, 0)
                 group_tangents = interactive_tangents[tangent_uv]
                 row_columns.append(group_tangents[tri_loops[corner_sel]])
             rows = np.hstack(row_columns)
@@ -1170,6 +1203,20 @@ class ModelExporter:
         self._committed_rig_ids.clear()
 
     def _export(self):
+        origins = export_objects(self.context, self.root, self.opts.selected_only)
+        if self.root is not None:
+            origins.append(self.root)
+        seen = set()
+        for origin in origins:
+            while origin is not None and origin not in seen:
+                seen.add(origin)
+                if UNSUPPORTED_EXTENSIONS_PROPERTY in origin:
+                    names = origin[UNSUPPORTED_EXTENSIONS_PROPERTY]
+                    if not isinstance(names, str):
+                        raise ExportError("invalid unsupported-extension import metadata on model root")
+                    self.warn(f"OPTIONAL_EXTENSIONS_UNSUPPORTED: {names} may be lost or have references "
+                              "that cannot be remapped during export")
+                origin = origin.parent
         if self.opts.vertex_controls:
             self.mat.extensions_used.add(K.VERTEX_CONTROL_EXT)
             self.mat.extensions_required.add(K.VERTEX_CONTROL_EXT)

@@ -18,6 +18,11 @@ checkboxes track verification and delivery, not merely code changes.
   - The built Blender extension decodes BC7 on Windows without an external wheel;
     other platforms and the final packaged extension remain unverified. Blender
     and World Tile targeted tests preserve supported source bytes and R16 values.
+  - World Tile now exports a separate reconstructed RGB normal for core PBR,
+    while retaining the BC5 primary and its specified `(R,G,0,1)` shader fallback.
+    Blender's standalone core-PBR BC5 path still needs resolution: a single
+    texture cannot both retain the BC5 primary and offer an RGB fallback under
+    the current two-channel fallback rule.
 
 ## M3 - Material and shader contracts
 - [x] Define a versioned material-height extension without conflicting with
@@ -45,13 +50,15 @@ checkboxes track verification and delivery, not merely code changes.
 ## M6 - World Tile GUI and preview
 - [x] Add AO/height and shader controls within existing material editor patterns.
 - [x] Preserve biome graph and noise controls, naming, repeat, and edit workflow.
-- [ ] Extend existing sphere/plane/relief preview for actual supported maps and
+- [x] Extend existing sphere/plane/relief preview for actual supported maps and
       transparent preview limitations.
-- [ ] Add a true multi-surface height blend preview, distinct from single-surface
+- [x] Add a true multi-surface height blend preview, distinct from single-surface
       preview and fast terrain inspection.
-  - Single-surface and final-material multi-surface views implement parallax and
-    POM. Multi-surface weight diagnostics remain unshifted CPU estimates;
-    broader map and renderer compatibility needs verification.
+  - Single-surface, multi-surface and detailed terrain views implement parallax
+    and POM. Per-fragment shader weight and offset diagnostics are available;
+    CPU weight views and reported mean weights remain unshifted estimates.
+    Supported maps and preview shapes have focused tests. VTK versions beyond
+    the tested Windows 9.7.2 remain unverified.
 - [x] Add safe, deterministic directory import for texture sets, with explicit
       conflict/missing-map handling; never infer unknown or packed maps.
 
@@ -67,8 +74,9 @@ checkboxes track verification and delivery, not merely code changes.
     mesh density against a continuous POM reference. Another VTK test renders
     exported sloped irregular tiles with mixed LODs, varying biome-noise weights,
     a shared-surface biome transition, texture fallbacks, and permuted slots.
-    Curved terrain and disjoint-surface biome transitions remain open. A separate
-    rendered five-surface example
+    The same test also covers curved terrain and a transition between disjoint
+    two-surface biomes with four nonzero weights on the edge; it permutes the
+    right-hand layer slots. A separate rendered five-surface example
     demonstrates an actual discontinuity when neighboring triangles drop
     different layers; the four-layer contract cannot represent all five
     simultaneous weights, and export reports the conflict count.
@@ -85,6 +93,8 @@ checkboxes track verification and delivery, not merely code changes.
 - [ ] Round-trip unsupported parameters without silent loss.
   - Blender project data retains parameters excluded by an intermediate
     profile; those inactive values are not exported with the legacy schema.
+    World Tile retains unknown terrain shader settings in AWTP and rejects
+    validation, build, and export. Their opaque references are not remapped.
   - No standalone ADM Editor application is required or permitted. Transfer
     these authoring requirements to existing tools.
 
@@ -94,17 +104,24 @@ checkboxes track verification and delivery, not merely code changes.
 - [ ] Preserve COLOR_0/COLOR_1, precision, and unsupported POM metadata.
   - POM parameter and supported GPU-source round trips are tested. Packaged BC7
     decoding is verified on Windows; other platforms remain unverified.
+    Optional material-height metadata, source bytes, sampler, and height UV
+    tangents survive import/export and project reload. Required material height
+    is rejected because Blender does not implement its effect. Unknown fields
+    and nested extension references are retained without remapping and produce
+    a warning.
 - [x] Test real node generation and a bake/render of height blending.
 
 ## M10 - Remaining ecosystem
-- [ ] Audit every shader consumer (editors, viewers, SDK, CLI, validators,
+- [x] Audit every shader consumer (editors, viewers, SDK, CLI, validators,
       generators, importers, exporters, and reference renderers).
-- [ ] Record full/partial/fallback/not-applicable support per consumer.
+- [x] Record full/partial/fallback/not-applicable support per consumer.
 - [ ] Prevent unsupported fields from being silently discarded.
+  - Blender warns on import and export about unrecognized optional extensions,
+    including after reload, but does not generally preserve them through export.
 
 ## M11 - Fixtures and documentation
 - [x] Create original procedural Rock, Sand, Dirt, Grass, and Cobblestone maps.
-- [ ] Create an Advanced Terrain ADM scene and a functional multi-tile AWTP sample.
+- [x] Create an Advanced Terrain ADM scene and a functional multi-tile AWTP sample.
   - The AWTP builds and exports four validated tiles with three LODs and
     referenced R8/R16/BC4/BC5/BC7 textures. Its project folder can be copied
     independently, including its textures. The generated
@@ -112,11 +129,13 @@ checkboxes track verification and delivery, not merely code changes.
     parallax/POM metadata and R8/R16/BC4/BC5/BC7 source bytes. Its
     fixture-specific VTK visualization renders actual parallax/POM and can
     disable POM for comparison; Blender's native preview does not render it.
+    The ADM scene is bundled alongside the portable project.
 - [ ] Update specification, registries, profiles, docs, changelog, gaps,
       conformance, and fixture catalog with exact implemented contracts.
 
 ## M12 - Full verification
 - [ ] Run targeted and full tests, build, and CI-equivalent checks.
+- [x] Diagnose and fix the Windows offscreen packaged-GUI early-close failure.
 - [ ] Run package audits and review new input/file parsing boundaries.
 - [ ] Re-read MISSION.md and audit each checkbox against implementation.
 - [ ] Report actual implementation, assets, test evidence, performance, and

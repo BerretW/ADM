@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -238,6 +239,33 @@ class ExportTest(unittest.TestCase):
         payload["surfaces"][0]["ao_map"] = {"path": "", "channel": 4, "invert": False}
         with self.assertRaisesRegex(ValueError, "channel must be R"):
             TerrainMaterial.from_dict(payload, None).validate()
+
+    def test_unknown_terrain_shader_settings_survive_project_round_trip_and_block_export(self):
+        project = Project.new()
+        data = project.to_dict()
+        data["format_version"] = 5
+        data["material"]["terrain_shader"] = {
+            "version": "2.1.0", "future_effect": {"enabled": True, "values": [0.2, 0.7]}}
+        restored = Project.from_dict(data)
+        self.assertEqual(restored.to_dict()["material"]["terrain_shader"]["future_effect"],
+                         {"enabled": True, "values": [0.2, 0.7]})
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "future.awtp")
+            restored.save(path)
+            restored = load_project(path)
+            self.assertEqual(restored.to_dict()["material"]["terrain_shader"]["future_effect"],
+                             {"enabled": True, "values": [0.2, 0.7]})
+            output = os.path.join(directory, "export")
+            with self.assertRaisesRegex(ValueError, "Unsupported terrain shader settings.*future_effect"):
+                export_tiles({}, restored.material, ExportSettings(out_dir=output), "all")
+            self.assertFalse(os.path.exists(output))
+        rules = restored.material.rules_digest()
+        fingerprint = restored.material.fingerprint(64)
+        restored.material.unknown_terrain_shader_settings["future_effect"]["values"][0] = 0.4
+        self.assertEqual(restored.material.rules_digest(), rules)
+        self.assertNotEqual(restored.material.fingerprint(64), fingerprint)
+        with self.assertRaisesRegex(ValueError, "Unsupported terrain shader settings.*future_effect"):
+            restored.material.validate()
 
     def test_advanced_project_uses_version_five_and_legacy_load_defaults(self):
         project = Project.new()
@@ -565,7 +593,7 @@ class ExportTest(unittest.TestCase):
         self.assertTrue(all("bufferView" in image for image in doc["images"]))
         self.assertFalse(os.path.exists(os.path.join(self.settings.out_dir, "textures")))
 
-    def test_dx10_bc7_dds_is_decoded_and_transcoded_to_adm_dds_with_png_fallback(self):
+    def test_dx10_bc7_srgb_dds_is_preserved_with_png_fallback(self):
         path = os.path.join(self.tmp.name, "bc7.dds")
         raw = bytearray(148 + 16)
         raw[:4] = b"DDS "
@@ -575,7 +603,7 @@ class ExportTest(unittest.TestCase):
         struct.pack_into("<I", raw, 80, 4)
         raw[84:88] = b"DX10"
         struct.pack_into("<I", raw, 108, 0x1000)
-        struct.pack_into("<4I", raw, 128, 98, 3, 0, 1)
+        struct.pack_into("<4I", raw, 128, 99, 3, 0, 1)
         raw[148:] = bytes([0x40]) + bytes(15)
         with open(path, "wb") as handle:
             handle.write(raw)
@@ -601,8 +629,10 @@ class ExportTest(unittest.TestCase):
         with open(os.path.join(self.settings.out_dir, "textures", dds[0]), "rb") as handle:
             from adm_blender.core import gputex
 
-            info = gputex.parse(handle.read(), gputex.MIME_DDS, strict=True)
-        self.assertIn(info["kind"], ("BC1", "BC3"))
+            exported_bytes = handle.read()
+            info = gputex.parse(exported_bytes, gputex.MIME_DDS, strict=True)
+        self.assertEqual(exported_bytes, bytes(raw))
+        self.assertEqual(info["kind"], "BC7")
         self.assertTrue(info["srgb"])
 
     def test_adm_compatible_dds_is_preserved_and_roles_select_color_space_and_format(self):
@@ -627,6 +657,74 @@ class ExportTest(unittest.TestCase):
         data_info = gputex.parse(converted_data.primary.data, gputex.MIME_DDS, strict=True)
         self.assertEqual(data_info["kind"], "BC3")
         self.assertFalse(data_info["srgb"])
+
+    def test_supported_gpu_source_with_wrong_color_space_is_not_silently_converted(self):
+        _core()
+        from adm_blender.core import gputex
+
+        rgba = np.full((4, 4, 4), [150, 100, 50, 255], dtype=np.uint8)
+        for mime, extension in ((gputex.MIME_DDS, "dds"), (gputex.MIME_KTX2, "ktx2")):
+            for role, srgb in (("albedo", False), ("data", True), ("normal", True)):
+                blob, _ = gputex.encode(rgba, mime, "BC7", srgb=srgb, mipmaps=True)
+                path = os.path.join(self.tmp.name, f"{role}.{extension}")
+                with open(path, "wb") as handle:
+                    handle.write(blob)
+                with self.assertRaisesRegex(ValueError, "color space does not match"):
+                    prepare_adm_texture(path, role)
+
+    def test_bc5_normal_keeps_primary_and_uses_rgb_core_pbr_fallback(self):
+        _core()
+        from adm_blender.core import gputex
+        from adm_blender.core.buffers import read_view
+
+        pixels = np.full((4, 4, 4), [150, 100, 255, 255], dtype=np.uint8)
+        blob, _ = gputex.encode(pixels, gputex.MIME_DDS, "BC5", False, mipmaps=True)
+        path = os.path.join(self.tmp.name, "normal_bc5.dds")
+        with open(path, "wb") as handle:
+            handle.write(blob)
+        for surface in self.material.surfaces:
+            surface.normal = path
+        self.material.terrain_shader_version = "2.1.0"
+        for embed in (False, True):
+            with self.subTest(embed=embed):
+                self.settings.embed_textures = embed
+                self.settings.out_dir = os.path.join(self.tmp.name, f"bc5_{embed}")
+                export_tiles(self.manifest, self.material, self.settings, "all")
+                doc, chunks = _read_adm(os.path.join(self.settings.out_dir, "x000_y000.adm"))
+
+                def image_bytes(index):
+                    image = doc["images"][index]
+                    if "bufferView" in image:
+                        return read_view(doc, chunks, image["bufferView"])
+                    with open(os.path.join(self.settings.out_dir, image["uri"].replace("/", os.sep)), "rb") as f:
+                        return f.read()
+
+                material = next(m for m in doc["materials"] if "normalTexture" in m)
+                primary_ref = material["shaderParameters"]["layer0_normal"]["index"]
+                primary = doc["textures"][primary_ref]
+                self.assertEqual(image_bytes(primary["source"]), blob)
+                with Image.open(io.BytesIO(image_bytes(primary["fallbackSource"]))) as image:
+                    two_channel = np.asarray(image.convert("RGBA"))
+                self.assertTrue(np.all(two_channel[..., 2] == 0))
+                core_ref = doc["textures"][material["normalTexture"]["index"]]
+                self.assertNotIn("fallbackSource", core_ref)
+                with Image.open(io.BytesIO(image_bytes(core_ref["source"]))) as image:
+                    normal = np.asarray(image.convert("RGBA"))
+                xy = two_channel[..., :2].astype(np.float32) / 127.5 - 1
+                z = np.sqrt(np.maximum(0, 1 - np.sum(xy * xy, axis=-1, keepdims=True)))
+                xyz = np.concatenate((xy, z), axis=-1)
+                xyz /= np.linalg.norm(xyz, axis=-1, keepdims=True)
+                expected_rgb = np.rint((xyz * 0.5 + 0.5) * 255).astype(np.uint8)
+                np.testing.assert_array_equal(normal[..., :3], expected_rgb)
+                self.assertTrue(np.all(normal[..., 3] == 255))
+                self.assertTrue(np.all(normal[..., 2] > 128))
+
+    def test_export_changed_invalidates_previous_export_revision(self):
+        with patch("awt.adm_export.INDEX_VERSION", 3):
+            export_tiles(self.manifest, self.material, self.settings, "all")
+            self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+        self.assertEqual(set(changed_tiles(self.manifest, self.material, self.settings)),
+                         {tile["id"] for tile in self.manifest["tiles"]})
 
     def test_scalar_gpu_textures_preserve_source_bytes_and_png_values(self):
         _core()
@@ -731,6 +829,37 @@ class ExportTest(unittest.TestCase):
         np.testing.assert_array_equal(fallback_values[..., 0], values)
         self.assertTrue(np.all(fallback_values[..., 1:3] == 0))
         self.assertTrue(np.all(fallback_values[..., 3] == 65535))
+
+    def test_r16_tiff_is_exported_as_r16_dds_without_precision_loss(self):
+        _core()
+        from adm_blender.core import gputex
+
+        values = np.array([[0, 1, 254, 255], [256, 32768, 65534, 65535]], dtype=np.uint16)
+        path = os.path.join(self.tmp.name, "height.tiff")
+        Image.fromarray(values).save(path)
+        prepared = prepare_adm_texture(path, "data")
+        self.assertEqual(gputex.parse(prepared.primary.data, gputex.MIME_DDS, strict=True)["kind"], "R16")
+        np.testing.assert_array_equal(gputex.decode_scalar(prepared.primary.data, strict=True)[0], values)
+        np.testing.assert_array_equal(_read_rgba16_png(prepared.fallback.data)[..., 0], values)
+        self.material.surface("grass").height_map = MapSlot(path)
+        self.material.terrain_shader_version = "2.1.0"
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        found = False
+        for tile in result["written"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+            for material in doc["materials"]:
+                for key, ref in material["shaderParameters"].items():
+                    if not key.endswith("_height_texture"):
+                        continue
+                    texture = doc["textures"][ref["index"]]
+                    source = doc["images"][texture["source"]]
+                    fallback = doc["images"][texture["fallbackSource"]]
+                    primary = Path(self.settings.out_dir, source["uri"]).read_bytes()
+                    png = Path(self.settings.out_dir, fallback["uri"]).read_bytes()
+                    np.testing.assert_array_equal(gputex.decode_scalar(primary, strict=True)[0], values)
+                    np.testing.assert_array_equal(_read_rgba16_png(png)[..., 0], values)
+                    found = True
+        self.assertTrue(found)
 
     def test_sixteen_bit_grayscale_channels_preserve_visual_sampling(self):
         path = os.path.join(self.tmp.name, "height16.png")

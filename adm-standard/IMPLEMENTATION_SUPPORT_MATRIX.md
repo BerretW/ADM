@@ -10,7 +10,8 @@ represented as complete renderer conformance.
 | ADM Blender import/export | Partial | Partial | Partial | Partial | Partial | Partial | Partial |
 | World Tile single-surface preview | Partial | Partial | Not applicable | Partial | Partial | Partial | Not applicable |
 | World Tile multi-surface preview | Partial | Partial | Partial | Partial | Partial | Partial | Not applicable |
-| World Tile 3D terrain material mode | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | Partial | Not applicable |
+| World Tile 3D detailed material mode | Partial | Partial | Partial | Partial | Partial | Partial | Not applicable |
+| World Tile 3D fast material mode | Fallback | Unsupported | Unsupported | Unsupported | Unsupported | Partial | Not applicable |
 | World Tile ADM export | Partial | Partial | Partial | Partial | Partial | Partial | Partial |
 | ADM validators | Partial | Partial | Partial | Partial | Partial | Partial | Not applicable |
 | Shared ADM GPU codec | Not applicable | Partial | Not applicable | Not applicable | Not applicable | Partial | Partial |
@@ -24,6 +25,16 @@ represented as complete renderer conformance.
 
 - Blender approximates layer AO by darkening the preview color. It retains parallax
   and POM parameters, but does not preview their UV offsets.
+- Blender preserves optional `ADM_material_height_v1` data, its height texture
+  and sampler on import and export, but uses the core material preview and
+  warns that the effect is unavailable. It rejects the extension when required.
+  When normal and height textures use different UV sets, the exported tangent
+  frame follows the normal map; readers must derive a separate height frame.
+  Unknown optional height fields and nested extension data are retained, but
+  their internal references are not remapped.
+- Blender warns on import and export when optional extensions are not
+  recognized, including after saving and reopening a project. It does not
+  generally preserve arbitrary unknown extensions through export.
 - Blender retains inactive profile parameters in the project when you switch
   profiles, restoring values whose shader and type match. An ADM export includes
   only parameters supported by the selected profile and warns about inactive
@@ -37,13 +48,28 @@ represented as complete renderer conformance.
 - World Tile's CPU multi-surface composition approximates AO by darkening the
   final color and supplies blended normal, metallic, roughness, and emission
   maps to its preview renderer. Its parallax and POM material previews sample
-  each layer separately in the VTK fragment shader. Weight views and reported
-  mean weights use unshifted coordinates. These previews have been tested with
-  VTK 9.7.2; other versions and terrain-view fragment seams remain unverified.
+  each layer separately in the VTK fragment shader. Shader weight diagnostics
+  use shifted coordinates; CPU weight views and reported mean weights use
+  unshifted coordinates. These previews have been tested with
+  VTK 9.7.2; other versions remain unverified. Separate offscreen tests render
+  selected exported-terrain seams. The opt-in detailed terrain mode uses the
+  same per-layer shader and exported four-layer palette policy; its fast
+  material mode remains an albedo bake. The detailed mode has a separate
+  triangle budget and warns when a palette exceeds four surfaces.
   The renderer reports insufficient texture units instead of dropping maps.
+- World Tile retains unknown terrain shader settings in its project and rejects
+  validation, build, and export. It does not interpret or remap references
+  inside those settings. Unsupported profile versions and parallax modes
+  remain visible in the material editor.
 - Portable PBR fallback textures preserve only data representable in portable PBR and must
   be labeled as a fallback, never as layered shader conformance.
 - DDS/KTX2 primary bytes are preserved only when the source role and color space match.
+- For a BC5 terrain normal, World Tile retains the BC5 source and its
+  two-channel fallback for the shader, and emits a separate reconstructed RGB
+  PNG for the top-level PBR normal. Blender's standalone core-PBR BC5 export
+  does not yet provide both a preserved BC5 primary and an RGB fallback under
+  the current two-channel fallback rule. Blender warns when exporting a BC5
+  core normal because portable readers might display that fallback incorrectly.
 - The standalone shared BC7 decoder requires `texture2ddecoder`. Blender's texture
   loader repackages BC7 KTX2 blocks as DDS and uses Blender's native DDS reader;
   this path has been verified in a built extension on Windows with Blender 5.2.3.
@@ -63,5 +89,6 @@ represented as complete renderer conformance.
   independent runtime renderer was found in the repository. Blender's custom
   shader editor uses the PBR fallback; its custom ENUM definitions and values
   are preserved. Imports reject incompatible parameter names, types, ENUM
-  values and numeric, boolean or texture defaults for an existing definition.
+  values, numeric, boolean or texture defaults, and metadata for an existing
+  definition.
 - Independent implementation certification requires separate render/reference comparisons.

@@ -16,6 +16,7 @@ Texture paths are absolute in memory; projects store them relative to the projec
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import io
 import json
@@ -38,6 +39,10 @@ SURFACES_PER_BIOME = 4
 PAINT_AUTO = 255  # paint value meaning "use the automatic rules"
 PAINT_MAX_SIDE = 4096
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.tga *.tif *.tiff *.bmp *.dds *.ktx2 *.webp);;All files (*)"
+TERRAIN_SHADER_FIELDS = frozenset({
+    "version", "height_blend_enabled", "height_blend_transition", "height_blend_strength",
+    "parallax_mode", "parallax_min_steps", "parallax_max_steps",
+})
 
 
 @dataclass
@@ -216,6 +221,7 @@ class TerrainMaterial:
     parallax_min_steps: int = 8
     parallax_max_steps: int = 32
     terrain_shader_version: str = SHADER_VERSION
+    unknown_terrain_shader_settings: dict = field(default_factory=dict, repr=False)
 
     # ------------------------------------------------------------ lookups
     def surface_names(self) -> list[str]:
@@ -422,6 +428,10 @@ class TerrainMaterial:
             raise ValueError("POM steps must satisfy 1 <= minimum <= maximum <= 256")
         if self.terrain_shader_version not in ("2.0.0", "2.1.0"):
             raise ValueError("Unsupported terrain shader version")
+        if self.unknown_terrain_shader_settings:
+            raise ValueError("Unsupported terrain shader settings are retained in the project but cannot be used "
+                             "for validation, build or export: "
+                             + ", ".join(sorted(self.unknown_terrain_shader_settings)))
 
     # --------------------------------------------------------- digests
     def rules_digest(self) -> str:
@@ -474,6 +484,7 @@ class TerrainMaterial:
                     "parallax_min_steps": self.parallax_min_steps,
                     "parallax_max_steps": self.parallax_max_steps,
                 }
+            data["terrain_shader"].update(copy.deepcopy(self.unknown_terrain_shader_settings))
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:32]
 
     # ------------------------------------------------------- persistence
@@ -495,6 +506,7 @@ class TerrainMaterial:
                 "parallax_min_steps": self.parallax_min_steps,
                 "parallax_max_steps": self.parallax_max_steps,
             }
+            data["terrain_shader"].update(copy.deepcopy(self.unknown_terrain_shader_settings))
         if self.has_paint():
             from PIL import Image
 
@@ -574,6 +586,8 @@ class TerrainMaterial:
             material.parallax_mode = str(shader.get("parallax_mode", "NONE"))
             material.parallax_min_steps = int(shader.get("parallax_min_steps", 8))
             material.parallax_max_steps = int(shader.get("parallax_max_steps", 32))
+            material.unknown_terrain_shader_settings = copy.deepcopy(
+                {key: value for key, value in shader.items() if key not in TERRAIN_SHADER_FIELDS})
         paint = data.get("paint")
         if isinstance(paint, dict) and paint.get("png"):
             from PIL import Image
@@ -600,7 +614,8 @@ class TerrainMaterial:
         return material
 
     def has_advanced_shader_features(self) -> bool:
-        return (self.terrain_shader_version != SHADER_VERSION
+        return (bool(self.unknown_terrain_shader_settings)
+                or self.terrain_shader_version != SHADER_VERSION
                 or self.height_blend_enabled or self.parallax_mode != "NONE"
                 or self.height_blend_transition != 0.2 or self.height_blend_strength != 1.0
                 or self.parallax_min_steps != 8 or self.parallax_max_steps != 32
@@ -832,7 +847,10 @@ def prepare_texture(path: str) -> PreparedImage:
                 data, mime = raw, "image/jpeg"
             else:
                 out = io.BytesIO()
-                _eight_bit(image).save(out, "PNG", compress_level=6)
+                if image.mode in ("I;16", "I;16B", "I;16L"):
+                    Image.fromarray(np.asarray(image, dtype=np.uint16)).save(out, "PNG", compress_level=6)
+                else:
+                    _eight_bit(image).save(out, "PNG", compress_level=6)
                 data, mime = out.getvalue(), "image/png"
     except (OSError, ValueError, NotImplementedError) as exc:
         if not is_dds and raw[:4] != b"DDS ":

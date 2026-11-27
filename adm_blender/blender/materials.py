@@ -18,6 +18,9 @@ UV_NAMES = ("UVMap", "UVMap_1")
 OCCLUSION_NODE = "ADM Occlusion"
 ALPHA_CLIP_NODE = "ADM Alpha Clip"
 PREVIEW_PREFIX = "ADM Preview"
+MATERIAL_HEIGHT_DATA = "_adm_material_height_json"
+MATERIAL_HEIGHT_IMAGE = "_adm_material_height_image"
+MATERIAL_HEIGHT_SAMPLER = "_adm_material_height_sampler_json"
 
 
 # ================================================================================================
@@ -336,8 +339,9 @@ def load_image_file(path, *, normal_map=False):
         rgba = _decode_bc7_with_blender(data, mime)
     else:
         rgba = gputex.decode(data, mime)[0].astype(np.float32) / 255.0
-    if normal_map and info["kind"] == "BC5":
-        rgba = gputex.reconstruct_bc5_normal(rgba)
+    bc5_fallback = rgba if normal_map and info["kind"] == "BC5" else None
+    if bc5_fallback is not None:
+        rgba = gputex.reconstruct_bc5_normal(bc5_fallback)
     h, w = rgba.shape[:2]
     img = bpy.data.images.new(os.path.basename(path), w, h, alpha=True, float_buffer=info["kind"] == "R16")
     img.colorspace_settings.name = "sRGB" if info["srgb"] else "Non-Color"
@@ -351,7 +355,14 @@ def load_image_file(path, *, normal_map=False):
     except gputex.GpuTextureError:
         pass
     else:
-        preserve_gpu_source(img, data)
+        fallback = None
+        if bc5_fallback is not None:
+            fallback = bpy.data.images.new(f"{img.name}_BC5_fallback", w, h, alpha=True)
+            fallback.colorspace_settings.name = "Non-Color"
+            fallback.pixels.foreach_set(bc5_fallback[::-1].ravel())
+            fallback.update()
+            fallback.pack()
+        preserve_gpu_source(img, data, fallback=fallback)
     return img
 
 
@@ -380,6 +391,7 @@ class MaterialExporter:
         self._mat_cache = {}
         self._mat_uv_names = {}
         self._img_cache = {}
+        self._bc5_images = set()
         self._tex_cache = {}
         self._sampler_cache = {}
         self.normal_mapped = set()
@@ -487,6 +499,8 @@ class MaterialExporter:
         if preserved is not None:
             blob, mime = preserved
             primary = self._add_blob(name, blob, mime)
+            if gputex.parse(blob, mime, strict=True)["kind"] == "BC5":
+                self._bc5_images.add(primary)
             fallback_image = image.get("_adm_gpu_fallback") or image
             if not isinstance(fallback_image, bpy.types.Image):
                 raise TextureExportError(f"image '{image.name}': preserved fallback is invalid")
@@ -502,13 +516,20 @@ class MaterialExporter:
             if scalar_r16:
                 scalar = (np.clip(px[..., 0], 0.0, 1.0) * 65535.0 + 0.5).astype(np.uint16)
                 blob, _ = gputex.encode_scalar(scalar, gpu_mime, "R16", self.gpu_mipmaps)
+                kind = "R16"
             else:
                 if high_precision:
                     self.warn(f"image '{name}': GPU export converts 16-bit samples to 8-bit; "
                               "the PNG fallback retains 16-bit precision")
                 rgba = self._to_u8(px)
-                blob, _ = gputex.encode(rgba, gpu_mime, self.gpu_compression, color_role, self.gpu_mipmaps)
+                blob, kind = gputex.encode(rgba, gpu_mime, self.gpu_compression, color_role, self.gpu_mipmaps)
             primary = self._add_blob(name, blob, gpu_mime)
+            if kind == "BC5":
+                self._bc5_images.add(primary)
+            if kind in ("R8", "R16", "BC4", "BC5"):
+                px = px.copy()
+                px[..., 1 if kind != "BC5" else 2:3] = 0.0
+                px[..., 3] = 1.0
             if high_precision:
                 rgba16 = (np.clip(px, 0.0, 1.0) * 65535.0 + 0.5).astype(">u2")
                 h, w = rgba16.shape[:2]
@@ -652,6 +673,38 @@ class MaterialExporter:
     def export_material(self, mat, uv_names):
         out = self._export_pbr(mat, uv_names)
         self._export_shader(mat, out)
+        if MATERIAL_HEIGHT_DATA in mat:
+            try:
+                height = json.loads(mat[MATERIAL_HEIGHT_DATA])
+                sampler = json.loads(mat[MATERIAL_HEIGHT_SAMPLER])
+                image = mat.get(MATERIAL_HEIGHT_IMAGE)
+                if not isinstance(height, dict) or not isinstance(height.get("heightTexture"), dict):
+                    raise ValueError("invalid height extension data")
+                if sampler is not None and not isinstance(sampler, dict):
+                    raise ValueError("invalid height texture sampler")
+                if not isinstance(image, bpy.types.Image):
+                    raise ValueError("height texture image is missing")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ShaderExportError(f"material '{mat.name}': cannot preserve material height: {exc}") from exc
+            sampler_index = None
+            if sampler is not None:
+                sampler_key = ("preserved", json.dumps(sampler, sort_keys=True, ensure_ascii=False))
+                if sampler_key not in self._sampler_cache:
+                    self.samplers.append(sampler)
+                    self._sampler_cache[sampler_key] = len(self.samplers) - 1
+                sampler_index = self._sampler_cache[sampler_key]
+            entry = self._add_image(self._image_key(image, False), image.name, image, False)
+            height["heightTexture"]["index"] = self._texture(entry, sampler_index)
+            out.setdefault("extensions", {})[K.MATERIAL_HEIGHT_EXT] = height
+            self.extensions_used.add(K.MATERIAL_HEIGHT_EXT)
+            if set(height) - K.MATERIAL_HEIGHT_FIELDS:
+                self.warn(f"material '{mat.name}': unknown material-height fields are preserved, "
+                          "but their internal references cannot be remapped")
+            for preserved in (height, height["heightTexture"], sampler):
+                if preserved and preserved.get("extensions"):
+                    self.extensions_used.update(preserved["extensions"])
+                    self.warn(f"material '{mat.name}': nested material-height extension data is preserved, "
+                              "but its internal references cannot be remapped")
         if self.vertex_controls:
             p = mat.adm
             vc = {"parameters": {
@@ -900,6 +953,9 @@ class MaterialExporter:
                 ct = trace(nm.inputs["Color"])
                 if ct and ct["node"] is not None and ct["node"].image:
                     ti = self.texture_from_node(ct["node"], False)
+                    if self.textures[ti]["source"] in self._bc5_images:
+                        self.warn(f"material '{mat.name}': core PBR normal uses BC5; portable readers without "
+                                  "BC5 normal reconstruction may display its two-channel fallback incorrectly")
                     strength = float(nm.inputs["Strength"].default_value)
                     extra = {"scale": max(0.0, strength)} if abs(strength - 1.0) > 1e-6 else None
                     ref = self._ref(ti, ct["node"], uv_names, extra, interactive)

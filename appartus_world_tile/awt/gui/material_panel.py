@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDou
                                QVBoxLayout, QWidget)
 
 from ..bake import _linear_to_srgb, _srgb_to_linear
-from ..material import (CHANNELS, IMAGE_FILTER, MAX_BIOMES, MAX_SURFACES, SURFACES_PER_BIOME, Band, Biome,
+from ..material import (CHANNELS, IMAGE_FILTER, MAX_BIOMES, MAX_SURFACES, MAX_TEXTURE_BYTES, MAX_TEXTURE_PIXELS,
+                        SURFACES_PER_BIOME, Band, Biome,
                         BiomeSurface, MapSlot, Surface, TerrainMaterial, _eight_bit, normal_preview_array,
                         prepare_texture)
 from ..material_set_import import apply_material_sets
@@ -48,6 +49,50 @@ def _thumbnail(path: str) -> QPixmap | None:
             return QPixmap.fromImage(qimage)
     except (OSError, ValueError):
         return None
+
+
+def _texture_info(path: str) -> str:
+    from PIL import Image
+
+    if os.stat(path).st_size > MAX_TEXTURE_BYTES:
+        raise ValueError(f"Texture exceeds the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+    with open(path, "rb") as stream:
+        raw = stream.read(MAX_TEXTURE_BYTES + 1)
+    if len(raw) > MAX_TEXTURE_BYTES:
+        raise ValueError(f"Texture exceeds the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
+    from ..adm_export import _core
+    _core()
+    from adm_blender.core import gputex
+
+    mime = gputex.mime_of(raw)
+    if mime:
+        info = gputex.parse(raw, mime, strict=False)
+        if info["width"] * info["height"] > MAX_TEXTURE_PIXELS:
+            raise ValueError("Texture dimensions exceed the preview limit")
+        kind = info["kind"]
+        depth = "16-bit" if kind == "R16" else ("8-bit" if kind in ("R8", "RGBA8") else "block-compressed")
+        color = "sRGB" if info["srgb"] else "linear"
+        size = sum(level[1] for level in info["levels"])
+        return (f"{info['width']} x {info['height']} | {kind} {depth} | {color} | "
+                f"{len(info['levels'])} mip(s) | {size:,} bytes GPU payload | external")
+    with Image.open(io.BytesIO(raw)) as image:
+        width, height = image.size
+        if not width or not height or width * height > MAX_TEXTURE_PIXELS:
+            raise ValueError("Texture dimensions exceed the preview limit")
+        if image.format == "PNG":
+            depth = raw[24]
+        elif image.format == "TIFF":
+            bits = image.tag_v2.get(258, (8,))
+            depth = max(bits) if isinstance(bits, tuple) else bits
+        else:
+            depth = 8 if image.mode in ("L", "LA", "RGB", "RGBA") else None
+        depth_text = f"{depth}-bit/channel" if depth else "bit depth unspecified"
+        color = "sRGB" if image.info.get("srgb") is not None else "color space unspecified"
+        channel_bytes = 4 if depth and depth > 16 else (2 if depth and depth > 8 else 1)
+        estimate = width * height * 4 * channel_bytes
+        return (f"{width} x {height} | {image.format} {depth_text} | {color} | "
+                f"1 source level | RGBA{channel_bytes * 8} base estimate {estimate:,} bytes; "
+                "actual GPU size depends on export | external")
 
 
 class MaterialPreview(QWidget):
@@ -330,6 +375,10 @@ class TexturePicker(QWidget):
         self.thumb.setStyleSheet("background: #22262b; border: 1px solid #3a4048; color: #6c747e")
         self.name = QLabel()
         self.name.setStyleSheet("color: #c8ced6")
+        self.info = QLabel()
+        self.info.setWordWrap(True)
+        self.info.setTextFormat(Qt.TextFormat.PlainText)
+        self.info.setStyleSheet("color: #9aa3ad")
         self.browse = QPushButton("Choose…")
         self.clear = QToolButton()
         self.clear.setText("✕")
@@ -337,7 +386,10 @@ class TexturePicker(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self.thumb)
-        row.addWidget(self.name, 1)
+        details = QVBoxLayout()
+        details.addWidget(self.name)
+        details.addWidget(self.info)
+        row.addLayout(details, 1)
         row.addWidget(self.browse)
         row.addWidget(self.clear)
         self.browse.clicked.connect(self._choose)
@@ -371,6 +423,7 @@ class TexturePicker(QWidget):
             self.thumb.setText("none")
             self.name.setText("No texture")
             self.name.setToolTip("")
+            self.info.clear()
             return
         exists = os.path.isfile(self._path)
         pixmap = _thumbnail(self._path) if exists else None
@@ -379,12 +432,19 @@ class TexturePicker(QWidget):
         self.name.setText(os.path.basename(self._path) + ("" if exists else "  (missing)"))
         self.name.setStyleSheet("color: #c8ced6" if exists else "color: #e07a6a")
         self.name.setToolTip(self._path)
+        if not exists:
+            self.info.setText("Texture file is missing")
+            return
+        try:
+            self.info.setText(_texture_info(self._path))
+        except (OSError, ValueError) as exc:
+            self.info.setText(f"Texture information unavailable: {exc}")
 
 
 class MapRow(QWidget):
     """Metallic or roughness: factor, optional texture, its channel and inversion."""
 
-    changed = Signal()
+    changed = Signal(str)
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
@@ -412,15 +472,15 @@ class MapRow(QWidget):
         row.addStretch(1)
         layout.addLayout(row)
         layout.addWidget(self.picker)
-        self.factor.valueChanged.connect(self.changed)
-        self.channel.currentIndexChanged.connect(self.changed)
-        self.invert.toggled.connect(self.changed)
+        self.factor.valueChanged.connect(lambda _value: self.changed.emit("factor"))
+        self.channel.currentIndexChanged.connect(lambda _value: self.changed.emit("channel"))
+        self.invert.toggled.connect(lambda _value: self.changed.emit("invert"))
         self.picker.changed.connect(self._picker_changed)
         self._update_enabled()
 
     def _picker_changed(self) -> None:
         self._update_enabled()
-        self.changed.emit()
+        self.changed.emit("path")
 
     def _update_enabled(self) -> None:
         has = bool(self.picker.path())
@@ -477,7 +537,7 @@ class ColorButton(QPushButton):
 class SurfaceEditor(QGroupBox):
     """Textures, tint, repeat and PBR values of the selected surface."""
 
-    changed = Signal()
+    changed = Signal(str)
     terrain_requested = Signal()
     large_preview_requested = Signal()
     height_blend_preview_requested = Signal()
@@ -545,11 +605,13 @@ class SurfaceEditor(QGroupBox):
         row.addWidget(self.show_blend_preview)
         row.addWidget(self.show_terrain)
         layout.addLayout(row)
-        for widget in (self.tint, self.albedo, self.metallic, self.roughness, self.ao, self.height,
-                       self.emission, self.normal):
-            widget.changed.connect(self.changed)
-        for widget in (self.repeat, self.height_bias, self.parallax_scale):
-            widget.valueChanged.connect(self.changed)
+        for name in ("tint", "albedo", "emission", "normal"):
+            getattr(self, name).changed.connect(lambda name=name: self.changed.emit(name))
+        for name in ("metallic", "roughness", "ao", "height"):
+            getattr(self, name).changed.connect(
+                lambda field, name=name: self.changed.emit(f"{name}.{field}"))
+        for name in ("repeat", "height_bias", "parallax_scale"):
+            getattr(self, name).valueChanged.connect(lambda _value, name=name: self.changed.emit(name))
         self.show_terrain.clicked.connect(self.terrain_requested)
         self.show_preview.clicked.connect(self.large_preview_requested)
         self.show_blend_preview.clicked.connect(self.height_blend_preview_requested)
@@ -568,18 +630,27 @@ class SurfaceEditor(QGroupBox):
         self.emission.set_path(surface.emission)
         self.normal.set_path(surface.normal)
 
-    def apply(self, surface: Surface) -> None:
-        surface.color = self.tint.rgb()
-        surface.albedo = self.albedo.path()
-        surface.repeat_m = self.repeat.value()
-        surface.metallic, surface.metallic_map = self.metallic.values()
-        surface.roughness, surface.roughness_map = self.roughness.values()
-        surface.ao_strength, surface.ao_map = self.ao.values()
-        surface.height_scale, surface.height_map = self.height.values()
-        surface.height_bias = self.height_bias.value()
-        surface.parallax_scale = self.parallax_scale.value()
-        surface.emission = self.emission.path()
-        surface.normal = self.normal.path()
+    def apply(self, surface: Surface, field: str) -> None:
+        if "." in field:
+            name, part = field.split(".", 1)
+            row = getattr(self, name)
+            factor_name = {"metallic": "metallic", "roughness": "roughness",
+                           "ao": "ao_strength", "height": "height_scale"}[name]
+            if part == "factor":
+                setattr(surface, factor_name, row.factor.value())
+            else:
+                slot = getattr(surface, f"{name}_map")
+                values = {"path": row.picker.path, "channel": row.channel.currentIndex,
+                          "invert": row.invert.isChecked}
+                setattr(slot, part, values[part]())
+        else:
+            controls = {"tint": ("color", self.tint.rgb), "albedo": ("albedo", self.albedo.path),
+                        "repeat": ("repeat_m", self.repeat.value),
+                        "height_bias": ("height_bias", self.height_bias.value),
+                        "parallax_scale": ("parallax_scale", self.parallax_scale.value),
+                        "emission": ("emission", self.emission.path), "normal": ("normal", self.normal.path)}
+            name, value = controls[field]
+            setattr(surface, name, value())
 
 
 class BandEdit(QWidget):
@@ -824,6 +895,8 @@ class MaterialPanel(QWidget):
         self._loading = False
         self._tile_size = 0.0
         self._material = TerrainMaterial()
+        self._unknown_shader_version = None
+        self._unknown_parallax_mode = None
         intro = QLabel("Surfaces are texture sets. Biomes pick up to four surfaces and blend them by height "
                        "and slope; the build writes the blend as vertex weights (COLOR_1) and the export "
                        "splits tiles into four-surface materials. Neighbouring biomes should share a surface "
@@ -983,13 +1056,29 @@ class MaterialPanel(QWidget):
         self.slope_radius.setValue(material.slope_radius_m)
         self.paint_softness.setValue(material.paint_softness_m)
         self.double_sided.setChecked(material.double_sided)
-        self.terrain_shader_version.setCurrentIndex(
-            max(0, self.terrain_shader_version.findData(material.terrain_shader_version)))
+        if self._unknown_shader_version is not None:
+            self.terrain_shader_version.removeItem(
+                self.terrain_shader_version.findData(self._unknown_shader_version))
+            self._unknown_shader_version = None
+        version_index = self.terrain_shader_version.findData(material.terrain_shader_version)
+        if version_index < 0:
+            self._unknown_shader_version = material.terrain_shader_version
+            self.terrain_shader_version.addItem(
+                f"Unsupported profile ({material.terrain_shader_version})", material.terrain_shader_version)
+            version_index = self.terrain_shader_version.count() - 1
+        self.terrain_shader_version.setCurrentIndex(version_index)
         self.height_blend.setChecked(material.height_blend_enabled)
         self.height_blend_transition.setValue(material.height_blend_transition)
         self.height_blend_strength.setValue(material.height_blend_strength)
-        self.parallax_mode.setCurrentIndex(
-            max(0, self.parallax_mode.findData(material.parallax_mode)))
+        if self._unknown_parallax_mode is not None:
+            self.parallax_mode.removeItem(self.parallax_mode.findData(self._unknown_parallax_mode))
+            self._unknown_parallax_mode = None
+        mode_index = self.parallax_mode.findData(material.parallax_mode)
+        if mode_index < 0:
+            self._unknown_parallax_mode = material.parallax_mode
+            self.parallax_mode.addItem(f"Unsupported mode ({material.parallax_mode})", material.parallax_mode)
+            mode_index = self.parallax_mode.count() - 1
+        self.parallax_mode.setCurrentIndex(mode_index)
         self.parallax_min_steps.setValue(material.parallax_min_steps)
         self.parallax_max_steps.setValue(material.parallax_max_steps)
         self._loading = False
@@ -1060,12 +1149,12 @@ class MaterialPanel(QWidget):
         if not self._loading:
             self.changed.emit()
 
-    def _surface_edited(self) -> None:
+    def _surface_edited(self, field: str) -> None:
         row = self.surface_list.currentRow()
         if self._loading or not 0 <= row < len(self._material.surfaces):
             return
         surface = self._material.surfaces[row]
-        self.surface_editor.apply(surface)
+        self.surface_editor.apply(surface, field)
         self.surface_selected.emit(surface)
         self.surface_list.item(row).setIcon(swatch(surface.color))
         self._update_repeat_info()
@@ -1085,16 +1174,20 @@ class MaterialPanel(QWidget):
     def _global_edited(self) -> None:
         if self._loading:
             return
-        self._material.slope_radius_m = self.slope_radius.value()
-        self._material.paint_softness_m = self.paint_softness.value()
-        self._material.double_sided = self.double_sided.isChecked()
-        self._material.terrain_shader_version = self.terrain_shader_version.currentData()
-        self._material.height_blend_enabled = self.height_blend.isChecked()
-        self._material.height_blend_transition = self.height_blend_transition.value()
-        self._material.height_blend_strength = self.height_blend_strength.value()
-        self._material.parallax_mode = self.parallax_mode.currentData()
-        self._material.parallax_min_steps = self.parallax_min_steps.value()
-        self._material.parallax_max_steps = self.parallax_max_steps.value()
+        controls = {
+            self.slope_radius: ("slope_radius_m", self.slope_radius.value),
+            self.paint_softness: ("paint_softness_m", self.paint_softness.value),
+            self.double_sided: ("double_sided", self.double_sided.isChecked),
+            self.terrain_shader_version: ("terrain_shader_version", self.terrain_shader_version.currentData),
+            self.height_blend: ("height_blend_enabled", self.height_blend.isChecked),
+            self.height_blend_transition: ("height_blend_transition", self.height_blend_transition.value),
+            self.height_blend_strength: ("height_blend_strength", self.height_blend_strength.value),
+            self.parallax_mode: ("parallax_mode", self.parallax_mode.currentData),
+            self.parallax_min_steps: ("parallax_min_steps", self.parallax_min_steps.value),
+            self.parallax_max_steps: ("parallax_max_steps", self.parallax_max_steps.value),
+        }
+        name, value = controls[self.sender()]
+        setattr(self._material, name, value())
         self._emit()
 
     def _ask_name(self, title: str, current: str, taken: list[str]) -> str | None:

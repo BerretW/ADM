@@ -4,6 +4,14 @@
 
 ### Changed
 
+- World Tile's material and detailed-terrain previews render per-layer parallax and POM with the
+  VTK shader pipeline. The implementation support matrix describes texture-unit and palette limits.
+- Blender preserves optional `ADM_material_height_v1` data through import and export, warns when
+  it cannot preview the effect, and rejects it when required. Unknown optional extension data is
+  not generally preserved; Blender reports that limitation on import and export.
+- Blender generates tangents for active layered parallax without a core normal map. When tangent
+  effects use different UV sets, it warns that readers must derive additional tangent frames.
+- Blender exports core normal-map tangents using the map's selected UV set, including UV 1.
 - Upgraded `ADM_animation_timing_v1` to schema `1.1.0` with per-clip frame rates. The prior
   `1.0.0` timing payload is no longer accepted; history remains in Git and older development
   animation files are not automatically migrated.

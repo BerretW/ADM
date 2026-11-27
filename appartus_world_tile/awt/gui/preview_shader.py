@@ -182,7 +182,7 @@ _LAYER_FUNCTIONS = """
 vec2 admLayerOffset(sampler2D heightTex, vec2 uv, vec2 dx, vec2 dy,
                     vec3 view, float scale, float heightScale, float heightBias,
                     int mode, int minSteps, int maxSteps) {
-    if (!gl_FrontFacing || view.z <= 0.0 || scale <= 0.0) return vec2(0.0);
+    if (mode == 0 || !gl_FrontFacing || view.z <= 0.0 || scale <= 0.0) return vec2(0.0);
     vec2 ray = -view.xy / max(view.z, 0.1) * scale;
     float h = clamp(textureGrad(heightTex, uv, dx, dy).r * heightScale + heightBias, 0.0, 1.0);
     if (mode == 1) {
@@ -233,18 +233,27 @@ if (abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
 
 
 def install_layered_preview(actor, pv, surfaces, weights, material, *, height_blend, transition, strength,
-                            texture_units, vertex_weights=None):
+                            texture_units, vertex_weights=None, uv_scales=None, diagnostic=None,
+                            texture_cache=None, texture_budget_bytes=None):
     """Bind independent layer textures and evaluate the material at each fragment."""
-    if material.parallax_mode not in ("PARALLAX", "PARALLAX_OCCLUSION"):
+    if material.parallax_mode not in ("NONE", "PARALLAX", "PARALLAX_OCCLUSION"):
         raise ValueError(f"Unsupported layered parallax mode: {material.parallax_mode}")
     if not 1 <= material.parallax_min_steps <= material.parallax_max_steps <= 256:
         raise ValueError("POM steps must satisfy 1 <= minimum <= maximum <= 256")
-    if len(surfaces) != len(weights) or not 2 <= len(surfaces) <= 4 or sum(weights) <= 0:
-        raise ValueError("Layer preview requires two to four surfaces with positive total weight")
+    if len(surfaces) != len(weights) or not 1 <= len(surfaces) <= 4 or sum(weights) <= 0:
+        raise ValueError("Layer preview requires one to four surfaces with positive total weight")
     if not np.isfinite(weights).all() or any(weight < 0 for weight in weights):
         raise ValueError("Layer weights must be finite and non-negative")
     if not np.isfinite(transition) or transition <= 0 or not np.isfinite(strength) or not 0 <= strength <= 1:
         raise ValueError("Height transition must be positive and strength must be in 0..1")
+    if uv_scales is not None and (len(uv_scales) != len(surfaces)
+                                  or not np.isfinite(uv_scales).all()
+                                  or any(scale <= 0 for scale in uv_scales)):
+        raise ValueError("Layer UV scales must be finite and positive")
+    if diagnostic is not None:
+        kind, layer = diagnostic
+        if kind not in ("base", "final", "offset") or not 0 <= layer < len(surfaces):
+            raise ValueError("Unknown layer diagnostic")
     if vertex_weights is not None:
         if not hasattr(actor.mapper, "MapDataArrayToVertexAttribute"):
             raise ValueError("Vertex-weight preview requires a VTK polydata mapper")
@@ -271,6 +280,11 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         return text if "." in text or "e" in text else text + ".0"
 
     def bind(name, pixels, srgb=False):
+        if texture_cache is not None and texture_budget_bytes is not None:
+            used = sum(size for _, size in texture_cache.values())
+            if used + pixels.nbytes > texture_budget_bytes:
+                raise ValueError(f"Detailed material exceeds the {texture_budget_bytes // (1024 * 1024):,} MiB "
+                                 "decoded texture budget; select fewer tiles or smaller textures")
         texture = pv.Texture(pixels)
         texture.repeat = True
         texture.interpolate = True
@@ -278,6 +292,10 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         textures[name] = texture
 
     def color_map(name, path, normal=False):
+        key = ("color", path, normal)
+        if texture_cache is not None and key in texture_cache:
+            textures[name] = texture_cache[key][0]
+            return
         if normal:
             pixels = normal_preview_array(path)
         else:
@@ -285,30 +303,42 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
             with Image.open(io.BytesIO(prepared.data)) as image:
                 pixels = np.asarray(image.convert("RGBA"))
         bind(name, pixels, not normal)
+        if texture_cache is not None:
+            texture_cache[key] = (textures[name], pixels.nbytes)
 
     def scalar_map(name, slot):
-        bind(name, _height_samples(slot))
+        key = ("scalar", slot.path, slot.channel, slot.invert)
+        if texture_cache is not None and key in texture_cache:
+            textures[name] = texture_cache[key][0]
+            return
+        pixels = _height_samples(slot)
+        bind(name, pixels)
+        if texture_cache is not None:
+            texture_cache[key] = (textures[name], pixels.nbytes)
 
     total = sum(weights)
-    mode = 1 if material.parallax_mode == "PARALLAX" else 2
+    mode = {"NONE": 0, "PARALLAX": 1, "PARALLAX_OCCLUSION": 2}[material.parallax_mode]
     for i, (surface, weight) in enumerate(zip(surfaces, weights)):
         if surface.repeat_m <= 0:
             raise ValueError(f"Surface '{surface.name}' repeat must be positive")
-        repeat = number(15.0 / surface.repeat_m)
+        repeat = number(uv_scales[i] if uv_scales is not None else 15.0 / surface.repeat_m)
         weight_expr = (f"(admBaseWeightSum > 0.0 ? admWeightsVC.{'rgba'[i]} / admBaseWeightSum"
                        f" : {1 if i == 0 else 0}.0)"
                        if vertex_weights is not None else number(weight / total))
         lines += [f"vec2 admUV{i} = admBaseUv * {repeat};",
                   f"vec2 admDX{i} = admBaseDx * {repeat};",
                   f"vec2 admDY{i} = admBaseDy * {repeat};",
-                  f"float admWeight{i} = {weight_expr};"]
+                  f"float admWeight{i} = {weight_expr};",
+                  f"float admBaseWeight{i} = admWeight{i};",
+                  f"vec2 admOffset{i} = vec2(0.0);"]
         if surface.height_map.path:
             name = f"admLayerHeight{i}"
             scalar_map(name, surface.height_map)
-            lines.append(f"admUV{i} += admLayerOffset({name}, admUV{i}, admDX{i}, admDY{i}, admView, "
+            lines.append(f"admOffset{i} = admLayerOffset({name}, admUV{i}, admDX{i}, admDY{i}, admView, "
                          f"{number(surface.parallax_scale)}, {number(surface.height_scale)}, "
                          f"{number(surface.height_bias)}, {mode}, {material.parallax_min_steps}, "
                          f"{material.parallax_max_steps});")
+            lines.append(f"admUV{i} += admOffset{i};")
             lines.append(f"float admHeight{i} = clamp(textureGrad({name}, admUV{i}, admDX{i}, admDY{i}).r "
                          f"* {number(surface.height_scale)} + {number(surface.height_bias)}, 0.0, 1.0);")
         else:
@@ -391,5 +421,15 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
                    "materialTex": "vec4(admMixedOrm, 1.0)",
                    "normalTex": "vec4(admMixedNormal * 0.5 + 0.5, 1.0)",
                    "emissiveTex": "vec4(admMixedEmission, 1.0)"}
+    if diagnostic is not None:
+        kind, layer = diagnostic
+        if kind == "offset":
+            scale = number(max(float(surfaces[layer].parallax_scale), 1e-12))
+            color = f"vec3(clamp(vec2(0.5) + admOffset{layer} / (2.0 * {scale}), 0.0, 1.0), 0.5)"
+        else:
+            weight = f"admBaseWeight{layer}" if kind == "base" else f"admWeight{layer}"
+            color = f"vec3({weight})"
+        expressions["albedoTex"] = "vec4(0.0, 0.0, 0.0, 1.0)"
+        expressions["emissiveTex"] = f"vec4({color}, 1.0)"
     for name, expr in expressions.items():
         shader.AddFragmentShaderReplacement(f"texture({name}, tcoordVCVSOutput)", False, expr, True)

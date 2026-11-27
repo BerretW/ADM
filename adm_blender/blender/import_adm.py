@@ -22,8 +22,9 @@ from ..core.qa_metrics import record_success
 from ..core.validate import validate_adm
 from . import convert as cv
 from .colliders import new_collider_object
-from .export_adm import rest_fingerprint
-from .materials import (UV_NAMES, apply_shader, build_material, has_profile_preview,
+from .export_adm import UNSUPPORTED_EXTENSIONS_PROPERTY, rest_fingerprint
+from .materials import (MATERIAL_HEIGHT_DATA, MATERIAL_HEIGHT_IMAGE, MATERIAL_HEIGHT_SAMPLER,
+                        UV_NAMES, apply_shader, build_material, has_profile_preview,
                         import_shader_definitions, mark_gpu_source_clean, preserve_gpu_source)
 from .props import SKELETON_PROFILES
 
@@ -155,10 +156,19 @@ class ModelImporter:
         if not report.ok:
             raise ImportError_("file is not a valid ADM 1.0 model", report)
         self.doc, self.bin = report.doc, report.bin
+        if K.MATERIAL_HEIGHT_EXT in self.doc.get("extensionsRequired", []):
+            raise ImportError_(f"{K.MATERIAL_HEIGHT_EXT} is required but its effect is not supported by Blender",
+                               report)
+        unknown = sorted(set(self.doc.get("extensionsUsed", [])) - set(K.SUPPORTED_EXTENSIONS))
+        if unknown:
+            self.warn("OPTIONAL_EXTENSIONS_UNSUPPORTED: " + ", ".join(unknown) +
+                      " are not understood; their data may not survive export or have references remapped")
         transaction = _ImportTransaction(self.context)
         try:
             transaction.prepare()
             root = self._run_validated()
+            if unknown:
+                root[UNSUPPORTED_EXTENSIONS_PROPERTY] = ", ".join(unknown)
             transaction.restore_context()
         except BaseException as exc:
             errors = transaction.rollback()
@@ -245,6 +255,23 @@ class ModelImporter:
                         index = vertex_controls["tintPalette"]["index"]
                         uri = d["images"][d["textures"][index]["source"]].get("uri", f"image:{index}")
                         missing_image_uris.append(uri)
+            height = (m.get("extensions") or {}).get(K.MATERIAL_HEIGHT_EXT)
+            if height is not None:
+                image, sampler = self.resolve_texture(height["heightTexture"])
+                mat[MATERIAL_HEIGHT_DATA] = json.dumps(height, ensure_ascii=False, allow_nan=False)
+                mat[MATERIAL_HEIGHT_SAMPLER] = json.dumps(sampler, ensure_ascii=False, allow_nan=False)
+                if image is not None:
+                    mat[MATERIAL_HEIGHT_IMAGE] = image
+                else:
+                    index = height["heightTexture"]["index"]
+                    source = d["textures"][index]["source"]
+                    missing_image_uris.append(d["images"][source].get("uri", f"image:{source}"))
+                self.warn(f"MATERIAL_HEIGHT_FALLBACK: material '{mat.name}' retains {K.MATERIAL_HEIGHT_EXT}, "
+                          "but Blender does not preview its height or parallax effect")
+                unknown = sorted(set(height) - K.MATERIAL_HEIGHT_FIELDS)
+                if unknown:
+                    self.warn(f"MATERIAL_HEIGHT_UNKNOWN: material '{mat.name}' retains unsupported fields "
+                              f"{', '.join(unknown)} without interpreting them")
             if missing_image_uris:
                 mat["adm_incomplete_textures"] = sorted(set(missing_image_uris))
             apply_shader(mat, m, self.context.scene, resolve_image, resolve_normal_image)

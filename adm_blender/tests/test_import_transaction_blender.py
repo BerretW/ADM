@@ -100,7 +100,7 @@ def main(directory):
     doc["textures"] = [{"source": 0}]
     doc["shaderDefinitions"] = [
         {"id": "org.example.existing", "version": "1.0.0",
-         "description": "Must not replace existing", "parameters": []},
+         "description": "Keep this definition", "parameters": []},
         {"id": "org.example.imported", "version": "1.0.0",
          "description": "New definition", "parameters": []},
     ]

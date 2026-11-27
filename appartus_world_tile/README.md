@@ -34,22 +34,43 @@ inside the ADM checkout.
 The standalone World Tile ZIP includes the required ADM core but not the example heightmaps
 under `source`; use your own heightmap with the command-line examples.
 
+To build a standalone ZIP from a repository checkout, run this command from the
+repository root:
+
+```bat
+python tools\build_world_tile.py dist\appartus-world-tile-VERSION.zip
+```
+
+Replace `VERSION` with the World Tile version. The destination must not already
+exist. The script packages tracked runtime and reference files and the generated
+`advanced_material_reference.adm`; add other required files to Git before
+building. It does not run tests or change versions.
+
 The repository includes `reference_project/advanced_reference.awtp`, a four-tile project with
 three LODs, five surfaces, biome noise, and a road. Its textures are in
 `reference_project/textures`; copy the `reference_project` folder to move the project.
-The project includes R8, R16, BC4,
-BC5, and BC7 GPU texture sources. Open the project and build its tiles before exporting them.
+The project includes R8, R16, BC4, BC5, and BC7 GPU texture sources and prebuilt tiles.
+Open the project to inspect or export those tiles without rebuilding. Rebuild them after
+changing the heightmap, biome rules, or paint.
+
+For a BC5 normal, World Tile retains the GPU source and its two-channel fallback
+for the terrain shader. It exports a separate reconstructed RGB PNG for the
+core PBR normal fallback.
 
 ### Render the advanced ADM reference
 
-In an ADM repository checkout, with Blender on your PATH and the GUI dependencies
-installed, run these commands from `appartus_world_tile` to generate the reference
-and render both POM and comparison images:
+With the GUI dependencies installed, run these commands from `appartus_world_tile`
+to render the bundled ADM scene with and without POM:
+
+```bat
+.venv\Scripts\python tools\render_advanced_reference.py reference_project\advanced_material_reference.adm pom.png
+.venv\Scripts\python tools\render_advanced_reference.py reference_project\advanced_material_reference.adm no-pom.png --disable-pom
+```
+
+To regenerate the scene in an ADM repository checkout, run:
 
 ```bat
 blender -b --factory-startup --python ..\adm_blender\tests\build_advanced_material_test_scene.py -- reference.blend
-.venv\Scripts\python tools\render_advanced_reference.py reference.adm pom.png
-.venv\Scripts\python tools\render_advanced_reference.py reference.adm no-pom.png --disable-pom
 ```
 
 Compare `pom.png` and `no-pom.png` to see the POM UV offsets. This VTK
@@ -94,7 +115,11 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   roughness, AO and height maps with channel and invert, plus normal and emission maps) and
   optional height-blend/parallax settings, plus biomes that select and blend those surfaces.
   Choose the terrain shader profile explicitly: profile 2.1.0 is required to export AO, height,
-  emission, height blending, or parallax. The six starter biomes are lowland, forest, shore,
+  emission, height blending, or parallax. Unrecognized terrain shader settings are retained
+  in the project but cannot be used for validation, build, or ADM export. Their values are
+  opaque, so any references inside them aren't collected or remapped. Unsupported profile
+  versions and parallax modes remain visible until you explicitly select a supported value.
+  The six starter biomes are lowland, forest, shore,
   water, mountains and rocky terrain. Each biome can be placed automatically by height/slope
   bands or painted manually; its surface list can also limit individual surfaces by height and
   slope. Use **Surface noise** on each biome to vary its surfaces spatially.
@@ -104,6 +129,9 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   arid profile, then lets you edit each biome's height/slope limits and choose albedo images
   for its shared surfaces. **Save preset** copies the material setup and its textures into the
   AWT user-data folder; **Load preset** restores it. Presets do not include map-specific paint.
+  Texture pickers show source dimensions, format, bit depth, color-space metadata, mip count,
+  and whether the file is external. GPU sources show the mip payload size; authoring images
+  show an uncompressed RGBA base-level estimate rather than a promised export allocation.
   Presets with surface noise use version 2; presets with advanced shader settings use version 3.
   Neighbouring biomes should share at least one surface so the transition uses a common
   texture rather than changing abruptly. Texture repeat is rounded to a whole number per tile,
@@ -118,13 +146,16 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   preview texture scale in metres. The spherical mapping uses the equator and a pole-to-pole
   arc for horizontal and vertical scale, so its texture is distorted near the poles. The
   preview uses the exact repeat; built tiles round repeats to align their boundaries.
-  **Show blended terrain** opens the 3D terrain with all current biome rules applied.
+  **Show blended terrain** opens the detailed 3D material view using built biome weights.
+  Rebuild the tiles after changing biome rules or paint.
   **Compare surface blending** opens a separate two-to-four-layer preview. Set base weights,
   toggle height blending, adjust transition and strength, and select a layer to inspect its
-  final weight. Drag to rotate, pan, or zoom; choose a studio, grazing, or soft light. This
+  final weight. Drag to rotate, pan, or zoom; choose a studio, grazing, or soft light.
   When parallax is enabled, the final-material view samples each layer's maps independently
-  using its own offset, then applies height blending. The weight views and displayed mean
-  weights use unshifted coordinates. When parallax is disabled, the CPU-composited preview
+  using its own offset, then applies height blending. Shader diagnostic views show base or
+  final per-fragment weight, or encode signed U/V parallax offsets in red and green relative
+  to the layer's parallax scale. Neutral offset is 0.5 in linear color. CPU weight views and
+  displayed mean weights use unshifted coordinates. When parallax is disabled, the CPU-composited preview
   approximates AO by darkening the final color. The renderer reports when the available
   texture units cannot accommodate the selected maps.
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
@@ -135,10 +166,17 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   pan with the middle mouse button. Choose **Biome** or
   **Surface**, enable **Paint**, and drag to paint; right-drag removes that type of paint.
   **Paint softness** sets how far painted borders fade.
-* **3D tab:** the built tiles, coloured by height, by biome or surface weights, by tile, or by
-  **Material** (surface albedos × tint blended by vertex weights,
-  without normal maps). LOD switch, vertical exaggeration, wireframe. The preview keeps
-  under 8 M triangles and automatically picks the finest LOD that fits.
+* **3D tab:** the built tiles, coloured by height, surface weights, tile, or **Material**
+  (a fast albedo bake without normal maps). Select **Detailed material** to sample layer
+  maps, height blending, parallax, and POM in the VTK shader. It uses the same four-layer
+  selection as ADM export and warns when dropped surfaces can cause seams. It requires a
+  compatible VTK shader pipeline and enough texture units. Select fewer tiles or a coarser
+  LOD if it exceeds the detailed-preview budget of 250,000 triangles or 128 material palettes.
+  The detailed view also limits unique decoded texture base levels to 512 MiB per redraw;
+  select fewer tiles or smaller textures if it exceeds that limit. This estimate excludes
+  GPU mipmaps, renderer overhead, and temporary decoding allocations.
+  The other modes retain the 8 M triangle budget. LOD, vertical exaggeration, and wireframe
+  remain available.
 
 ## Import material sets
 
@@ -243,7 +281,9 @@ adm/
   file name and in the tile, checked on import). Each texture has a DDS or KTX2 primary image and
   same-size PNG fallback. **Embed** puts both images into every tile, instead, repeating the
   data per tile. ADM-compatible DDS and KTX2 files are preserved byte-for-byte when their color
-  space matches the texture role. Other inputs are converted to DDS: albedo uses automatic BC1/BC3
+  space matches the texture role. If an ADM-compatible GPU source has a mismatched color space,
+  export stops; convert the source explicitly or choose a compatible map. Other inputs are
+  converted to DDS: albedo uses automatic BC1/BC3
   selection, normal maps use uncompressed RGBA8, and data maps use BC3 or keep a compatible
   scalar format. Albedo and emission use sRGB; normal, AO, height, metallic, and roughness maps
   use linear UNORM. PNG is used as the importer-friendly fallback. DDS textures using BC1, BC3,
@@ -251,7 +291,8 @@ adm/
   BC2/DXT3 files are read through Pillow.
   BC5 normal maps reconstruct their Z component in the surface and blend previews.
   Scalar GPU fallbacks retain red values and use zero for green and blue.
-  When a 16-bit grayscale PNG uses a green or blue map channel, export remaps
+  16-bit grayscale TIFF inputs retain their samples in the R16 primary and PNG
+  fallback. When a 16-bit grayscale PNG or TIFF uses a green or blue map channel, export remaps
   that selection to red in ADM and reports the change. The project keeps the
   original selection. Scalar GPU input channels are not remapped.
   Single 2D textures are supported (not texture arrays, cubemaps or volumes).

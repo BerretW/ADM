@@ -29,7 +29,7 @@ from .map_view import MapView
 from .material_panel import MaterialPanel, MaterialPreview, swatch
 from .height_blend_preview import HeightBlendPreview
 from .terrain_wizard import TerrainSetupWizard
-from .viewer3d import MATERIAL_MODE, TRIANGLE_BUDGET, Viewer3D, triangle_count
+from .viewer3d import DETAILED_MATERIAL_MODE, TRIANGLE_BUDGET, Viewer3D, triangle_count
 
 HEIGHTMAP_FILTER = "Heightmaps (*.png *.tif *.tiff *.r16 *.raw *.npy *.pgm);;All files (*)"
 MAP_MODES = ("Relief", "Biomes", "Surfaces", "Mesh density")
@@ -329,6 +329,7 @@ class MainWindow(QMainWindow):
         self.project_path = ""
         self._dirty = False
         self._loading = False
+        self._closing = False
         self._after_source = None  # callback once a heightmap has loaded
         self._check_generation = 0
         self._checker: _ChangeCheck | None = None
@@ -1253,7 +1254,7 @@ class MainWindow(QMainWindow):
         self.material_panel.changed.emit()
 
     def _show_material_on_terrain(self) -> None:
-        self.viewer.color.setCurrentIndex(MATERIAL_MODE)
+        self.viewer.color.setCurrentIndex(DETAILED_MATERIAL_MODE)
         self.tabs.setCurrentWidget(self.viewer)
 
     def _side_tab_changed(self, index: int) -> None:
@@ -1586,14 +1587,22 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentWidget(self.viewer)
 
     def closeEvent(self, event):  # noqa: N802
-        if not self._confirm_discard():
+        if not self._closing:
+            if not self._confirm_discard():
+                event.ignore()
+                return
+            self._closing = True
+            self._field_timer.stop()
+            self._check_timer.stop()
+            self._material_timer.stop()
+            self._check_pending = False
+            self._check_generation += 1
+        if self._checker is not None:
             event.ignore()
             return
         if self._worker is not None and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait()
-        if self._checker is not None:
-            self._checker.wait()
         self.surface_preview.shutdown()
         if self._height_blend_preview is not None:
             self._height_blend_preview.close()
@@ -1605,6 +1614,8 @@ class MainWindow(QMainWindow):
         self._check_timer.start()
 
     def _check_changes(self) -> None:
+        if self._closing:
+            return
         settings = self._export_settings()
         if self.manifest is None or not settings.out_dir:
             self._check_generation += 1
@@ -1614,7 +1625,7 @@ class MainWindow(QMainWindow):
                                       else "Choose a folder for the ADM tiles")
             self._update_export_buttons()
             return
-        if self._checker is not None and self._checker.isRunning():
+        if self._checker is not None:
             self._check_pending = True
             return
         self._check_generation += 1
@@ -1626,7 +1637,10 @@ class MainWindow(QMainWindow):
         self._checker.start()
 
     def _checker_finished(self) -> None:
-        if self._check_pending:
+        self._checker = None
+        if self._closing:
+            self.close()
+        elif self._check_pending:
             self._check_pending = False
             self._check_changes()
 

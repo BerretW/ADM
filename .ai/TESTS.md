@@ -1,6 +1,236 @@
 # Mission verification record
 
 ## Completed so far
+- The World Tile suite passed 114 tests with five PyVista future warnings
+  after adding opaque terrain-shader setting preservation and independent
+  global and surface control updates. Regressions save and reopen the project, verify that
+  unknown settings affect material fingerprints but not geometry rules, check
+  that export fails before creating output, and verify unsupported selections
+  and precise or out-of-range values survive unrelated GUI edits.
+- World Tile candidate 9 passed ZIP integrity and byte comparisons for the
+  changed material model, panel, and README. Its relocated project exported
+  four tiles, and its extracted GUI preserved and rejected opaque settings.
+  An initial GUI check failed because the test omitted the project base path
+  while reconstructing relative texture paths; the corrected check passed.
+  This candidate predates the granular surface-edit fix and is not a release.
+- World Tile candidate 10 includes the granular surface-edit fix. ZIP
+  integrity and byte comparisons passed; from an unrelated extracted folder,
+  it exported four reference tiles and its GUI preserved precise surface and
+  opaque shader values. It rejected validation of the opaque setting.
+  This is not a release.
+- A bounded Blender 5.2.3 regression passed for optional material-height
+  import, GPU source bytes, sampler and unknown extension fields, height UV 1
+  tangent direction, ADM export, project save/reload, mixed normal and height
+  UV warnings, and side-effect-free rejection of the required extension.
+  The interactive-material and BC5 bounded regressions also passed after the
+  tangent change, with existing Blender dependency-cycle warnings.
+- The same regression reproduced and then verified the fix for missing layered
+  parallax tangents without a core normal map. It checks mirrored UV 1, a
+  conflicting second height UV, and disabled parallax.
+- The same mirrored-UV test reproduced and verified a core normal-map tangent
+  fix: a non-interactive material using UV 1 now exports tangents for UV 1.
+  The interactive-material regression also passed after this change.
+- After the tangent fix, `build.bat -CheckOnly` passed all 34 steps: 2,145
+  reported cases passed and 10 external-asset cases were skipped. This predates
+  the later change allowing unknown optional height fields. It did not package
+  or bump a version and does not verify a final distribution.
+- After the unknown-field change, the height Blender regression and five
+  GPU/material-height validator tests passed. A fresh check-only build passed
+  34 steps, with 2,145 reported passing cases and 10 external-asset skips.
+  The World Tile suite also passed 111 tests with five PyVista future warnings.
+  The shader ENUM and profile logs contained no enum mismatch or recursion
+  errors. Blender dependency-cycle warnings remain.
+- The height regression confirms the unknown-extension warning and documents
+  that an arbitrary unknown material extension is not preserved on export.
+  The warning persists through project reload and selected-object export.
+  Import-transaction and interactive-material Blender regressions also passed.
+- After the persistent-warning changes, a fresh check-only build passed 34
+  steps, with 2,145 reported passing cases and 10 external-asset skips.
+- After the core-normal UV 1 tangent fix, another `build.bat -CheckOnly`
+  passed 34 steps, with 2,145 reported passing cases and 10 external-asset
+  skips. The report is `dist/qa-report-1.24.33.json`; this was not a release
+  build.
+- World Tile candidate 8 passed ZIP integrity, includes the updated shared
+  validator and constants byte-for-byte, and exported all four prebuilt tiles
+  from an unrelated extracted directory. Its POM on/off renders differ in
+  82,594 color-channel samples by more than 5/255. Its offscreen GUI loaded
+  four tiles and closed cleanly with an active change checker. It is not a
+  release package.
+- A Blender 1.24.33 candidate ZIP built from the current source passed integrity
+  and byte comparisons for the modified implementation files. Bounded Blender
+  5.2.3 tests loaded the extracted candidate and passed material-height,
+  BC5, and texture-format regressions, including BC7 independent vectors and
+  R16/GPU source-byte round trips. Test-only helpers were loaded from the
+  checkout because the extension ZIP excludes tests. A subsequent candidate
+  including the core normal UV 1 tangent fix passed the same packaged tests
+  and byte comparisons. Neither candidate is a release.
+- A `pip-audit` check of the installed World Tile GUI runtime dependency graph
+  found advisories in `certifi` 2026.7.22 and `urllib3` 2.7.0. No direct
+  World Tile HTTP use was found. The GUI dependency constraints now require
+  `certifi` 2026.10.19 or later and `urllib3` 2.8.0 or later. An isolated
+  overlay with 2026.11.20 and 2.8.0 passed the same audit. This checks one
+  installed graph, not every allowed version: there is no committed Python
+  dependency lockfile.
+- On the extracted candidate, an offscreen Qt single-surface preview of the
+  reference Rock surface took 871.9 ms for the first `set_surface` and event
+  processing, then a median 110.2 ms and maximum 128.7 ms over five redraws.
+  These are one Windows run with warm repeated inputs, not GPU timings or
+  comparisons across workloads.
+- Instrumenting that Rock preview counted 983,040 bytes in four NumPy texture
+  base levels submitted to VTK, including its parallax height. This is a
+  base-level footprint estimate, not a GPU allocation measurement; driver
+  format expansion, mipmaps, intermediate copies, and renderer overhead are
+  excluded.
+- On the extracted World Tile candidate, a single Windows Python process
+  measured the portable four-tile reference with one export thread. The three
+  LODs contain 5,171, 4,547, and 3,091 triangles across all tiles. Five
+  preparations of the 256x256, nine-mip Rock R16 DDS took 80.32, 66.33,
+  66.57, 72.40, and 66.81 ms (median 66.81 ms). The first all-tile export
+  took 2,216.81 ms; this includes first-use initialization and followed the
+  texture preparation. Five unchanged checks took 14.02, 7.50, 7.53, 7.43,
+  and 7.31 ms (median 7.50 ms) and found no changes. Three repeated
+  selected-one-tile exports took 810.84, 748.98, and 748.15 ms (median
+  748.98 ms); three repeated all-four-tile exports took 798.33, 790.70, and
+  788.01 ms (median 790.70 ms). Each export prepares the material textures;
+  timings use warm filesystem inputs and do not compare different scenes.
+  Windows `GetProcessMemoryInfo` reported a 44,138,496-byte final working set
+  and a 586,678,272-byte peak working set for the entire process, not per
+  operation or GPU memory. Results are one machine and are not performance
+  guarantees.
+- The complete World Tile suite passed 111 tests with five PyVista future
+  warnings using the isolated patched GUI dependencies. This includes the GUI
+  shutdown, packaging, and bounded reference-normal decoding regressions.
+- Blender 5.2.3 passed a bounded BC5 regression for direct DDS/KTX2 opening,
+  source-byte preservation, raw fallback channels, explicit BC4/BC5 conversions,
+  core-PBR compatibility warnings, Cycles bake, and ADM and Blender-project
+  round trips. Existing dependency-cycle warnings remain.
+- The regenerated reference ADM passed a fallback-channel check and a POM
+  on/off render comparison. Before regeneration, the same channel check failed
+  because the previous fallback stored reconstructed blue values.
+- A complete World Tile run passed 108 tests with five PyVista future warnings
+  after the reference correction. A subsequent standalone-package regression
+  passed: two archives are byte-identical, required runtime and reference files
+  match the checkout, and an existing destination is not overwritten.
+- A ZIP made with the new packaging script passed integrity checks. From an
+  unrelated extracted directory, the CLI exported four prebuilt tiles and the
+  POM/no-POM renders differed in 82,594 color-channel samples by more than five
+  8-bit levels. This is a candidate, not a release.
+- The refreshed candidate with corrected GUI shutdown and dependency constraints
+  passed ZIP integrity, exported four tiles from an unrelated extracted folder,
+  rendered a POM comparison with 82,594 channel differences above 5/255, and
+  exited cleanly after immediate GUI close with an active change checker.
+  The candidate was rebuilt after adding the reference-normal decode limit and
+  passed those same extracted CLI, rendering, and GUI checks.
+- In an offscreen Windows GUI subprocess, the extracted candidate loaded the
+  reference heightmap and four tiles with three LODs. Closing immediately
+  afterward returned Windows status `0xC0000409` even though the recorded main
+  worker, change checker, viewer loader, and viewer baker were not running.
+  Waiting one second while processing Qt events before closing returned exit 0.
+  At immediate close the material update timer was active; stopping all three
+  main-window timers before closing did not prevent the native failure.
+  The failure also occurred when the window was shown and closed through the
+  Qt event loop. An empty window without the project exited normally.
+  Diagnostic subprocesses that separately omitted the viewer shutdown, the
+  surface-preview shutdown, or both still failed; this does not establish
+  which component owns the native failure.
+  Disabling the asynchronous export change check avoided the failure, whereas
+  running the same calculation synchronously did not reproduce it. The window
+  now defers closure until the checker's Qt `finished` signal is processed.
+  A regression holds that checker open and confirms the event loop remains
+  responsive until it finishes. An extracted corrected candidate loaded the
+  four-tile project and closed immediately with the checker pending; exit 0.
+- A later `build.bat -CheckOnly` returned exit 0: 33 test steps passed, with
+  2,145 reported passing cases and 10 external-asset skips. It did not create
+  release packages. The build ran while World Tile packaging and documentation
+  were being edited, so it is not a frozen-worktree final release verification.
+- Generated the bundled advanced ADM scene in a bounded Blender 5.2.3 process
+  (exit 0, 34.5 s). A separate regression rendered the bundled file with POM on
+  and off without Blender and verified a visible pixel difference.
+- A refreshed 102-file candidate ZIP includes that ADM scene. From its
+  extracted folder, the fixture renderer produced both comparison images;
+  82,596 color-channel samples differed by more than five 8-bit levels.
+  The reference catalog check passed. The archive is not a final release.
+- World Tile BC5 normal regression: both embedded and external exports retain
+  exact primary bytes and the specified two-channel PNG, while core PBR points
+  to a separate reconstructed RGB PNG. The export and pipeline suites passed
+  46 tests after this change.
+- A bounded Blender 5.2.3 process imported and re-exported a World Tile ADM
+  with BC5 in each layer. It retained the BC5 primary bytes and separate core
+  RGB PNG bytes; exit 0 in 2.8 s. Blender reported 14 dependency cycles.
+- A gated GUI regression changes the selected tiles, LOD, and preview mode
+  while the initial load is in flight. The detailed view discards the stale
+  result and loads the two requested tiles at LOD 2. In the headless Qt test
+  context VTK reports zero texture units, so the preview uses its conservative
+  16-unit limit; the test removes three map types to fit within that limit.
+  The full reference material needs 24 units for one observed palette and
+  reports a configuration error under the conservative limit.
+- Four detailed-terrain and layered POM tests passed after texture sharing was added. The
+  multi-tile test confirms repeated height maps are decoded once per redraw and
+  the same VTK texture is bound to multiple palette actors. A lowered test
+  budget produces an explicit error and removes partial actors. Python emitted
+  PyVista object-finalization errors during interpreter shutdown after the run;
+  the test process exited successfully.
+- A non-release World Tile candidate ZIP contained 101 files including the
+  shared ADM core, renderer and complete reference project. Its ZIP integrity
+  check passed; the extracted CLI exported four prebuilt tiles from an unrelated
+  directory without rebuilding. After BC5 and preview changes, a refreshed
+  candidate also exported four tiles, and its GUI loaded the heightmap, four
+  tiles and three LODs in an isolated offscreen process. This does not verify
+  the final packages.
+- On the relocated reference project, separate candidate CLI processes took
+  2.473 s for one selected tile and 2.471 s for four tiles, including process
+  startup and texture preparation. Their sampled Windows peak working sets were
+  555.9 MiB and 556.0 MiB respectively. These are single runs with warm file and
+  compilation caches, not a scalability comparison or GPU-memory measurement.
+- Preparing the reference project's five GPU sources in a separate candidate
+  process took 0.424 s. Their combined encoded mip payload was 480,663 bytes;
+  that number excludes decoded copies, GPU allocation overhead, and textures
+  outside those five sources.
+- A focused cache regression verifies that the same file with different
+  selected channels or inversion creates distinct textures, while identical
+  sampling settings share one texture.
+- Full World Tile suite: 107 passed, five PyVista future warnings, 76.36 s
+  (Python 3.14.7, isolated Pillow 13, VTK 9.7.2). A subsequent independent
+  BC5 reconstruction-formula assertion passed in a focused run.
+- Relocated AWTP regression: copied the entire reference project to an unrelated
+  directory, confirmed both manifest heightmap paths resolve to the copied file,
+  exported four prebuilt tiles without rebuilding, then rebuilt and exported
+  four tiles. `test_pipeline.py -k advanced_reference_project`: passed.
+- Focused GUI tests use built terrain tiles to render a one-layer POM change
+  and a two-layer height-blend change. They exercise asynchronous detailed-mode
+  loading, fast-mode switching, and a missing-surface error. Seven related
+  terrain, POM, and layered-render regressions passed with VTK 9.7.2.
+- The complete World Tile suite passed 99 tests after terrain preview
+  integration. A separate texture-picker test verifies R16 DDS dimensions,
+  format, mip count and byte estimate, 16-bit TIFF metadata, and malformed
+  file reporting.
+- A rendered shader diagnostic test checks base and height-adjusted weights,
+  confirms that POM changes the displayed final weight and offset, and checks
+  that a configuration failure hides the diagnostic and reports the error.
+- A GPU color-space regression verifies that ADM-compatible DDS and KTX2
+  inputs with incompatible albedo, normal or data roles fail explicitly rather
+  than being silently re-encoded. The full suite exposed an old test expecting
+  silent BC7 UNORM-to-sRGB transcoding; it now verifies byte-preserving BC7
+  sRGB export and the separate mismatch test checks rejection. Eight related GPU
+  and R16 tests passed.
+- The full World Tile suite passed 97 tests with isolated Pillow 13 and VTK
+  9.7.2; five PyVista future warnings
+  remain. Rendered tests passed for planar and curved terrain and for a curved
+  transition between disjoint biomes. The
+  latter confirms four nonzero surface weights at a shared edge, mixed LODs,
+  measurable POM, pixel continuity and invariance under reversed layer slots.
+- A bounded Blender ENUM regression verifies explicit null texture overrides
+  against a non-null custom default across import, project reload and export.
+  It also checks whitespace-preserving shader metadata and rejection of
+  conflicting descriptions and authors. Before the fix, the metadata
+  whitespace assertion failed; the updated regression passes.
+- A 16-bit grayscale TIFF previously became an 8-bit BC3 primary. A focused
+  regression now verifies its exact R16 DDS samples and 16-bit PNG fallback;
+  another verifies the preview's normalized samples.
+- A check-only build failed because an existing import-transaction fixture used
+  conflicting shader metadata. Its fixture now matches the retained definition,
+  and the bounded transaction test passes, including injected rollback failures.
+  The subsequent complete check-only matrix also passed. It did not build a ZIP.
 - The latest complete World Tile run with isolated Pillow 13 passed 89 tests,
   including the rendered planar POM seam regression.
 - A limited `pip-audit` of the installed World Tile dependency versions found
@@ -67,8 +297,8 @@
   and PNG fallbacks. Along the visible edge it checks varying biome-noise
   weights and a shared-surface biome transition, absence of black gaps, a
   maximum adjacent-channel difference of 18/255, measurable POM changes, and
-  slot-permutation invariance. It passed with VTK 9.7.2. Curved tiles and
-  disjoint-surface biome transitions are not covered by this test.
+  slot-permutation invariance. It passed with VTK 9.7.2. The later curved and
+  disjoint-biome variants use the same test and empirical threshold.
 - A separate synthetic two-triangle test uses the exporter's actual
   `triangle_masks` and `color1` packing on five equal edge weights. The POM
   shader renders a visible discontinuity when each triangle drops a different

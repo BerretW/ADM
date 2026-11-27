@@ -1,15 +1,90 @@
 # Mission state
 
+- World Tile now retains unrecognized `terrain_shader` settings as opaque
+  project data, includes them in the material fingerprint, and rejects
+  validation, build, and export rather than silently dropping them. Opaque
+  internal references are not interpreted or remapped. Unsupported profile
+  and parallax values stay visible in the editor; changing an unrelated
+  global or surface control no longer rounds or clamps other shader values.
+- Blender preserves optional `ADM_material_height_v1` material data and its
+  texture and sampler across ADM export and Blender project reload. It warns
+  that its preview does not apply the effect and rejects the required extension.
+  Height-only parallax exports tangents for the height UV set; conflicting
+  normal and height UV sets require a separate reader-derived height frame.
+  Unknown optional fields and nested extension data are retained without
+  remapping their internal references, with an export warning. The bounded
+  regression passed on Blender 5.2.3.
+- Blender also exports tangents for active layered-shader parallax without a
+  core normal map, using the height layer's UV set. Different active tangent
+  UV sets produce a warning because one exported tangent frame cannot represent
+  them all. A mirrored-UV regression verifies the tangent direction.
+- A core normal map using UV 1 now also exports tangents from that UV set;
+  the mirrored-UV regression reproduced the prior mismatch and passed after
+  the fix.
+- The post-fix check-only build passed all 34 steps, with 2,145 reported
+  passing cases and 10 external-asset skips. The corrected Blender candidate
+  passed packaged height, BC5, and texture-format regressions.
+- The relocated four-tile World Tile candidate has measured texture
+  preparation, unchanged detection, selected and all-tile exports, process
+  working set, preview time, and an explicitly limited GPU base-level
+  estimate. Workloads and results are recorded in `TESTS.md`.
+- A subsequent check-only build passed all 34 steps, with 2,145 reported
+  passing cases and 10 external-asset skips after the unknown-height-field
+  change. The World Tile suite passed 111 tests. The build did not produce a
+  release ZIP.
+- Blender warns on import and export when a model declares unrecognized
+  optional extensions. The warning survives project reload and selected-object
+  export. Arbitrary unknown extensions outside the preserved material-height
+  object can still be lost; the warning does not claim general round-trip
+  support.
+- The check-only build also passed after the persistent-warning change:
+  34 steps, 2,145 reported passing cases, and 10 external-asset skips.
+- A non-release World Tile candidate rebuilt after the validator change passed
+  ZIP integrity, exported all four relocated reference tiles, rendered the POM
+  comparison, and loaded and closed the offscreen GUI with a checker active.
+  Candidate 10 includes the opaque-settings and granular surface-edit fixes.
+  Its relocated project exported four tiles and its GUI preserved precise
+  values and opaque settings. The candidates are not releases.
+- A non-release Blender 1.24.33 candidate including the core-normal tangent
+  fix passed ZIP integrity and packaged material-height, BC5, and texture-format
+  regressions on Windows. The final version bump, release ZIP, and
+  other-platform verification remain open.
+- Blender now retains a raw `(R,G,0,1)` fallback when directly opening a BC5
+  normal, while its editable preview reconstructs Z. Explicit BC4/BC5 conversion
+  also clears missing fallback channels. Core-PBR BC5 export warns that portable
+  readers might display the two-channel fallback incorrectly; this warning does
+  not resolve the single-texture fallback conflict described below.
+- The standalone ADM reference was regenerated with the corrected fallback.
+  Its fixture-specific VTK renderer reconstructs BC5 normals from that fallback
+  for visualization. Regression checks inspect the fallback channels and render
+  POM on and off.
+- `tools/build_world_tile.py` builds a reproducible standalone ZIP from tracked
+  runtime files and the generated reference ADM without overwriting an existing
+  archive. It does not test or bump versions. An extracted non-release candidate
+  exports all four prebuilt tiles and renders the corrected reference scene.
+- An offscreen Windows GUI process failed during immediate close while an export
+  change-check thread was active. Closing now defers until its Qt `finished`
+  signal is processed, cancels pending checks, and stops window timers. A gated
+  worker regression and immediate-close test of an extracted candidate both
+  returned exit 0; the latter loaded four tiles with three LODs.
+- The World Tile GUI dependency constraints exclude the audited vulnerable
+  `certifi` and `urllib3` versions. A patched isolated runtime graph passed
+  `pip-audit`; dependencies are not locked, so other resolutions remain
+  unverified. The shared Python environment was not modified.
 - Custom shader ENUM definitions and values now survive ADM import/export and
   Blender save/reload, including Unicode and reordering. Imports reject an
   existing conflicting parameter names, types, ENUM values, numeric or boolean
-  defaults, and texture defaults instead of silently reinterpreting or
-  discarding values.
+  defaults, texture defaults, and shader or parameter descriptions and author
+  metadata instead of silently reinterpreting or discarding values. The
+  exporter preserves whitespace in nonempty descriptions and author strings.
   Their editor accepts explicit string values and reports values outside the
   definition. An isolated Blender regression passed on Blender 5.2.3.
 - Multi-surface CPU height blending and AO sampling now use the same
   precision-preserving scalar decoder as the VTK shader path. A focused R16
   test distinguishes adjacent 16-bit values in height-derived weights.
+- World Tile converts 16-bit grayscale TIFF material maps to 16-bit PNG rather
+  than truncating them to 8 bits. The preview and R16 DDS export retain their
+  sample values; this fixes an authoring path distinct from R16 GPU passthrough.
 - The generated ADM reference now embeds original procedural R8, R16, BC4,
   BC5 and BC7 textures; its Blender import/export regression compares their
   complete source bytes. A fixture-specific VTK visualization reads the ADM and
@@ -22,8 +97,9 @@
   and texture fallbacks. At the sampled edge it detects POM offsets, checks
   pixel continuity and verifies invariance under a swapped layer palette.
   Weights vary along the edge due to biome noise and a shared-surface biome
-  transition. Curved terrain and disjoint-surface biome transitions are not yet
-  covered. A separate five-surface synthetic case demonstrates a visible seam.
+  transition. Additional cases use curved terrain and a disjoint four-surface
+  biome transition with nonzero weights for all four surfaces on the edge.
+  A separate five-surface synthetic case demonstrates a visible seam.
 - An exploratory VTK script loaded the generated ADM scene's geometry and
   texture fallbacks, then rendered its layers with the preview shader. Toggling
   parallax scales changed 48,493 color-channel samples by more than five
@@ -55,11 +131,51 @@
 
 ## Current milestone
 The mission remains incomplete. Blender shader ENUM recursion is fixed and its
-focused tests pass. World Tile material/POM previews, advanced reference assets,
-seam shader evaluation, distributed codec verification, and the final full build
-remain open. A check-only build passed with documented external-asset skips;
+focused tests pass. World Tile's material previews, opt-in detailed terrain
+view, and fixture-specific ADM visualization render POM. The fast terrain
+material mode remains a CPU bake. Open work includes the standalone BC5
+core-PBR fallback conflict, distributed codec verification, and the final build.
+A check-only build passed with documented external-asset skips;
 final distribution packaging remains blocked by the open mission work.
 See `TASKS.md` and `TESTS.md` for current evidence.
+- The reference project's prebuilt tile manifest now uses relative heightmap
+  paths. A relocation regression loads and exports all four prebuilt tiles
+  before rebuilding, then rebuilds and exports them again.
+- A non-release standalone World Tile candidate includes the shared ADM core,
+  preview renderer and reference assets. The CLI exported its relocated
+  prebuilt sample without rebuilding; final packaging remains outstanding.
+- The reference folder now contains a generated standalone advanced ADM scene.
+  The fixture-specific renderer displays measurable POM in that file without
+  requiring Blender; the fixture catalog and instructions identify it.
+- World Tile now uses a separate reconstructed RGB PNG as its core PBR normal
+  for BC5 sources. Its layer shader retains the byte-identical BC5 primary and
+  the specified two-channel PNG fallback. Export index version 4 invalidates
+  prior tile digests. Embedded and external cases pass. Blender's standalone
+  core-PBR BC5 case remains unresolved: its single normal texture must retain
+  the primary, but the current fallback rule requires blue zero.
+- An earlier complete World Tile run passed 107 tests with five PyVista future
+  warnings; an independent BC5 reconstruction-formula assertion passed separately.
+  The latest check-only build passed after its import-transaction fixture was
+  updated for shader metadata conflict detection. No release ZIP was built.
+- The detailed terrain view now groups built tile triangles using the exporter's
+  four-layer palette policy and renders interpolated weights with the VTK shader.
+  Focused GUI/offscreen tests demonstrate single-layer POM, two-layer height
+  blending, asynchronous loading and explicit incompatible-material errors.
+  Its 250,000-triangle limit preserves the fast large-terrain modes.
+- Detailed terrain actors share decoded texture objects across palettes during
+  each redraw. A subsequent redraw rebuilds the cache, so edits are not hidden.
+  A gated multi-tile test confirms stale selection and LOD loads are discarded.
+  Unique decoded texture base levels are limited to 512 MiB per redraw; the
+  limit excludes transient allocations, renderer overhead and GPU mipmaps.
+- World Tile texture pickers display verified source dimensions, format,
+  depth, color-space metadata and mip count, plus a GPU payload size or a
+  clearly labelled RGBA base-level estimate. Invalid files report a reason.
+- The multi-surface preview exposes per-layer shader diagnostics for base
+  weight, final weight and signed parallax offset. Its displayed mean weights
+  remain unshifted CPU estimates.
+- World Tile now rejects color-space mismatches for supported DDS primaries,
+  as it already did for KTX2, rather than silently recompressing them. Inputs
+  outside the ADM GPU subset still follow the documented conversion path.
 
 ## Work log
 - 2026-11-26: Audited mission outline and repository status. Copied the supplied

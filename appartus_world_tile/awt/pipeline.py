@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import ntpath
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -471,4 +472,17 @@ def load_manifest(path: str) -> dict:
     if manifest.get("format_version", 0) < MANIFEST_VERSION:
         raise ValueError(f"{path}: the tiles were built by an older version without surface weights; rebuild them")
     manifest["_dir"] = os.path.dirname(os.path.abspath(path))
+    source_relative = False
+    for section, key in (("source", "path"), ("params", "input_path")):
+        record = manifest.get(section)
+        if isinstance(record, dict) and key in record:
+            value = record[key]
+            if not isinstance(value, str):
+                raise ValueError(f"{path}: {section}.{key} must be a path string")
+            relative = bool(value) and not os.path.isabs(value) and not ntpath.isabs(value)
+            if section == "source":
+                source_relative = relative
+            # Older builds stored params.input_path relative to their working directory.
+            if relative and (section == "source" or source_relative):
+                record[key] = os.path.normpath(os.path.join(manifest["_dir"], value))
     return manifest

@@ -938,9 +938,8 @@ class AdmValidator(_Base):
         key = K.MATERIAL_HEIGHT_EXT
         p = f"{path}.extensions.{key}"
         data = extensions[key]
-        if not self.keys(data, p, ("version", "heightTexture"), ("channel", "invert", "scale", "bias",
-                                                         "referenceHeight", "parallaxMode",
-                                                         "parallaxScale", "pomMinSteps", "pomMaxSteps")):
+        optional = tuple(data) if isinstance(data, dict) else ()
+        if not self.keys(data, p, ("version", "heightTexture"), optional):
             return
         if data["version"] != "1.0.0":
             self.r.error("EXTENSION_VERSION", p + ".version", "must be '1.0.0'")

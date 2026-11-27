@@ -401,6 +401,9 @@ in the tool, which re-exports only changed tiles.
   inversion. The selected Non-Color channel multiplies its factor and uses the map's own UV
   selection and the layer's `uv_scale`. Set the metallic factor to 1 to use the full map (default 0).
   Existing terrain materials may need **Sync Parameters (out of date)** to expose the new slots.
+- The advanced layered profiles add per-layer AO, height blending, and parallax parameters.
+  Blender previews height blending and approximates AO by darkening the color. It preserves
+  parallax and POM parameters on export but does not preview their UV offsets.
 - PBR Layered 2.0 has the same maps and channel/inversion controls for each layer. The surface
   overlays of all 2.0 profiles also provide independent metallic and roughness maps for each
   `COLOR_1` surface channel. Maps multiply the corresponding factors; set a factor to 1 to use its
@@ -537,6 +540,13 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   custom shader parameters have no declared normal role and retain their raw channels.
   BC7 KTX2 blocks are repackaged as DDS and decoded by
   Blender's DDS reader; this path has been verified on Windows with Blender 5.2.3.
+- A standalone core PBR normal with a BC5 primary retains its two-channel fallback, which
+  readers without BC5 normal reconstruction might render incorrectly. Blender reports this
+  limitation on export.
+- Blender preserves optional `ADM_material_height_v1` data, its height texture, and sampler,
+  but does not preview the effect. It rejects the extension when required. For unrecognized
+  optional extensions, Blender warns on import and export because their data might be lost
+  or their references cannot be remapped. These warnings persist after saving the project.
 
 This is ADM 1.0 authoring support, **not full ADM conformance certification**. The numerical
 renderer, retargeting, IK and advanced interoperability evidence described in §25 is a separate
