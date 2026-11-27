@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "adm_tools"
-version = "1.24.37"
+version = "1.24.45"
 name = "ADM Tools"
 tagline = "Import, export and validate ADM 1.0 models and animations"
 maintainer = "ADM contributors"
@@ -17,4 +17,4 @@ license = ["SPDX:MIT"]
 files = "Import/export ADM (.adm, .adm_anim) files from/to disk"
 
 [build]
-paths_exclude_pattern = ["__pycache__/", "*.pyc", "/tests/", ".*"]
+paths_exclude_pattern = ["__pycache__/", "*.pyc", "*.zip", "/tests/", ".*"]

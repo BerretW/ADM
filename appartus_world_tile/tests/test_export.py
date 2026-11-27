@@ -551,6 +551,22 @@ class ExportTest(unittest.TestCase):
         material.surface("rock").ao_map.path = ao
         material.surface("rock").height_map.path = ao
         export_tiles(manifest, material, settings, "all")
+        settings.gpu_container = "KTX2"
+        self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
+        self.assertEqual(set(export_tiles(manifest, material, settings)["written"]), affected)
+        settings.gpu_container = "DDS"
+        self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
+        export_tiles(manifest, material, settings)
+        material.surface("rock").gpu_encodings = {"ao": "RGBA8", "height": "BC7"}
+        export_tiles(manifest, material, settings)
+        settings.gpu_encoding = "BC7"
+        self.assertEqual(changed_tiles(manifest, material, settings), [])
+        del material.surface("rock").gpu_encodings["ao"]
+        self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
+        export_tiles(manifest, material, settings)
+        settings.gpu_encoding = "RGBA8"
+        self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
+        export_tiles(manifest, material, settings)
         Image.new("L", (4, 4), 160).save(ao)
         self.assertEqual(set(changed_tiles(manifest, material, settings)), affected)
         self.assertEqual(set(export_tiles(manifest, material, settings)["written"]), affected)
@@ -719,12 +735,262 @@ class ExportTest(unittest.TestCase):
                 self.assertTrue(np.all(normal[..., 3] == 255))
                 self.assertTrue(np.all(normal[..., 2] > 128))
 
+        converted = prepare_adm_texture(path, "normal", "KTX2", "RGBA8", True)
+        self.assertTrue(converted.reencoded_source)
+        self.assertEqual(gputex.parse(converted.primary.data, gputex.MIME_KTX2, strict=True)["kind"], "RGBA8")
+        np.testing.assert_array_equal(gputex.decode(converted.primary.data, strict=True)[0],
+                                      gputex.decode(blob, strict=True)[0])
+        self.assertIsNotNone(converted.pbr_normal)
+        self.settings.embed_textures = False
+        self.settings.gpu_container = "KTX2"
+        self.settings.gpu_encoding = "RGBA8"
+        self.settings.convert_gpu_sources = True
+        export_tiles(self.manifest, self.material, self.settings, "all")
+        doc, _ = _read_adm(os.path.join(self.settings.out_dir, "x000_y000.adm"))
+        material = next(m for m in doc["materials"] if "normalTexture" in m)
+        shader_texture = doc["textures"][material["shaderParameters"]["layer0_normal"]["index"]]
+        shader_image = doc["images"][shader_texture["source"]]
+        self.assertEqual(shader_image["mimeType"], gputex.MIME_KTX2)
+        core_texture = doc["textures"][material["normalTexture"]["index"]]
+        with Image.open(os.path.join(self.settings.out_dir, doc["images"][core_texture["source"]]["uri"])) as image:
+            self.assertTrue(np.all(np.asarray(image.convert("RGB"))[..., 2] > 128))
+
     def test_export_changed_invalidates_previous_export_revision(self):
-        with patch("awt.adm_export.INDEX_VERSION", 3):
+        with patch("awt.adm_export.INDEX_VERSION", 4):
             export_tiles(self.manifest, self.material, self.settings, "all")
             self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
         self.assertEqual(set(changed_tiles(self.manifest, self.material, self.settings)),
                          {tile["id"] for tile in self.manifest["tiles"]})
+
+    def test_gpu_export_configuration_preserves_sources_and_r16(self):
+        _core()
+        from adm_blender.core import gputex
+
+        gpu_bytes, _ = gputex.encode(np.full((4, 4, 4), 127, dtype=np.uint8),
+                                     gputex.MIME_DDS, "BC7", srgb=False)
+        gpu_path = os.path.join(self.tmp.name, "source.dds")
+        Path(gpu_path).write_bytes(gpu_bytes)
+        height_path = os.path.join(self.tmp.name, "height16.png")
+        height = np.array([[0, 1], [32767, 65535]], dtype=np.uint16)
+        Image.fromarray(height).save(height_path)
+
+        for encoding in ("BC7", "RGBA8"):
+            with self.subTest(encoding=encoding):
+                prepared = prepare_adm_texture(self.albedo, "albedo", "KTX2", encoding)
+                info = gputex.parse(prepared.primary.data, gputex.MIME_KTX2, strict=True)
+                self.assertEqual((info["kind"], info["srgb"]), (encoding, True))
+                unchanged = prepare_adm_texture(gpu_path, "data", "KTX2", encoding)
+                self.assertEqual(unchanged.primary.data, gpu_bytes)
+                scalar = prepare_adm_texture(height_path, "data", "KTX2", encoding)
+                self.assertEqual(gputex.parse(scalar.primary.data, gputex.MIME_KTX2, strict=True)["kind"], "R16")
+                np.testing.assert_array_equal(gputex.decode_scalar(scalar.primary.data, strict=True)[0], height)
+        with self.assertRaisesRegex(ValueError, "Unsupported GPU"):
+            prepare_adm_texture(self.albedo, "albedo", "UNKNOWN", "AUTO")
+
+        self.settings.gpu_container = "KTX2"
+        self.settings.gpu_encoding = "BC7"
+        export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+        self.settings.gpu_encoding = "RGBA8"
+        self.assertEqual(len(changed_tiles(self.manifest, self.material, self.settings)), len(self.manifest["tiles"]))
+        result = export_tiles(self.manifest, self.material, self.settings, "changed")
+        for tile in result["written"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+            for texture in doc["textures"]:
+                image = doc["images"][texture["source"]]
+                blob = Path(self.settings.out_dir, image["uri"]).read_bytes()
+                self.assertEqual(gputex.parse(blob, gputex.MIME_KTX2, strict=True)["kind"], "RGBA8")
+        self.material.surface("rock").roughness_map.path = gpu_path
+        self.material.surface("grass").height_map = MapSlot(height_path)
+        self.material.terrain_shader_version = "2.1.0"
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertTrue(any("retains BC7 in DDS" in warning for warning in result["warnings"]))
+        self.assertTrue(any("retains R16 in KTX2" in warning for warning in result["warnings"]))
+        project = Project(self.params, self.material, self.settings)
+        data = project.to_dict()
+        self.assertEqual(data["format_version"], 6)
+        restored = Project.from_dict(data)
+        self.assertEqual((restored.export.gpu_container, restored.export.gpu_encoding), ("KTX2", "RGBA8"))
+        self.assertEqual(self.material.rules_digest(), restored.material.rules_digest())
+        self.settings.gpu_encoding = "UNKNOWN"
+        with self.assertRaisesRegex(ValueError, "Unsupported GPU"):
+            export_tiles(self.manifest, self.material, self.settings, "all")
+
+    def test_explicit_gpu_source_conversion_rebuilds_mips_and_preserves_r16(self):
+        _core()
+        from adm_blender.core import gputex
+
+        values = np.array([[0, 1, 257, 65535], [16, 300, 32768, 65534]], dtype=np.uint16)
+        original, _ = gputex.encode_scalar(values, gputex.MIME_DDS, "R16", mipmaps=False)
+        path = os.path.join(self.tmp.name, "r16.dds")
+        Path(path).write_bytes(original)
+        with patch("awt.adm_export.MAX_TEXTURE_PIXELS", 4), \
+                patch.object(gputex, "decode_scalar", side_effect=AssertionError("decoded too early")):
+            with self.assertRaisesRegex(ValueError, "dimensions exceed"):
+                prepare_adm_texture(path, "data", "KTX2", "BC7", True)
+        converted = prepare_adm_texture(path, "data", "KTX2", "BC7", True)
+        self.assertTrue(converted.reencoded_source)
+        self.assertEqual(gputex.parse(converted.primary.data, gputex.MIME_KTX2, strict=True)["kind"], "R16")
+        np.testing.assert_array_equal(gputex.decode_scalar(converted.primary.data, strict=True)[0], values)
+        np.testing.assert_array_equal(_read_rgba16_png(converted.fallback.data)[..., 0], values)
+        self.material.surface("grass").height_map = MapSlot(path, channel=1)
+        self.material.terrain_shader_version = "2.1.0"
+        self.settings.gpu_container = "KTX2"
+        self.settings.gpu_encoding = "BC7"
+        self.settings.convert_gpu_sources = True
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertTrue(any("explicitly re-encoded" in warning for warning in result["warnings"]))
+        self.assertTrue(any("retains R16 in KTX2" in warning for warning in result["warnings"]))
+        for tile in result["written"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+            for material in doc["materials"]:
+                for key in material["shaderParameters"]:
+                    if key.endswith("_height_texture"):
+                        self.assertEqual(material["shaderParameters"][key.split("_")[0] + "_height_channel"], 1.0)
+        project = Project(self.params, self.material, self.settings)
+        serialized = project.to_dict()
+        self.assertTrue(Project.from_dict(serialized).export.convert_gpu_sources)
+        serialized["export"]["convert_gpu_sources"] = "false"
+        with self.assertRaisesRegex(ValueError, "must be true or false"):
+            Project.from_dict(serialized)
+
+    def test_per_map_encoding_separates_and_shares_texture_assets(self):
+        _core()
+        from adm_blender.core import gputex
+
+        rock = self.material.surface("rock")
+        rock.metallic_map = MapSlot(self.packed, channel=0)
+        rock.roughness_map = MapSlot(self.packed, channel=1)
+        rock.gpu_encodings = {"metallic": "RGBA8", "roughness": "BC7"}
+        digest = self.material.rules_digest()
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        found = False
+        for tile in result["written"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+            for material in doc["materials"]:
+                params = material["shaderParameters"]
+                for name, value in params.items():
+                    if not name.endswith("_metallic_texture"):
+                        continue
+                    prefix = name.split("_")[0]
+                    rough = params.get(prefix + "_roughness_texture")
+                    if rough is None:
+                        continue
+                    metal_ref, rough_ref = value["index"], rough["index"]
+                    self.assertNotEqual(metal_ref, rough_ref)
+                    for index, kind in ((metal_ref, "RGBA8"), (rough_ref, "BC7")):
+                        image = doc["images"][doc["textures"][index]["source"]]
+                        blob = Path(self.settings.out_dir, image["uri"]).read_bytes()
+                        self.assertEqual(gputex.parse(blob, gputex.MIME_DDS, strict=True)["kind"], kind)
+                    found = True
+        self.assertTrue(found)
+        affected = {tile["id"] for tile in self.manifest["tiles"]
+                    if any(self.material.surface_names().index("rock") in lod["used_surfaces"]
+                           for lod in tile["lods"])}
+        rock.gpu_encodings["roughness"] = "RGBA8"
+        self.assertEqual(self.material.rules_digest(), digest)
+        self.assertEqual(set(changed_tiles(self.manifest, self.material, self.settings)), affected)
+        result = export_tiles(self.manifest, self.material, self.settings, "changed")
+        shared = False
+        for tile in result["written"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+            for material in doc["materials"]:
+                params = material["shaderParameters"]
+                for name, value in params.items():
+                    rough = params.get(name.split("_")[0] + "_roughness_texture")
+                    if name.endswith("_metallic_texture") and rough is not None:
+                        self.assertEqual(value["index"], rough["index"])
+                        shared = True
+        self.assertTrue(shared)
+        data = Project(self.params, self.material, self.settings).to_dict()
+        self.assertEqual(data["format_version"], 6)
+        self.assertEqual(Project.from_dict(data).material.surface("rock").gpu_encodings, rock.gpu_encodings)
+        rock.gpu_encodings["height"] = "UNKNOWN"
+        with self.assertRaisesRegex(ValueError, "unsupported per-map GPU encoding"):
+            self.material.validate()
+
+    def test_per_map_bc5_encoding_uses_reconstructed_core_normal(self):
+        _core()
+        from adm_blender.core import gputex
+
+        for surface in self.material.surfaces:
+            surface.normal = self.normal
+            surface.gpu_encodings["normal"] = "BC5"
+        self.material.terrain_shader_version = "2.1.0"
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        for tile in result["written"]:
+            doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+            for material in doc["materials"]:
+                shader_ref = material["shaderParameters"]["layer0_normal"]["index"]
+                shader_texture = doc["textures"][shader_ref]
+                source = doc["images"][shader_texture["source"]]
+                blob = Path(self.settings.out_dir, source["uri"]).read_bytes()
+                self.assertEqual(gputex.parse(blob, gputex.MIME_DDS, strict=True)["kind"], "BC5")
+                with Image.open(Path(self.settings.out_dir, doc["images"][shader_texture["fallbackSource"]]["uri"])) as image:
+                    self.assertTrue(np.all(np.asarray(image.convert("RGBA"))[..., 2] == 0))
+                core_ref = doc["textures"][material["normalTexture"]["index"]]
+                with Image.open(Path(self.settings.out_dir, doc["images"][core_ref["source"]]["uri"])) as image:
+                    self.assertTrue(np.all(np.asarray(image.convert("RGB"))[..., 2] > 128))
+        with self.assertRaisesRegex(ValueError, "only for normal maps"):
+            prepare_adm_texture(self.packed, "data", gpu_encoding="BC5")
+
+    def test_per_map_scalar_formats_export_the_selected_channel(self):
+        _core()
+        from adm_blender.core import gputex
+
+        rock = self.material.surface("rock")
+        rock.metallic_map = MapSlot(self.packed, channel=0)
+        rock.roughness_map = MapSlot(self.packed, channel=1, invert=True)
+        self.settings.gpu_container = "KTX2"
+        for encoding in ("R8", "R16", "BC4"):
+            with self.subTest(encoding=encoding):
+                rock.gpu_encodings = {"metallic": encoding, "roughness": encoding}
+                result = export_tiles(self.manifest, self.material, self.settings, "all")
+                self.assertTrue(any("selected channel in red" in w for w in result["warnings"]))
+                found = False
+                for tile in result["written"]:
+                    doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile + ".adm"))
+                    for material in doc["materials"]:
+                        params = material["shaderParameters"]
+                        for key, ref in params.items():
+                            if not key.endswith("_roughness_texture"):
+                                continue
+                            prefix = key.split("_")[0]
+                            if prefix + "_metallic_texture" not in params:
+                                continue
+                            self.assertEqual(params[prefix + "_roughness_channel"], 0.0)
+                            self.assertTrue(params[prefix + "_roughness_invert"])
+                            self.assertNotEqual(ref["index"], params[prefix + "_metallic_texture"]["index"])
+                            image = doc["images"][doc["textures"][ref["index"]]["source"]]
+                            blob = Path(self.settings.out_dir, image["uri"]).read_bytes()
+                            self.assertEqual(gputex.parse(blob, gputex.MIME_KTX2, strict=True)["kind"], encoding)
+                            values = gputex.decode_scalar(blob, strict=True)[0]
+                            expected = 200 * 257 if encoding == "R16" else 200
+                            self.assertLessEqual(np.max(np.abs(values.astype(np.int64) - expected)), 1)
+                            found = True
+                self.assertTrue(found)
+        self.assertEqual(rock.roughness_map.channel, 1)
+        for channel, expected in enumerate((10, 200, 30, 255)):
+            prepared = prepare_adm_texture(self.packed, "data", "DDS", "R8", False, channel)
+            self.assertTrue(prepared.channel_remapped)
+            np.testing.assert_array_equal(gputex.decode_scalar(prepared.primary.data, strict=True)[0], expected)
+        source, _ = gputex.encode(np.full((4, 4, 4), [10, 200, 30, 255], dtype=np.uint8),
+                                  gputex.MIME_DDS, "RGBA8", False)
+        path = os.path.join(self.tmp.name, "packed.dds")
+        Path(path).write_bytes(source)
+        preserved = prepare_adm_texture(path, "data", "KTX2", "R8", False, 1)
+        self.assertEqual(preserved.primary.data, source)
+        self.assertFalse(preserved.channel_remapped)
+        converted = prepare_adm_texture(path, "data", "KTX2", "R8", True, 1)
+        self.assertTrue(converted.channel_remapped)
+        np.testing.assert_array_equal(gputex.decode_scalar(converted.primary.data, strict=True)[0], 200)
+
+        values = np.array([[0, 1], [32768, 65535]], dtype=np.uint16)
+        path16 = os.path.join(self.tmp.name, "height16.png")
+        Image.fromarray(values).save(path16)
+        high_precision = prepare_adm_texture(path16, "data", "KTX2", "BC4", False, 1)
+        self.assertEqual(gputex.parse(high_precision.primary.data, gputex.MIME_KTX2, strict=True)["kind"], "R16")
+        np.testing.assert_array_equal(gputex.decode_scalar(high_precision.primary.data, strict=True)[0], values)
 
     def test_scalar_gpu_textures_preserve_source_bytes_and_png_values(self):
         _core()
@@ -860,6 +1126,100 @@ class ExportTest(unittest.TestCase):
                     np.testing.assert_array_equal(_read_rgba16_png(png)[..., 0], values)
                     found = True
         self.assertTrue(found)
+
+    def test_multichannel_sixteen_bit_height_png_retains_primary_and_channels(self):
+        _core()
+        from adm_blender.core.buffers import read_view
+        from adm_blender.core.png import encode_png
+
+        values = np.array([[[0, 257, 65534, 65535], [42, 258, 12345, 60000]],
+                           [[1, 259, 54321, 65535], [999, 260, 2, 40000]]], dtype=np.uint16)
+        source = encode_png(2, 2, values.astype(">u2").tobytes(), 4, bit_depth=16)
+        path = os.path.join(self.tmp.name, "height-rgba16.png")
+        Path(path).write_bytes(source)
+        prepared = prepare_adm_texture(path, "data")
+        self.assertEqual(prepared.primary.data, source)
+        self.assertEqual(prepared.primary.mime, "image/png")
+        self.assertIsNone(prepared.fallback)
+        self.material.surface("grass").height_map = MapSlot(path, channel=1)
+        self.material.terrain_shader_version = "2.1.0"
+        for embedded in (False, True):
+            with self.subTest(embedded=embedded):
+                settings = ExportSettings(out_dir=os.path.join(self.tmp.name, f"out-{embedded}"),
+                                          embed_textures=embedded)
+                result = export_tiles(self.manifest, self.material, settings, "all")
+                self.assertTrue(any("uses a 16-bit PNG primary" in warning for warning in result["warnings"]))
+                found = False
+                for tile in result["written"]:
+                    doc, binary = _read_adm(os.path.join(settings.out_dir, tile + ".adm"))
+                    for material in doc["materials"]:
+                        params = material["shaderParameters"]
+                        for key, ref in params.items():
+                            if not key.endswith("_height_texture"):
+                                continue
+                            index = key.split("_")[0]
+                            self.assertEqual(params[index + "_height_channel"], 1.0)
+                            texture = doc["textures"][ref["index"]]
+                            self.assertNotIn("fallbackSource", texture)
+                            image = doc["images"][texture["source"]]
+                            self.assertEqual(image["mimeType"], "image/png")
+                            blob = (read_view(doc, binary, image["bufferView"]) if embedded
+                                    else Path(settings.out_dir, image["uri"]).read_bytes())
+                            self.assertEqual(blob, source)
+                            np.testing.assert_array_equal(_read_rgba16_png(blob), values)
+                            found = True
+                self.assertTrue(found)
+
+    def test_multichannel_sixteen_bit_tiff_preserves_samples_and_checks_limits(self):
+        import tifffile
+        from adm_blender.core.buffers import read_view
+
+        values = np.arange(3 * 4 * 4, dtype=np.uint16).reshape(3, 4, 4) * 257
+        values[..., 3] = 65535
+        for planar in ("contig", "separate"):
+            with self.subTest(planar=planar):
+                path = os.path.join(self.tmp.name, f"height-{planar}.tiff")
+                pixels = np.moveaxis(values, -1, 0) if planar == "separate" else values
+                tifffile.imwrite(path, pixels, photometric="rgb", planarconfig=planar)
+                prepared = prepare_adm_texture(path, "data")
+                self.assertEqual(prepared.primary.mime, "image/png")
+                self.assertIsNone(prepared.fallback)
+                np.testing.assert_array_equal(_read_rgba16_png(prepared.primary.data), values)
+                with patch("awt.adm_export.MAX_TEXTURE_PIXELS", 4), \
+                        patch.object(tifffile.TiffPage, "asarray", side_effect=AssertionError("decoded too early")):
+                    with self.assertRaisesRegex(ValueError, "dimensions exceed"):
+                        prepare_adm_texture(path, "data")
+
+        unsupported = os.path.join(self.tmp.name, "height-unsupported.tiff")
+        tifffile.imwrite(unsupported, np.zeros((3, 4, 2), np.uint16),
+                         photometric="minisblack", planarconfig="contig")
+        with self.assertRaisesRegex(ValueError, "Cannot preserve 16-bit TIFF channel layout"):
+            prepare_adm_texture(unsupported, "data")
+
+        self.material.surface("grass").height_map = MapSlot(path, channel=2)
+        self.material.terrain_shader_version = "2.1.0"
+        for embedded in (False, True):
+            with self.subTest(embedded=embedded):
+                settings = ExportSettings(out_dir=os.path.join(self.tmp.name, f"tiff-out-{embedded}"),
+                                          embed_textures=embedded)
+                result = export_tiles(self.manifest, self.material, settings, "all")
+                self.assertTrue(any("uses a 16-bit PNG primary" in warning for warning in result["warnings"]))
+                found = False
+                for tile in result["written"]:
+                    doc, binary = _read_adm(os.path.join(settings.out_dir, tile + ".adm"))
+                    for material in doc["materials"]:
+                        for key, ref in material["shaderParameters"].items():
+                            if not key.endswith("_height_texture"):
+                                continue
+                            texture = doc["textures"][ref["index"]]
+                            self.assertNotIn("fallbackSource", texture)
+                            source = doc["images"][texture["source"]]
+                            blob = (read_view(doc, binary, source["bufferView"]) if embedded
+                                    else Path(settings.out_dir, source["uri"]).read_bytes())
+                            np.testing.assert_array_equal(_read_rgba16_png(blob), values)
+                            self.assertEqual(material["shaderParameters"][key.split("_")[0] + "_height_channel"], 2.0)
+                            found = True
+                self.assertTrue(found)
 
     def test_sixteen_bit_grayscale_channels_preserve_visual_sampling(self):
         path = os.path.join(self.tmp.name, "height16.png")

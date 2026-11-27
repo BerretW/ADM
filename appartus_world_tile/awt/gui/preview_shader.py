@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import io
+import os
 
 import numpy as np
 from PIL import Image
 
-from ..material import MAX_TEXTURE_BYTES, MapSlot, normal_preview_array, prepare_texture
+from ..material import MAX_TEXTURE_BYTES, MAX_TEXTURE_PIXELS, MapSlot, normal_preview_array, prepare_texture
 from ..bake import _srgb_to_linear
 
 
@@ -68,9 +69,14 @@ if (gl_FrontFacing && abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
 
 
 def _height_samples(slot: MapSlot) -> np.ndarray:
-    prepared = prepare_texture(slot.path)
     with open(slot.path, "rb") as stream:
         magic = stream.read(12)
+        if magic[:4] in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"):
+            from ..adm_export import _core, _multichannel_tiff16
+            _core()
+            prepared = _multichannel_tiff16(slot.path, os.path.splitext(os.path.basename(slot.path))[0])
+        else:
+            prepared = None
         if magic.startswith((b"DDS ", b"\xabKTX 20\xbb\r\n\x1a\n")):
             stream.seek(0)
             data = stream.read(MAX_TEXTURE_BYTES + 1)
@@ -84,9 +90,13 @@ def _height_samples(slot: MapSlot) -> np.ndarray:
             except gputex.GpuTextureError:
                 info = None
             if info is not None and info["kind"] == "R16":
+                if info["width"] * info["height"] > MAX_TEXTURE_PIXELS:
+                    raise ValueError(f"Texture dimensions exceed the {MAX_TEXTURE_PIXELS:,}-pixel limit")
                 scalar = gputex.decode_scalar_level(data, info).astype(np.float32) / 65535.0
                 samples = scalar if slot.channel == 0 else np.full_like(scalar, 1.0 if slot.channel == 3 else 0.0)
                 return 1.0 - samples if slot.invert else samples
+    if prepared is None:
+        prepared = prepare_texture(slot.path)
     png16 = prepared.data.startswith(b"\x89PNG\r\n\x1a\n") and prepared.data[24] == 16
     if png16:
         from vtkmodules.util.numpy_support import vtk_to_numpy
@@ -279,12 +289,15 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         text = format(value, ".9g")
         return text if "." in text or "e" in text else text + ".0"
 
-    def bind(name, pixels, srgb=False):
+    def check_budget(size):
         if texture_cache is not None and texture_budget_bytes is not None:
             used = sum(size for _, size in texture_cache.values())
-            if used + pixels.nbytes > texture_budget_bytes:
+            if used + size > texture_budget_bytes:
                 raise ValueError(f"Detailed material exceeds the {texture_budget_bytes // (1024 * 1024):,} MiB "
                                  "decoded texture budget; select fewer tiles or smaller textures")
+
+    def bind(name, pixels, srgb=False):
+        check_budget(pixels.nbytes)
         texture = pv.Texture(pixels)
         texture.repeat = True
         texture.interpolate = True
@@ -316,6 +329,34 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         if texture_cache is not None:
             texture_cache[key] = (textures[name], pixels.nbytes)
 
+    def scalar_maps(surface, index):
+        groups = {}
+        for label, slot in (("Height", surface.height_map), ("Ao", surface.ao_map),
+                            ("Roughness", surface.roughness_map), ("Metallic", surface.metallic_map)):
+            if slot.path:
+                prepared = prepare_texture(slot.path)
+                groups.setdefault((prepared.width, prepared.height), []).append((label, slot))
+        bindings = {}
+        for (width, height), group in groups.items():
+            name = f"admLayer{group[0][0]}{index}"
+            if len(group) == 1:
+                scalar_map(name, group[0][1])
+            else:
+                key = ("scalar_group", tuple((slot.path, slot.channel, slot.invert) for _, slot in group))
+                if texture_cache is not None and key in texture_cache:
+                    textures[name] = texture_cache[key][0]
+                else:
+                    check_budget(width * height * 4 * np.dtype(np.float32).itemsize)
+                    pixels = np.ones((height, width, 4), dtype=np.float32)
+                    for component, (_, slot) in enumerate(group):
+                        pixels[..., component] = _height_samples(slot)
+                    bind(name, pixels)
+                    if texture_cache is not None:
+                        texture_cache[key] = (textures[name], pixels.nbytes)
+            for component, (label, _) in enumerate(group):
+                bindings[label] = (name, "rgba"[component])
+        return bindings
+
     total = sum(weights)
     mode = {"NONE": 0, "PARALLAX": 1, "PARALLAX_OCCLUSION": 2}[material.parallax_mode]
     for i, (surface, weight) in enumerate(zip(surfaces, weights)):
@@ -331,9 +372,9 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
                   f"float admWeight{i} = {weight_expr};",
                   f"float admBaseWeight{i} = admWeight{i};",
                   f"vec2 admOffset{i} = vec2(0.0);"]
+        scalar_bindings = scalar_maps(surface, i)
         if surface.height_map.path:
-            name = f"admLayerHeight{i}"
-            scalar_map(name, surface.height_map)
+            name, _ = scalar_bindings["Height"]
             lines.append(f"admOffset{i} = admLayerOffset({name}, admUV{i}, admDX{i}, admDY{i}, admView, "
                          f"{number(surface.parallax_scale)}, {number(surface.height_scale)}, "
                          f"{number(surface.height_bias)}, {mode}, {material.parallax_min_steps}, "
@@ -347,9 +388,8 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         for label, slot in (("Ao", surface.ao_map), ("Roughness", surface.roughness_map),
                             ("Metallic", surface.metallic_map)):
             if slot.path:
-                name = f"admLayer{label}{i}"
-                scalar_map(name, slot)
-                lines.append(f"float adm{label}{i} = textureGrad({name}, admUV{i}, admDX{i}, admDY{i}).r;")
+                name, component = scalar_bindings[label]
+                lines.append(f"float adm{label}{i} = textureGrad({name}, admUV{i}, admDX{i}, admDY{i}).{component};")
             else:
                 lines.append(f"float adm{label}{i} = 1.0;")
         for label, path, normal in (("Albedo", surface.albedo, False), ("Normal", surface.normal, True),

@@ -852,9 +852,13 @@ def main(tmp):
     skin = doc["skins"][prof["skin"]]
     ibm0 = read_accessor_np(doc, rep.bin, skin["inverseBindMatrices"])
     joints0 = [node_name[j] for j in skin["joints"]]
+    unknown_joint_extension = {"opaque": [2, "joint"]}
+    joint_node = prof["roles"]["leftHand"]
+    doc["nodes"][joint_node]["extensions"]["EXAMPLE_unknown_joint"] = unknown_joint_extension
+    doc["extensionsUsed"].append("EXAMPLE_unknown_joint")
     path = os.path.join(tmp, "heroA.adm")
     with open(path, "wb") as fh:
-        fh.write(data)
+        fh.write(write_container(K.ADM_MAGIC, doc, rep.bin))
     check(validate_file(path).ok, "validate_file heroA.adm")
     missing_joint_display = deepcopy(doc)
     missing_joint_display["nodes"][skin["joints"][0]]["extensions"].pop(K.JOINT_DISPLAY_EXT)
@@ -1123,6 +1127,10 @@ def main(tmp):
     check(SP.HUMANOID_SOCKET_NAMES <= set(socks2), "all equipment socket names survive import")
     data2, rep2 = ModelExporter(bpy.context, root2, ExportOptions()).export()
     check(rep2.ok, "re-export valid")
+    joint2 = next(n for n in rep2.doc["nodes"] if n.get("name") == node_name[joint_node])
+    check(joint2["extensions"].get("EXAMPLE_unknown_joint") == unknown_joint_extension
+          and "EXAMPLE_unknown_joint" in rep2.doc["extensionsUsed"],
+          "unknown joint extension survives import and re-export")
     check(rep2.doc["extensions"][K.HUMANOID_SOCKETS_EXT] == {"version": K.HUMANOID_SOCKETS_VERSION}
           and SP.HUMANOID_SOCKET_NAMES <= {a["name"] for a in rep2.doc.get("attachments", [])},
           "socket extension round-trips")
@@ -1210,6 +1218,15 @@ def main(tmp):
             @ cv.bone_frame_correction(arm3.data.bones[name]))
                               for a, b in zip(rowa, rowb)) for name in expected)
         check(pose_error < POS_TOL, f"EXACT frame {frame}: corrected joint matrices match ({pose_error:.2e})")
+
+    root2_name = root2.name
+    blend_path = os.path.join(tmp, "unknown_joint.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+    bpy.ops.wm.open_mainfile(filepath=blend_path)
+    _, reopened_report = ModelExporter(bpy.context, bpy.data.objects[root2_name], ExportOptions()).export()
+    reopened_joint = next(n for n in reopened_report.doc["nodes"] if n.get("name") == node_name[joint_node])
+    check(reopened_joint["extensions"].get("EXAMPLE_unknown_joint") == unknown_joint_extension,
+          "unknown joint extension survives project save and reload")
 
     adm_blender.unregister()
 

@@ -15,9 +15,9 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Enforce KTX2 `typeSize` 2 for R16 and 1 for the other registered formats.
 - [ ] Preserve source precision and supported GPU texture bytes; validate codecs
       with independent test vectors, including R16 and mip chains.
-  - The built Blender extension decodes BC7 on Windows without an external wheel;
-    other platforms and the final packaged extension remain unverified. Blender
-    and World Tile targeted tests preserve supported source bytes and R16 values.
+  - The packaged Blender extension decodes BC7 on Windows without an external
+    wheel; other platforms remain unverified. Blender and World Tile targeted
+    tests preserve supported source bytes and R16 values.
   - World Tile now exports a separate reconstructed RGB normal for core PBR,
     while retaining the BC5 primary and its specified `(R,G,0,1)` shader fallback.
     Blender does the same when a shader parameter retains the matching BC5.
@@ -67,6 +67,8 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Export advanced material profiles and maps, rejecting or disclosing
       unsupported features rather than silently dropping them.
 - [x] Generate tangents for parallax even without normal maps.
+- [x] Provide explicit terrain shader selection and opt-in automatic upgrade
+      when advanced settings are used, with visible notification.
 - [ ] Preserve shared textures, passthrough, content hashes, atomic writes,
       validation, Export Changed, and tile seams/LOD behavior.
   - Two-surface height-blend output at interpolated edge points agrees across
@@ -90,10 +92,18 @@ checkboxes track verification and delivery, not merely code changes.
       real material preview.
 - [ ] Integrate layer maps, height/AO controls, GPU formats, profile versions,
       validation, import/export, and real material preview.
+  - World Tile exposes export-level DDS/KTX2 and automatic/BC7/RGBA8 settings
+    for converted 8-bit images. It preserves compatible GPU inputs and 16-bit
+    data by default; re-encoding GPU sources is opt-in. Per-map overrides add
+    R8/R16/BC4 for selected data channels and BC5 for normals, along with
+    automatic/BC7/RGBA8.
 - [x] Preserve legacy profile editing and make upgrades explicit.
 - [ ] Round-trip unsupported parameters without silent loss.
   - Blender project data retains parameters excluded by an intermediate
     profile; those inactive values are not exported with the legacy schema.
+    Unknown official shader versions retain their parameter JSON, recognized
+    texture references, samplers, and compatible source bytes on export. Their
+    schemas and opaque nested references cannot be validated or remapped.
     World Tile retains unknown terrain shader settings in AWTP and rejects
     validation, build, and export. Their opaque references are not remapped.
   - No standalone ADM Editor application is required or permitted. Transfer
@@ -118,9 +128,11 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Record full/partial/fallback/not-applicable support per consumer.
 - [ ] Prevent unsupported fields from being silently discarded.
   - Blender warns on import and export about unrecognized optional extensions,
-    including after reload. Material-level unknown extension JSON is retained
-    without remapping opaque references; other locations are not generally
-    preserved through export.
+    including after reload. Root-, scene-, imported node-, mesh-, material-, and primitive-level
+    unknown extension JSON is retained without remapping opaque references;
+    scene merges, primitive splits, and missing face tracking are rejected. Other
+    locations and unimported nodes are not generally preserved through export.
+    Conflicting root data is rejected.
 
 ## M11 - Fixtures and documentation
 - [x] Create original procedural Rock, Sand, Dirt, Grass, and Cobblestone maps.
@@ -137,9 +149,11 @@ checkboxes track verification and delivery, not merely code changes.
       conformance, and fixture catalog with exact implemented contracts.
 
 ## M12 - Full verification
-- [ ] Run targeted and full tests, build, and CI-equivalent checks.
+- [x] Run targeted and full tests, build, and CI-equivalent checks.
 - [x] Diagnose and fix the Windows offscreen packaged-GUI early-close failure.
-- [ ] Run package audits and review new input/file parsing boundaries.
+- [x] Run package audits and review new input/file parsing boundaries.
+  - The audited World Tile dependency graph has no known vulnerabilities, but
+    no committed lockfile fixes every permitted dependency resolution.
 - [ ] Re-read MISSION.md and audit each checkbox against implementation.
 - [ ] Report actual implementation, assets, test evidence, performance, and
       remaining limitations or external blockers.

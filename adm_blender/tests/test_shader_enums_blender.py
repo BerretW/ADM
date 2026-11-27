@@ -116,7 +116,7 @@ def main(path):
     values = ["one,one", "second \N{LATIN SMALL LETTER E WITH ACUTE}\nline"]
     definition = bpy.context.scene.adm_anim.shaders.add()
     definition.shader_id = "org.example.enums"
-    definition.version = "1.0.0"
+    definition.version = "3.4.5"
     definition.description = "  Custom shader description  "
     definition.author = "  Example author  "
     parameter = definition.params.add()
@@ -184,7 +184,7 @@ def main(path):
     assert imported_mat.adm.params["mode"].value_enum_custom == values[1]
     assert imported_mat.adm.params["pattern"].use
     assert imported_mat.adm.params["pattern"].image is None
-    restored_definition = bpy.context.scene.adm_anim.shaders["org.example.enums@1.0.0"].params["mode"]
+    restored_definition = bpy.context.scene.adm_anim.shaders["org.example.enums@3.4.5"].params["mode"]
     assert json.loads(restored_definition.enum_values) == values
     assert restored_definition.default_enum == values[0]
     same = ModelImporter(bpy.context, adm_path, ImportOptions())
@@ -197,7 +197,7 @@ def main(path):
     assert imported_mat.adm.params["mode"].value_enum_custom == values[1]
     assert imported_mat.adm.params["pattern"].use
     assert imported_mat.adm.params["pattern"].image is None
-    definition = bpy.context.scene.adm_anim.shaders["org.example.enums@1.0.0"]
+    definition = bpy.context.scene.adm_anim.shaders["org.example.enums@3.4.5"]
     definition.description = "Different description"
     try:
         ModelImporter(bpy.context, adm_path, ImportOptions()).run()

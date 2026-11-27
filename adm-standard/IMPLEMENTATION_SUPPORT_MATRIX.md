@@ -34,13 +34,21 @@ represented as complete renderer conformance.
   their internal references are not remapped.
 - Blender warns on import and export when optional extensions are not
   recognized, including after saving and reopening a project. It retains
-  unknown material-level extension JSON without remapping its internal
-  references. It does not generally preserve unknown extensions elsewhere.
+  unknown root-, scene-, imported node-, mesh-, material-, and primitive-level extension JSON
+  without remapping internal references. Primitive data follows imported faces;
+  export rejects missing face tracking, lost primitives, and splits across output
+  primitives. It rejects ambiguous scene merges and conflicting root-extension values when exporting
+  multiple models. It does not generally preserve unknown
+  extensions elsewhere or on nodes that were not imported.
 - Blender retains inactive profile parameters in the project when you switch
   profiles, restoring values whose shader and type match. An ADM export includes
   only parameters supported by the selected profile and warns about inactive
   overrides. Loading older projects initializes cache metadata for registered
-  profiles; unknown or conflicting custom definitions remain unverified.
+  profiles; unknown schemas cannot be validated.
+- Blender retains parameters of unknown `adm.*` shader versions through project
+  save and ADM export. It remaps recognized texture references and preserves
+  their samplers and compatible GPU sources, but cannot validate the unknown
+  schema or remap references inside opaque parameter objects.
 - Blender's ADM importer uses the PNG fallback for editable GPU images and
   retains a compatible primary for unchanged-image export. For BC5 normal
   maps, it reconstructs Z using the format and the fallback X and Y channels.
@@ -58,6 +66,8 @@ represented as complete renderer conformance.
   material mode remains an albedo bake. The detailed mode has a separate
   triangle budget and warns when a palette exceeds four surfaces.
   The renderer reports insufficient texture units instead of dropping maps.
+  Equal-size scalar maps share a float texture without resampling. The 3D view
+  also exposes each exported `COLOR_1` palette channel.
 - World Tile retains unknown terrain shader settings in its project and rejects
   validation, build, and export. It does not interpret or remap references
   inside those settings. Unsupported profile versions and parallax modes
@@ -67,6 +77,17 @@ represented as complete renderer conformance.
 - DDS/KTX2 primary bytes are preserved only when the source role and color space match.
 - Blender's automatic GPU conversion uses R16 for eligible scalar data and retains a
   16-bit PNG for other 16-bit images. Explicit 8-bit GPU compression is lossy and warns.
+- World Tile preserves multichannel 16-bit data PNG bytes as the primary, and converts
+  supported 16-bit RGB/RGBA TIFF data to 16-bit PNG without quantization. It rejects
+  other multichannel 16-bit TIFF layouts. The TIFF height preview retains 16-bit samples.
+- World Tile's export settings select DDS or KTX2 and automatic, BC7, or RGBA8 encoding
+  for converted 8-bit images. Compatible GPU inputs remain unchanged unless re-encoding
+  is explicitly enabled. 16-bit data retains its precision, and the export report
+  identifies retained formats and re-encoded sources.
+- Individual World Tile maps can override their encoding. Data maps support R8, R16,
+  and BC4 by exporting the selected channel as red; normal maps support BC5 with a
+  separate reconstructed RGB PBR normal. Unconverted GPU inputs and 16-bit data can
+  retain a different format to preserve their bytes or precision.
 - For a BC5 terrain normal, World Tile retains the BC5 source and its
   two-channel fallback for the shader, and emits a separate reconstructed RGB
   PNG for the top-level PBR normal. Blender also emits a separate RGB PNG

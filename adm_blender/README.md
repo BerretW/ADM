@@ -140,6 +140,10 @@ the actual Blender color attributes, not a separate color system.
   strengths and the profile's other mask parameters are edited in the material's shader parameters.
 - Switching profiles retains inactive shader parameters in the Blender project. ADM exports include
   only the selected profile's parameters and warn when inactive overrides are excluded.
+- An unknown `adm.*` shader version uses the PBR fallback. Its parameter values survive
+  project save and ADM export; texture references, their samplers, and compatible GPU
+  sources are retained. The add-on can't validate an unknown schema or remap references
+  inside opaque parameter objects, and reports those limitations.
 - Choose **All Faces**, **Selected Faces** or **This Material Faces** (every face using the active
   material, regardless of selection), then edit one R/G/B/A channel or all four and click
   **Apply Channels**. Edit Mode uses its live face selection without switching modes. A single-channel
@@ -548,9 +552,15 @@ exported, and `EXTRACT` is forbidden. You can import them without an armature (r
   limitation on export.
 - Blender preserves optional `ADM_material_height_v1` data, its height texture, and sampler,
   but does not preview the effect. It rejects the extension when required. It retains
-  unrecognized material-level extension JSON through project save and ADM export, but cannot
-  remap references inside it. Other unrecognized extension data might be lost. Blender warns
-  on import and export, including after saving and reopening the project.
+  unrecognized root-, scene-, imported node-, mesh-, material-, and primitive-level extension JSON through
+  project save and ADM export, but cannot validate or remap references inside it. Primitive
+  extensions follow their imported faces. Export fails if a primitive is split into multiple
+  output primitives or loses all its faces, or if its face tracking data is missing. Export also
+  rejects merging selected objects from distinct scenes when an unknown scene extension is present.
+  Other unrecognized
+  extension data might be lost. Blender warns on import and export, including after saving and
+  reopening the project. Nodes that aren't imported can't retain their extensions.
+  Export rejects conflicting root-extension values from multiple imported models.
 
 This is ADM 1.0 authoring support, **not full ADM conformance certification**. The numerical
 renderer, retargeting, IK and advanced interoperability evidence described in §25 is a separate

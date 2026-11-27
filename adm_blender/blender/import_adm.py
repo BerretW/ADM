@@ -19,11 +19,15 @@ from ..core.container import MAX_CHUNK
 from ..core.external_images import resolve_image_uri
 from ..core import gputex
 from ..core.qa_metrics import record_success
-from ..core.validate import validate_adm
+from ..core.validate import param_value_error, validate_adm
 from . import convert as cv
 from .colliders import new_collider_object
-from .export_adm import UNSUPPORTED_EXTENSIONS_PROPERTY, rest_fingerprint
+from .export_adm import (UNKNOWN_MESH_EXTENSIONS_PROPERTY, UNKNOWN_NODE_EXTENSIONS_PROPERTY,
+                         UNKNOWN_ROOT_EXTENSIONS_PROPERTY, UNKNOWN_SCENE_EXTENSIONS_PROPERTY,
+                         UNKNOWN_PRIMITIVE_ATTRIBUTE, UNKNOWN_PRIMITIVE_EXTENSIONS_PROPERTY,
+                         UNSUPPORTED_EXTENSIONS_PROPERTY, rest_fingerprint)
 from .materials import (MATERIAL_HEIGHT_DATA, MATERIAL_HEIGHT_IMAGE, MATERIAL_HEIGHT_SAMPLER,
+                        MATERIAL_UNKNOWN_SHADER, MATERIAL_UNKNOWN_SHADER_IMAGE,
                         UV_NAMES, apply_shader, build_material, has_profile_preview,
                         import_shader_definitions, mark_gpu_source_clean, preserve_gpu_source)
 from .props import SKELETON_PROFILES
@@ -169,6 +173,10 @@ class ModelImporter:
             root = self._run_validated()
             if unknown:
                 root[UNSUPPORTED_EXTENSIONS_PROPERTY] = ", ".join(unknown)
+                root_extensions = {name: value for name, value in self.doc.get("extensions", {}).items()
+                                   if name in unknown}
+                if root_extensions:
+                    root[UNKNOWN_ROOT_EXTENSIONS_PROPERTY] = json.dumps(root_extensions, ensure_ascii=False)
             transaction.restore_context()
         except BaseException as exc:
             errors = transaction.rollback()
@@ -275,6 +283,38 @@ class ModelImporter:
             if missing_image_uris:
                 mat["adm_incomplete_textures"] = sorted(set(missing_image_uris))
             apply_shader(mat, m, self.context.scene, resolve_image, resolve_normal_image)
+            shader = m.get("shader", {})
+            key = (shader.get("id"), shader.get("version")) if isinstance(shader, dict) else (None, None)
+            if mat.adm.shader == "CUSTOM" and isinstance(key[0], str) and key[0].startswith("adm.") \
+                    and key not in K.OFFICIAL_SHADERS:
+                params = m.get("shaderParameters") or {}
+                textures = []
+                for name, value in params.items():
+                    if not isinstance(value, dict):
+                        continue
+                    error = param_value_error({"type": "TEXTURE"}, value, len(d.get("textures", [])))
+                    if error:
+                        if "index" in value and not set(value) - {"index", "texCoord"}:
+                            raise ImportError_(f"material '{mat.name}': invalid unknown shader texture "
+                                               f"parameter '{name}': {error}")
+                        self.warn(f"SHADER_OPAQUE_PARAMETER: material '{mat.name}' parameter '{name}' "
+                                  "is retained without interpreting or remapping its references")
+                        continue
+                    image, sampler = self.resolve_texture(value)
+                    image_key = MATERIAL_UNKNOWN_SHADER_IMAGE + str(len(textures))
+                    if image is not None:
+                        mat[image_key] = image
+                    source = d["textures"][value["index"]]["source"]
+                    blob, _kind = self._gpu_source(source)
+                    mime = d["images"][source]["mimeType"]
+                    srgb = (gputex.parse(blob, mime, strict=True)["srgb"] if blob is not None else
+                            image is not None and image.colorspace_settings.name == "sRGB")
+                    textures.append({"name": name, "image": image_key, "sampler": sampler, "srgb": bool(srgb)})
+                mat[MATERIAL_UNKNOWN_SHADER] = json.dumps(
+                    {"shader": shader, "parameters": params, "textures": textures},
+                    ensure_ascii=False, allow_nan=False)
+                self.warn(f"SHADER_UNKNOWN_PRESERVED: material '{mat.name}' retains {key[0]}@{key[1]} "
+                          "without schema validation; opaque references cannot be remapped")
             if not has_profile_preview(mat.adm.shader):
                 self.warn(f"SHADER_FALLBACK: material '{mat.name}' uses portable PBR shading; "
                           f"{mat.adm.shader_key()[0]}@{mat.adm.shader_key()[1]} is preserved for export")
@@ -567,6 +607,10 @@ class ModelImporter:
                 self.scene_objs.append(e)
             else:
                 self.scene_objs.append(self.root)
+            unknown = {name: value for name, value in sc.get("extensions", {}).items()
+                       if name not in K.SUPPORTED_EXTENSIONS}
+            if unknown:
+                self.scene_objs[-1][UNKNOWN_SCENE_EXTENSIONS_PROPERTY] = json.dumps(unknown, ensure_ascii=False)
         self.obj_world[self.root.name] = Matrix.Identity(4)
         for e in self.scene_objs:
             self.obj_world[e.name] = Matrix.Identity(4)
@@ -616,6 +660,21 @@ class ModelImporter:
         for gi in range(len(self.arm_groups)):
             if gi not in built_groups:
                 self.build_armature(gi)
+
+        for i, node in enumerate(self.nodes):
+            unknown = {name: value for name, value in node.get("extensions", {}).items()
+                       if name not in K.SUPPORTED_EXTENSIONS}
+            if not unknown:
+                continue
+            if i in self.bone_of:
+                arm, bone = self.bone_of[i]
+                owner = arm.data.bones[bone]
+            else:
+                owner = self.node_obj.get(i)
+            if owner is None:
+                self.warn(f"Unknown extensions on node {i} cannot be preserved because it was not imported")
+            else:
+                owner[UNKNOWN_NODE_EXTENSIONS_PROPERTY] = json.dumps(unknown, ensure_ascii=False)
 
     def _mesh_obj_data(self, i):
         node = self.nodes[i]
@@ -868,6 +927,7 @@ class ModelImporter:
         pos, tris, nrm, uv, col, col1, jnt, wgt, mats, face_physical = (
             [], [], [], [[], []], [], [], [], [], [], [])
         face_interactive, vertex_groups = [], []
+        primitive_extensions, face_primitive_ids = [], []
         deltas = []
         vertex_control = K.VERTEX_CONTROL_EXT in self.doc.get("extensionsRequired", [])
         ntarg = len(m.get("targetNames", [])) if not collision else 0
@@ -898,6 +958,11 @@ class ModelImporter:
             I = self.acc(p["indices"], np.int64).reshape(-1, 3) + offset
             tris.append(I)
             mats.append(np.full(len(I), p.get("material", -1), dtype=np.int64))
+            unknown = {name: value for name, value in p.get("extensions", {}).items()
+                       if name not in K.SUPPORTED_EXTENSIONS}
+            if unknown:
+                primitive_extensions.append(unknown)
+            face_primitive_ids.extend([len(primitive_extensions) if unknown else 0] * len(I))
             face_interactive.extend([interactive_bindings.get(pi, ("", 0, 0.0))] * len(I))
             if interactive_bindings:
                 vertex_groups.append(np.full(n, pi + 1, dtype=np.int64))
@@ -935,6 +1000,7 @@ class ModelImporter:
         T = np.vstack(tris)
         MI = np.concatenate(mats)
         face_physical = np.asarray(face_physical, dtype=object)
+        face_primitive_ids = np.asarray(face_primitive_ids, dtype=np.int32)
         face_ids = np.asarray([entry[0] for entry in face_interactive], dtype=object)
         face_uv = np.asarray([entry[1] for entry in face_interactive], dtype=np.int32)
         face_ratio = np.asarray([entry[2] for entry in face_interactive], dtype=np.float64)
@@ -980,10 +1046,15 @@ class ModelImporter:
         corner = T[good].reshape(-1)
         MI = MI[good]
         face_physical = face_physical[good]
+        face_primitive_ids = face_primitive_ids[good]
         face_ids, face_uv, face_ratio = face_ids[good], face_uv[good], face_ratio[good]
 
         name = _safe(m.get("name"), f"Mesh_{mesh_index}")
         me = bpy.data.meshes.new(name)
+        unknown = {key: value for key, value in m.get("extensions", {}).items()
+                   if key not in K.SUPPORTED_EXTENSIONS}
+        if unknown:
+            me[UNKNOWN_MESH_EXTENSIONS_PROPERTY] = json.dumps(unknown, ensure_ascii=False)
         co = P[keep]
         me.vertices.add(len(co))
         me.vertices.foreach_set("co", co.astype(np.float32).ravel())
@@ -993,6 +1064,11 @@ class ModelImporter:
         me.polygons.add(nt)
         me.polygons.foreach_set("loop_start", np.arange(0, nt * 3, 3, dtype=np.int32))
         me.update(calc_edges=True)
+        if primitive_extensions:
+            me[UNKNOWN_PRIMITIVE_EXTENSIONS_PROPERTY] = json.dumps(
+                {"primitives": primitive_extensions}, ensure_ascii=False)
+            attr = me.attributes.new(UNKNOWN_PRIMITIVE_ATTRIBUTE, "INT", "FACE")
+            attr.data.foreach_set("value", face_primitive_ids)
         if collision and len(face_physical) and any(face_physical):
             attr = me.attributes.new("adm_physical_material_id", "STRING", "FACE")
             for poly, ident in zip(attr.data, face_physical):

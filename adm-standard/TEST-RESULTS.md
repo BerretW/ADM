@@ -5,6 +5,28 @@ They document the bundled reference implementation only; they are not independen
 certification, and publication of ADM 1.0 does not imply that every §25/§30 certification case has
 been executed.
 
+## Advanced materials — local reference verification
+
+- Blender Tools 1.24.41: 36 build steps passed, with 2,149 reported cases and
+  10 external-asset skips. The build tested version 1.24.40 before bumping the
+  patch version. The extracted package passed material-height, unknown shader,
+  node, and humanoid joint regressions and an isolated install and re-enable test.
+- World Tile 0.7.12: 119 tests passed on Windows with VTK 9.7.2. The extracted
+  package passed auto-upgrade and POM preview checks and exported four tiles from a relocated
+  reference project. Rendered comparisons exercised POM and selected irregular
+  tile and mixed-LOD seams; a five-surface case demonstrates a palette limit.
+- Blender 5.2.3's bounded packaged regression preserved unknown root and
+  material extension JSON across project reload and export, with warnings
+  about opaque references. It rejected malformed and conflicting root data.
+- Bounded packaged regressions also preserved unknown object-node extensions
+  through project reload and export and an unknown joint extension through
+  humanoid import, project save and reload, and export.
+
+These results do not establish renderer conformance across platforms or VTK
+versions. Blender dependency-cycle and KTX2 native-decoder diagnostics remain;
+see [the support matrix](IMPLEMENTATION_SUPPORT_MATRIX.md) and
+[verification record](../.ai/TESTS.md) for limitations and details.
+
 ## Blender Tools 1.18.0 / `COLOR_1` v2 — local verification
 
 - CI-equivalent Python suite: **105 passed, 1 skipped**. The Windows symlink-permission test remains

@@ -1,6 +1,150 @@
 # Mission verification record
 
 ## Completed so far
+- Blender 1.24.45: 36 build steps passed, with 2,150 reported passing cases and
+  10 external-asset skips. The matrix tested 1.24.44 before the version bump.
+  The ZIP passed integrity, 48 source-byte comparisons, and the nested-archive
+  check. Extracted material and registration regressions passed. Installation
+  and reactivation passed with both preferences and the extension repository
+  isolated. The first activation check used the repository's display name as
+  its collection key and failed; selecting it by module ID passed. No original
+  RNA enum or registration failure messages appeared in the build log.
+- Blender 1.24.43: all 36 build steps passed, with 2,150 reported passing
+  cases and 10 external-asset skips. The matrix tested 1.24.42 before the
+  version bump. The final ZIP passed integrity, 48 source-byte comparisons,
+  and the nested-archive check. Material round-trip and registration rollback
+  regressions passed against the extracted implementation. Installation and
+  reactivation passed with isolated preferences; the default extension
+  repository was not isolated and its installed `adm_tools` was replaced.
+  The original RNA enum and registration failure messages were absent from
+  the build log.
+- Blender's extension builder excluded a pre-existing ignored nested ZIP after
+  the manifest change. The earlier 1.24.41 and 1.24.42 packages contain that
+  stale archive and must not be distributed.
+- Blender's bounded material-height regression passed with unknown scene, mesh, and primitive
+  extension data on two distinct scenes and primitives, project reload, selected export,
+  and explicit rejection of invalid metadata, ambiguous scene merges, missing
+  face tracking, lost primitives, and ambiguous splits. Blender emitted dependency-cycle warnings.
+- World Tile 0.7.17 passed ZIP integrity and 102 source-byte comparisons.
+  Five extracted-runtime export regressions passed, including selective
+  invalidation with per-map overrides. The relocated reference built and
+  exported four validated tiles; it reported 54 palette-conflict triangles.
+  The first packaged test invocation omitted the source test-fixture path and
+  failed to import `tests.test_pipeline`; the corrected invocation passed.
+- All 131 World Tile tests passed after selective invalidation changed;
+  PyVista emitted its existing future warning.
+- World Tile 0.7.16 passed ZIP integrity and 102 source-byte comparisons.
+  Six per-map encoding, preservation, UI, and preset tests passed against its
+  extracted runtime; its relocated reference exported four validated tiles.
+- World Tile's full suite passed 131 tests with per-map GPU encodings before
+  the version-only bump to 0.7.16. Tests
+  verify R8/R16/BC4 channel extraction, BC5 normal reconstruction, texture
+  sharing, selective re-export, GUI editing, and project/preset persistence.
+  An embedded reference tile with BC4, BC5, and R16 was imported and exported
+  by Blender 5.2.3; nine GPU primary blobs remained byte-identical and the
+  result validated. The first attempt omitted ADM Vertex Controls and was
+  correctly rejected; enabling that export option passed. Blender reported
+  14 dependency cycles.
+- The 0.7.15 World Tile ZIP passed integrity and 102 source-byte comparisons.
+  Seven focused tests passed against the extracted runtime, covering GPU
+  configuration, opt-in conversion, BC5, R16, TIFF, GUI persistence,
+  selective invalidation, and pre-decode pixel limits. Its relocated reference
+  project exported four validated tiles both with default preservation and
+  with explicit KTX2/RGBA8 conversion of five GPU sources. The full World Tile
+  suite passed all 126 tests after the final dimension checks; PyVista emitted
+  its existing future warning.
+- World Tile's full suite passed 125 tests after adding opt-in GPU conversion
+  and export-level format configuration. Subsequent targeted tests passed for
+  GPU export and preview dimension checks before decoding, R16 conversion,
+  BC5 PBR reconstruction, and multichannel TIFF limits.
+- World Tile's full suite passed 122 tests on Windows with the multichannel
+  precision and preview changes. The export revision was subsequently bumped
+  from 4 to 5; its focused invalidation regression passed against source and
+  the extracted 0.7.13 ZIP. The ZIP passed integrity and 102 source-byte
+  comparisons. Extracted precision, preview, export-revision, and shader-upgrade
+  regressions passed, and the relocated reference exported four validated tiles.
+- Focused precision tests cover embedded and external 16-bit PNG exports,
+  contiguous and planar RGBA 16-bit TIFF conversion, exact sample values,
+  selected height-channel preview, TIFF dimension rejection before decoding,
+  unsupported-layout rejection, and embedded and external TIFF-to-ADM exports.
+  An extracted-package probe checked all three RGB16 TIFF preview channels in
+  contiguous and planar layouts.
+- World Tile 0.7.12 passed 119 tests on Windows. Its ZIP passed integrity and
+  102 packaged-file byte comparisons. From the extracted ZIP, two opt-in
+  upgrade regressions and a POM-render regression passed; the relocated
+  reference project exported four validated ADM tiles.
+- Focused World Tile GUI tests verify opt-in shader upgrade, explicit legacy
+  override, project-data persistence, unchanged geometry-rule digest, and
+  refusal to upgrade unknown profiles or settings. They also cover material-set
+  import with an advanced height map.
+- `build.bat` produced `dist/adm_tools-1.24.41.zip`: 36 steps, 2,149 reported
+  cases passed, and 10 external-asset cases skipped. The matrix tested
+  version 1.24.40 before the patch bump. ZIP integrity and all 49 packaged-file
+  byte comparisons passed. The extracted implementation passed the material and
+  humanoid node-extension regressions; Blender 5.2.3 installed, disabled, and
+  re-enabled it in an isolated user configuration.
+- Blender 5.2.3's bounded source regressions passed for unknown object-node
+  extension JSON across import, project reload and full or selected export,
+  including malformed metadata rejection. A humanoid round trip preserved an
+  unknown joint extension alongside required joint-display metadata, including
+  after project save and reload.
+- `build.bat` produced `dist/adm_tools-1.24.40.zip`: 36 steps, 2,148 reported
+  cases passed, and 10 external-asset cases skipped. The matrix tested
+  version 1.24.39 before the build bumped the patch version. ZIP integrity and
+  all 49 packaged-file byte comparisons passed. The extracted implementation
+  passed the root-extension and material-height regression; Blender 5.2.3
+  installed, disabled, and re-enabled it in an isolated user configuration.
+- Blender 5.2.3's bounded material-height regression passed with unknown root
+  JSON through ADM import, project save/reload and full or selected export. It
+  also rejects malformed saved metadata and conflicting root extensions.
+- Blender `build.bat` produced `dist/adm_tools-1.24.39.zip`: 36 steps and
+  2,148 reported cases passed, with 10 external-asset skips. The extracted ZIP
+  passed unknown-shader, custom ENUM, and GPU/R16 tests; an isolated Blender
+  5.2.3 configuration installed and re-enabled it. Blender emitted existing
+  dependency-cycle and KTX2 native-decoder diagnostics.
+- World Tile's complete suite passed 117 tests after the shared palette-grouping
+  refactor. The 0.7.11 ZIP passed integrity, implementation comparisons, four
+  packaged preview tests, and a relocated four-tile export. The pinned isolated
+  runtime graph passed `pip-audit` with no known vulnerabilities; no committed
+  lockfile covers every allowed resolution. The final preview-label change was
+  also covered by focused surface-preview tests.
+- A World Tile GUI regression checks the displayed R and A values against
+  expected quantized `COLOR_1` values on adjacent primitives with different
+  local palettes and confirms the rendered images differ. The detailed and
+  fast preview regressions continue to pass.
+- World Tile 0.7.8 candidate 13 passed ZIP integrity, packaged implementation
+  comparisons, rendered `COLOR_1`, packed POM and full-map 16-unit reference
+  preview tests. Its relocated project exported four ADM tiles. Its bundled
+  ADM visualization produced `dist/advanced-reference-pom.png` and
+  `dist/advanced-reference-no-pom.png`; 82,594 color-channel samples differ by
+  more than 5/255. The visualization is fixture-specific, not a general ADM
+  renderer or independent conformance test.
+- A bounded Blender 5.2.3 test imports an unknown official shader with enum,
+  numeric, vector, boolean, null, texture, and opaque object parameters.
+  It verifies ADM export, project reload, profile switches, texture and sampler
+  remapping, GPU byte preservation, and explicit errors for invalid or missing
+  texture references. A custom shader at version 3.4.5 passes the ENUM
+  import/export and project-reload regression.
+- On VTK 9.7.2, equal-size scalar packing preserved selected/inverted channels
+  and R16 CPU samples; a mixed-size map remained separate. The renderer produced
+  equivalent packed and independent-map POM images, and visibly distinguished
+  two R16 heights within the same 8-bit quantization step. The portable
+  reference's full maps configured under a forced 16-unit limit and rendered
+  without removing maps. The
+  packed-allocation regression checks the texture budget before decoding.
+- The complete World Tile suite passed 116 tests. A targeted rerun also passed
+  the allocation guard and the forced 16-unit reference check.
+- World Tile 0.7.7 candidate 12 passed ZIP integrity and implementation byte
+  comparisons. Three tests ran against the extracted package, including the
+  rendered full-map reference preview and R16 POM comparison. Its relocated
+  project exported four validated ADM tiles. PyVista emitted an interpreter
+  shutdown deallocator warning after the passing packaged tests.
+- `build.bat` produced `dist/adm_tools-1.24.38.zip` with all 36 steps passing.
+  ZIP integrity and implementation byte comparisons passed. The extracted
+  implementation passed the bounded Blender texture-format test, including
+  multichannel 16-bit AUTO round trips. An isolated Blender 5.2.3 configuration
+  installed the ZIP and enabled, disabled, and re-enabled the extension.
+  Blender logged its existing KTX2 native-decoder diagnostics during the test.
 - Blender's bounded texture-format regression reproduced automatic 8-bit
   primary conversion for edited multichannel 16-bit data. With the fix, AUTO
   retains a 16-bit PNG primary for DDS and KTX2 requests, and ADM reimport

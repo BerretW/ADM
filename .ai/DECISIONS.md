@@ -69,13 +69,19 @@ implementation ambiguity. Link each decision to its source and tests.
   tested on VTK 9.7.2; shader-hook compatibility on other versions remains
   unverified. The UI reports configuration rather
   than claiming shader compilation succeeded.
-- The multi-surface final view binds each layer's original-resolution maps
-  separately and computes each parallax ray, map sample and height-adjusted
+- The multi-surface final view binds each layer's original-resolution maps and
+  computes each parallax ray, map sample and height-adjusted
   weight in the fragment shader. Shader diagnostics inspect per-fragment
   weights and offsets; the separate CPU weight views and displayed mean weights
   remain estimates at unshifted UVs. Texture-unit exhaustion is reported
   rather than silently dropping maps; when a Qt context is not yet available,
   the OpenGL minimum of 16 units is used conservatively.
+- Scalar maps from one layer with matching dimensions share a floating-point
+  RGBA texture. Channel selection and inversion are applied before packing;
+  height occupies red for the POM ray sampler. Differently sized maps remain
+  independent, and no source texture is resampled or modified. The packed
+  allocation counts toward the decoded texture budget before allocation.
+  The reference project's four-layer palettes fit the 16-unit fallback.
 - The VTK layered shader can also read a four-component point-weight attribute
   from a polydata mapper with scalar coloring disabled. This enables a rendered
   test of exported `COLOR_1` weights without changing the existing preview

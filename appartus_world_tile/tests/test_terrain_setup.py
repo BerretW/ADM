@@ -88,6 +88,15 @@ class TerrainSetupTest(unittest.TestCase):
         self.assertEqual(loaded.surface("grass").ao_strength, 0.6)
         self.assertTrue(loaded.surface("grass").height_map.path.startswith(os.path.join(folder, "textures")))
 
+    def test_per_map_gpu_encodings_round_trip_in_preset_version_four(self):
+        material = TerrainMaterial()
+        material.surface("grass").gpu_encodings = {"albedo": "BC7", "height": "RGBA8"}
+        folder = save_preset(os.path.join(self.tmp.name, "presets"), "GPU", material)
+        with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["version"], 4)
+        loaded = load_preset(os.path.dirname(folder), "gpu")
+        self.assertEqual(loaded.surface("grass").gpu_encodings, {"albedo": "BC7", "height": "RGBA8"})
+
     def test_preset_rejects_texture_paths_outside_its_directory(self):
         root = os.path.join(self.tmp.name, "presets")
         folder = save_preset(root, "safe", TerrainMaterial())

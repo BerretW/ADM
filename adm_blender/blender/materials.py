@@ -22,6 +22,8 @@ MATERIAL_HEIGHT_DATA = "_adm_material_height_json"
 MATERIAL_HEIGHT_IMAGE = "_adm_material_height_image"
 MATERIAL_HEIGHT_SAMPLER = "_adm_material_height_sampler_json"
 MATERIAL_UNKNOWN_EXTENSIONS = "_adm_unknown_material_extensions_json"
+MATERIAL_UNKNOWN_SHADER = "_adm_unknown_shader_json"
+MATERIAL_UNKNOWN_SHADER_IMAGE = "_adm_unknown_shader_image_"
 
 
 # ================================================================================================
@@ -735,6 +737,8 @@ class MaterialExporter:
                     self.samplers.append(sampler)
                     self._sampler_cache[sampler_key] = len(self.samplers) - 1
                 sampler_index = self._sampler_cache[sampler_key]
+                if isinstance(sampler.get("extensions"), dict):
+                    self.extensions_used.update(sampler["extensions"])
             entry = self._add_image(self._image_key(image, False), image.name, image, False)
             height["heightTexture"]["index"] = self._texture(entry, sampler_index)
             out.setdefault("extensions", {})[K.MATERIAL_HEIGHT_EXT] = height
@@ -796,6 +800,17 @@ class MaterialExporter:
         if any(value.use for value in a.archived_params):
             self.warn(f"material '{mat.name}': inactive shader parameters are saved in the Blender project "
                       "but excluded from this ADM export")
+        if MATERIAL_UNKNOWN_SHADER in mat:
+            try:
+                saved = json.loads(mat[MATERIAL_UNKNOWN_SHADER])
+                if not isinstance(saved, dict) or not isinstance(saved.get("shader"), dict):
+                    raise ValueError("invalid shader metadata")
+            except (TypeError, ValueError) as exc:
+                raise ShaderExportError(f"material '{mat.name}': cannot preserve unknown shader: {exc}") from exc
+            current = a.shader_key()
+            if saved["shader"] != {"id": current[0], "version": current[1]}:
+                self.warn(f"material '{mat.name}': inactive unknown shader parameters are saved in the Blender "
+                          "project but excluded from this ADM export")
         aid = a.animation_id.strip()
         if a.shader != "CORE" and not aid:
             aid = unique_animation_id(mat.name, self._animation_ids)
@@ -878,6 +893,51 @@ class MaterialExporter:
                 self.warn(f"material '{mat.name}': {key[0]}@{key[1]} is preserved with portable PBR fallback; "
                           "this profile has no Blender node preview yet")
             return
+        if a.shader == "CUSTOM" and MATERIAL_UNKNOWN_SHADER in mat:
+            try:
+                saved = json.loads(mat[MATERIAL_UNKNOWN_SHADER])
+                if not isinstance(saved, dict) or not isinstance(saved.get("parameters"), dict):
+                    raise ValueError("invalid shader metadata")
+                if saved.get("shader") == {"id": key[0], "version": key[1]}:
+                    values = saved["parameters"]
+                    textures = saved.get("textures")
+                    if not isinstance(textures, list):
+                        raise ValueError("invalid shader texture metadata")
+                    for index, entry in enumerate(textures):
+                        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+                            raise ValueError("invalid shader texture entry")
+                        name, image_key, sampler = entry["name"], entry.get("image"), entry.get("sampler")
+                        if image_key != MATERIAL_UNKNOWN_SHADER_IMAGE + str(index):
+                            raise ValueError("invalid shader image key")
+                        if param_value_error({"type": "TEXTURE"}, values.get(name)) is not None \
+                                or not isinstance(values.get(name), dict):
+                            raise ValueError("invalid shader texture reference")
+                        image = mat.get(image_key)
+                        if not isinstance(image, bpy.types.Image):
+                            raise ValueError(f"image for '{name}' is missing")
+                        if sampler is not None and not isinstance(sampler, dict):
+                            raise ValueError("invalid shader texture sampler")
+                        sampler_index = None
+                        if sampler is not None:
+                            sampler_key = ("preserved", json.dumps(sampler, sort_keys=True, ensure_ascii=False))
+                            if sampler_key not in self._sampler_cache:
+                                self.samplers.append(sampler)
+                                self._sampler_cache[sampler_key] = len(self.samplers) - 1
+                            sampler_index = self._sampler_cache[sampler_key]
+                        color_role = entry.get("srgb")
+                        if type(color_role) is not bool:
+                            raise ValueError("invalid shader texture color space")
+                        image_entry = self._add_image(self._image_key(image, color_role), image.name,
+                                                      image, color_role)
+                        values[name]["index"] = self._texture(image_entry, sampler_index)
+                    out["shader"] = saved["shader"]
+                    if values:
+                        out["shaderParameters"] = values
+                    self.warn(f"material '{mat.name}': unknown shader parameters are preserved without "
+                              "schema validation; opaque references cannot be remapped")
+                    return
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ShaderExportError(f"material '{mat.name}': cannot preserve unknown shader: {exc}") from exc
         sdef = self.shader_defs.get(key)
         if sdef is None:
             raise ShaderExportError(f"material '{mat.name}': custom shader '{a.custom_shader}' has no definition "
@@ -1489,7 +1549,6 @@ def _apply_shader(mat, m, scene, resolve_image, resolve_normal_image):
                         v.image.alpha_mode = "CHANNEL_PACKED"
     else:
         a.shader = "CUSTOM"
-        a.shader_version = key[1]
         a.custom_shader = f"{key[0]}@{key[1]}"
         sdef = scene.adm_anim.shaders.get(a.custom_shader)
         if sdef is not None:

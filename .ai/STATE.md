@@ -1,5 +1,98 @@
 # Mission state
 
+- Blender 1.24.41 and 1.24.42 inadvertently include an ignored nested
+  `adm_blender.zip` from the source directory. Do not distribute those
+  packages. The manifest now excludes ZIP files and the build checks the
+  resulting package for nested ZIPs.
+- Blender 1.24.43 passes the 36-step build and its ZIP has no nested archives.
+  The install check used isolated preferences but the default extension
+  repository still pointed to the user's Blender 5.2 directory, replacing
+  its installed `adm_tools` with 1.24.43. The previous installed version
+  was not recorded.
+- Blender 1.24.45 includes scene, mesh, and primitive metadata preservation.
+  Its package passed source comparisons, packaged regressions, and installation
+  and reactivation in an explicitly isolated extension repository.
+- Blender retains unknown scene and mesh extension JSON and primitive extension JSON on imported faces, without
+  interpreting its references. Export rejects missing tracking, lost primitives,
+  and primitive splits; other unsupported extension locations remain incomplete.
+- World Tile 0.7.17's 102-file ZIP matches source bytes; packaged export
+  regressions and its relocated four-tile reference export passed.
+- World Tile 0.7.16's 102-file ZIP matches source bytes; extracted tests cover
+  per-map formats, channel mapping, sharing, UI and preset persistence. Its
+  relocated reference project exports four validated tiles.
+- World Tile 0.7.15's 102-file ZIP matches source bytes and passed extracted
+  GPU-format, explicit-conversion, precision, input-limit, GUI, and per-tile
+  invalidation tests. Its relocated reference exports four validated tiles.
+- World Tile 0.7.13 preserves multichannel 16-bit data PNG primaries and
+  converts supported RGB/RGBA 16-bit TIFF data maps to 16-bit PNG. The TIFF
+  height preview preserves the selected channel; unsupported 16-bit TIFF
+  layouts fail explicitly. Export revision 5 invalidates previous tile outputs.
+- World Tile has export-level DDS/KTX2 and automatic/BC7/RGBA8 settings for
+  converted 8-bit images. Compatible GPU inputs remain byte-identical unless
+  re-encoding is enabled; 16-bit data keeps its precision. Export warns about
+  re-encoding and formats that differ from the selection.
+  Container and conversion changes invalidate textured tiles. A global encoding
+  change invalidates only tiles with a texture using that default. Each map
+  also offers an encoding override: R8/R16/BC4 for
+  the selected data channel, BC5 for normals, and automatic/BC7/RGBA8.
+  M8 remains open for its other authoring and round-trip limitations.
+- World Tile's material editor offers a default-off, material-session-scoped
+  automatic upgrade to terrain shader 2.1.0. It reports the upgrade, preserves
+  unknown settings, and disables the opt-in when the legacy profile is chosen.
+- World Tile 0.7.12 passed all 119 tests. Its 102-file ZIP matched the source
+  bytes, passed extracted auto-upgrade and POM rendering tests, and exported
+  four tiles from the relocated reference project.
+- Mission completion is not claimed. A standalone core-PBR BC5 texture cannot
+  retain its BC5 primary and also supply reconstructed RGB under the existing
+  two-channel fallback contract; no standard expansion was authorized. Five
+  simultaneous surfaces cannot be represented exactly by a four-layer primitive.
+  Opaque extension references cannot be safely remapped without their schemas;
+  unsupported extension locations remain incompletely preserved. Other platforms
+  and dependency resolutions remain unverified. Open checklist items stay open.
+- Blender retains unknown root-extension JSON across import, project reload,
+  full-model and selected-object export, with a warning that opaque references
+  cannot be remapped. Conflicting root data from multiple models is rejected.
+- Imported object and bone nodes also retain unknown extension JSON. Unimported
+  nodes cannot retain it; warnings disclose opaque references and data loss.
+- Blender 1.24.41 passed all 36 build steps (2,149 reported cases, 10 skips).
+  The ZIP matches all 49 packaged source files and passed extracted node, bone,
+  and material regressions plus isolated installation and reactivation.
+- Blender 1.24.40 was built after the root-extension change. All 36 build
+  steps passed; the extracted package passed the new regression and an isolated
+  install, disable, and re-enable check.
+- Blender 1.24.39 passed all 36 build steps (2,148 reported cases, 10 skips).
+  Its ZIP matches the implementation and passed packaged unknown-shader, ENUM,
+  and R16 tests, plus isolated installation and reactivation.
+- The World Tile suite passed 117 tests after the shared palette-grouping
+  refactor. Version 0.7.11's extracted ZIP passed preview and relocated
+  four-tile export tests. A pinned
+  isolated runtime graph passed `pip-audit`; the repository does not lock every
+  possible dependency resolution.
+- The World Tile 3D view can inspect each quantized `COLOR_1` palette channel
+  without loading textures. It uses the exporter's primitive palettes and
+  warns that channel-to-surface assignments can differ between primitives.
+- Blender imports unknown official shader versions using PBR fallback and
+  retains their parameter values across project save, profile switches, and
+  ADM export. Recognized texture references are remapped with their samplers
+  and compatible GPU source bytes. Unknown schemas and opaque parameter
+  references still cannot be validated or remapped; warnings disclose this.
+  Custom shader versions no longer depend on the official-version enum.
+- The World Tile layered preview packs equally sized scalar maps into float
+  channels without resampling, keeping height in red for POM. Differently sized
+  maps remain separate; the packed allocation is checked against the decoded
+  texture budget before allocation. The portable reference's complete maps
+  configure within a forced 16-unit budget, without dropping maps.
+- World Tile version 0.7.7 candidate 12 passed ZIP integrity, packaged-code
+  comparisons, packed and independent POM rendering, and full-map reference
+  preview under a forced 16-unit budget. Its relocated project exported four
+  validated ADM tiles. It remains a candidate while mission items are open.
+- World Tile 0.7.8 candidate 13 also passed packaged `COLOR_1`, POM, and
+  complete-reference preview regressions, and exported four relocated tiles.
+  The packaged fixture renderer produced POM-on and POM-off images in `dist`.
+- Blender `build.bat` produced version 1.24.38 after the 16-bit AUTO fix; all
+  36 build steps passed. ZIP integrity and implementation comparisons passed;
+  the extracted extension passed the bounded texture-format regression and an
+  isolated installation could be enabled, disabled, and re-enabled.
 - Blender add-on registration no longer reads materials inside Blender's
   restricted registration context. Existing shader parameter ownership is
   initialized on the first timer tick and on project load. Registration rolls

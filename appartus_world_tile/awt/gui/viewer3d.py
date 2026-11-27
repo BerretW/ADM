@@ -16,14 +16,25 @@ TRIANGLE_BUDGET = 8_000_000
 DETAIL_TRIANGLE_BUDGET = 250_000
 DETAIL_PALETTE_BUDGET = 128
 DETAIL_TEXTURE_BUDGET = 512 * 1024 * 1024
-COLOR_MODES = ("Height", "Surfaces (vertex layers)", "Tiles", "Material", "Detailed material")
+COLOR_MODES = ("Height", "Surfaces (vertex layers)", "Tiles", "Material", "Detailed material",
+               "COLOR_1 palette channel")
 MATERIAL_MODE = 3
 DETAILED_MATERIAL_MODE = 4
+COLOR1_MODE = 5
 
 
 def triangle_count(manifest: dict, tiles, lod: int) -> int:
     wanted = set(tiles)
     return sum(t["lods"][lod]["triangles"] for t in manifest["tiles"] if (t["ix"], t["iy"]) in wanted)
+
+
+def _palette_groups(tile):
+    from ..adm_export import group_masks, triangle_masks
+
+    masks, conflicts = triangle_masks(tile["weights"], tile["faces"])
+    sets, assign = group_masks(masks)
+    groups = np.array([assign[int(mask)] for mask in masks])
+    return ((mask, tile["faces"][groups == group]) for group, mask in enumerate(sets)), conflicts
 
 
 def _tile_color(ix: int, iy: int) -> np.ndarray:
@@ -145,6 +156,11 @@ class Viewer3D(QWidget):
         self.color.addItems(COLOR_MODES)
         self.color.setToolTip("Material is a fast albedo bake. Detailed material samples each layer in the "
                               "shader, including height blending and parallax.")
+        self.weight_channel = QComboBox()
+        self.weight_channel.addItems(("R", "G", "B", "A"))
+        self.weight_channel.setToolTip("COLOR_1 channels refer to local palette slots, which can differ "
+                                       "between primitives.")
+        self.weight_channel.setVisible(False)
         self.exaggeration = QDoubleSpinBox()
         self.exaggeration.setRange(0.1, 20.0)
         self.exaggeration.setSingleStep(0.5)
@@ -161,6 +177,7 @@ class Viewer3D(QWidget):
         for label, widget in (("LOD", self.lod), ("Colour", self.color), ("Height", self.exaggeration)):
             bar.addWidget(QLabel(label))
             bar.addWidget(widget)
+        bar.addWidget(self.weight_channel)
         bar.addWidget(self.wire)
         bar.addWidget(self.reset)
         bar.addStretch(1)
@@ -180,6 +197,7 @@ class Viewer3D(QWidget):
 
         self.lod.currentIndexChanged.connect(self._reload)
         self.color.currentIndexChanged.connect(self._color_changed)
+        self.weight_channel.currentIndexChanged.connect(self._redraw)
         self.wire.toggled.connect(self._redraw)
         self.exaggeration.valueChanged.connect(self._rescale)
         self.reset.clicked.connect(self._reset_camera)
@@ -227,7 +245,9 @@ class Viewer3D(QWidget):
 
     # ------------------------------------------------------------ loading
     def _color_changed(self) -> None:
-        if self.color.currentIndex() == DETAILED_MATERIAL_MODE and "material_tiles" not in self._data:
+        mode = self.color.currentIndex()
+        self.weight_channel.setVisible(mode == COLOR1_MODE)
+        if mode in (DETAILED_MATERIAL_MODE, COLOR1_MODE) and "material_tiles" not in self._data:
             self._reload()
         else:
             self._redraw()
@@ -240,7 +260,7 @@ class Viewer3D(QWidget):
             return
         lod = self.lod.currentIndex()
         count = triangle_count(self._manifest, self._tiles, lod)
-        detailed = self.color.currentIndex() == DETAILED_MATERIAL_MODE
+        detailed = self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE)
         budget = DETAIL_TRIANGLE_BUDGET if detailed else TRIANGLE_BUDGET
         if count > budget:
             self.status.setText(f"{len(self._tiles)} tiles at LOD {lod} have {count:,} triangles, above the "
@@ -262,7 +282,7 @@ class Viewer3D(QWidget):
         if self._loader is not None:
             manifest, tiles, lod, detailed = self._loader._args
             if (manifest is not self._manifest or tiles != self._tiles or lod != self.lod.currentIndex()
-                    or detailed != (self.color.currentIndex() == DETAILED_MATERIAL_MODE)):
+                    or detailed != (self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE))):
                 self._pending = True
                 return
         key = tuple(self._tiles)
@@ -272,7 +292,7 @@ class Viewer3D(QWidget):
         self._redraw()
         if first:
             self._reset_camera()
-        if data and self.color.currentIndex() != DETAILED_MATERIAL_MODE:
+        if data and self.color.currentIndex() not in (DETAILED_MATERIAL_MODE, COLOR1_MODE):
             self.status.setText(f"{len(self._tiles)} tiles, LOD {self.lod.currentIndex()}: "
                                 f"{len(data['faces']):,} triangles, {len(data['points']):,} vertices. "
                                 "Left drag rotates, right drag or wheel zooms, middle drag pans.")
@@ -288,20 +308,28 @@ class Viewer3D(QWidget):
         if not self._data:
             self.plotter.render()
             return
-        if self.color.currentIndex() == DETAILED_MATERIAL_MODE:
+        if self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE):
             if "material_tiles" not in self._data:
                 self._reload()
                 return
             try:
-                actors, conflicts = self._draw_detailed(pv)
+                if self.color.currentIndex() == COLOR1_MODE:
+                    actors, conflicts = self._draw_color1(pv)
+                else:
+                    actors, conflicts = self._draw_detailed(pv)
             except (OSError, ValueError) as exc:
-                self.status.setText(f"Could not configure detailed material: {exc}")
+                label = "COLOR_1 preview" if self.color.currentIndex() == COLOR1_MODE else "detailed material"
+                self.status.setText(f"Could not configure {label}: {exc}")
                 self.plotter.render()
                 return
             if actors:
                 self._actor, self._extra_actors = actors[0], actors[1:]
-            message = ("Detailed material configured using built weights; rebuild after changing biome rules or paint. "
-                       "Shader compilation depends on the VTK renderer.")
+            if self.color.currentIndex() == COLOR1_MODE:
+                message = ("COLOR_1 shows the selected local palette channel; slots can refer to different "
+                           "surfaces across primitives. Rebuild after changing biome rules or paint.")
+            else:
+                message = ("Detailed material configured using built weights; rebuild after changing biome rules "
+                           "or paint. Shader compilation depends on the VTK renderer.")
             if conflicts:
                 message += f" {conflicts} triangles exceed four surfaces and may show seams."
             self.status.setText(message)
@@ -334,9 +362,37 @@ class Viewer3D(QWidget):
         self._actor.scale = (1.0, 1.0, self.exaggeration.value())
         self.plotter.render()
 
+    def _draw_color1(self, pv):
+        from ..adm_export import _slots, color1
+
+        actors = []
+        conflicts = 0
+        try:
+            for tile in self._data["material_tiles"]:
+                groups, count = _palette_groups(tile)
+                conflicts += count
+                for mask, selected_faces in groups:
+                    if len(actors) >= DETAIL_PALETTE_BUDGET:
+                        raise ValueError(f"COLOR_1 preview exceeds the {DETAIL_PALETTE_BUDGET}-palette budget; "
+                                         "select fewer tiles")
+                    keep, local = np.unique(selected_faces.ravel(), return_inverse=True)
+                    mesh = pv.PolyData.from_regular_faces(tile["points"][keep], local.reshape(-1, 3))
+                    weights = color1(tile["weights"][keep], _slots(mask))
+                    mesh.point_data["COLOR_1"] = weights
+                    mesh.point_data["channel"] = weights[:, self.weight_channel.currentIndex()]
+                    actors.append(self.plotter.add_mesh(mesh, scalars="channel", cmap="gray", clim=(0, 255),
+                                                        lighting=False, show_scalar_bar=False,
+                                                        show_edges=self.wire.isChecked(), edge_color="#5a636e",
+                                                        render=False))
+        except (OSError, ValueError):
+            for actor in actors:
+                self.plotter.remove_actor(actor, render=False)
+            raise
+        return actors, conflicts
+
     def _draw_detailed(self, pv):
         from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
-        from ..adm_export import _slots, build_surfaces, color1, group_masks, triangle_masks
+        from ..adm_export import _slots, build_surfaces, color1
         from .material_panel import _mesh_with_tangents
         from .preview_shader import install_layered_preview
 
@@ -354,15 +410,12 @@ class Viewer3D(QWidget):
         texture_cache = {}
         try:
             for tile in self._data["material_tiles"]:
-                masks, count = triangle_masks(tile["weights"], tile["faces"])
+                groups, count = _palette_groups(tile)
                 conflicts += count
-                sets, assign = group_masks(masks)
-                groups = np.array([assign[int(mask)] for mask in masks])
-                for group, mask in enumerate(sets):
+                for mask, selected_faces in groups:
                     if len(actors) >= DETAIL_PALETTE_BUDGET:
                         raise ValueError(f"Detailed material exceeds the {DETAIL_PALETTE_BUDGET}-palette budget; "
                                          "select fewer tiles")
-                    selected_faces = tile["faces"][groups == group]
                     keep, local = np.unique(selected_faces.ravel(), return_inverse=True)
                     mesh = pv.PolyData.from_regular_faces(tile["points"][keep], local.reshape(-1, 3))
                     mesh.point_data["Normals"] = tile["normals"][keep]

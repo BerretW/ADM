@@ -113,6 +113,58 @@ raise SystemExit(app.exec())
             window.material_panel.biome_list.setCurrentRow(0)
             self.assertEqual(window.material_panel.biome_editor.noise.value(), 65)
 
+    def test_gpu_export_controls_persist_and_keep_unknown_setting_visible(self):
+        from awt.project import Project
+        from awt.pipeline import BuildParams
+
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        window.gpu_container.setCurrentIndex(window.gpu_container.findData("KTX2"))
+        window.gpu_encoding.setCurrentIndex(window.gpu_encoding.findData("BC7"))
+        window.convert_gpu_sources.setChecked(True)
+        self.assertEqual(window._export_settings().gpu_container, "KTX2")
+        self.assertEqual(window._export_settings().gpu_encoding, "BC7")
+        self.assertTrue(window._dirty)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "world.awtp")
+            self.assertTrue(window._write_project(path))
+            project = load_project(path)
+            self.assertEqual(project.to_dict()["format_version"], 6)
+            window._apply_widgets(project)
+            self.assertEqual(window.gpu_container.currentData(), "KTX2")
+            self.assertEqual(window.gpu_encoding.currentData(), "BC7")
+            self.assertTrue(window.convert_gpu_sources.isChecked())
+        project = Project(BuildParams(input_path="", out_dir=""))
+        project.export.out_dir = "export"
+        project.export.gpu_encoding = "FUTURE"
+        window._apply_widgets(project)
+        self.assertEqual(window._export_settings().gpu_encoding, "FUTURE")
+        self.assertIn("Unsupported", window.gpu_encoding.currentText())
+        with self.assertRaisesRegex(ValueError, "Unsupported GPU"):
+            window._export_settings().validate_values()
+
+    def test_per_map_gpu_encoding_edits_and_preserves_unknown_values(self):
+        panel = MaterialPanel()
+        self.addCleanup(panel.close)
+        panel.surface_list.setCurrentRow(panel.material().surface_names().index("grass"))
+        surface = panel.material().surface("grass")
+        original_rules = panel.material().rules_digest()
+        picker = panel.surface_editor.height.picker
+        picker.encoding.setCurrentIndex(picker.encoding.findData("BC7"))
+        self.assertEqual(surface.gpu_encodings, {"height": "BC7"})
+        self.assertEqual(panel.material().rules_digest(), original_rules)
+        panel.surface_editor.albedo.encoding.setCurrentIndex(panel.surface_editor.albedo.encoding.findData("RGBA8"))
+        self.assertEqual(surface.gpu_encodings["albedo"], "RGBA8")
+        picker.encoding.setCurrentIndex(picker.encoding.findData(""))
+        self.assertNotIn("height", surface.gpu_encodings)
+        surface.gpu_encodings["height"] = "FUTURE"
+        panel.surface_editor.set_surface(surface)
+        self.assertEqual(picker.encoding.currentData(), "FUTURE")
+        self.assertIn("Unsupported", picker.encoding.currentText())
+        with self.assertRaisesRegex(ValueError, "unsupported per-map GPU encoding"):
+            panel.material().validate()
+
     def test_advanced_material_controls_update_surface_and_shader_settings(self):
         panel = MaterialPanel()
         self.addCleanup(panel.close)
@@ -161,6 +213,105 @@ raise SystemExit(app.exec())
         panel.set_material(TerrainMaterial())
         self.assertEqual(panel.terrain_shader_version.findData("2.9.0"), -1)
         self.assertEqual(panel.parallax_mode.findData("FUTURE_MODE"), -1)
+
+    def test_shader_auto_upgrade_requires_opt_in_and_respects_legacy_and_unknown_data(self):
+        panel = MaterialPanel()
+        self.addCleanup(panel.close)
+        material = panel.material()
+        panel.height_blend.setChecked(True)
+        self.assertEqual(material.terrain_shader_version, "2.0.0")
+        panel.auto_upgrade_shader.setChecked(True)
+        self.assertEqual(material.terrain_shader_version, "2.1.0")
+        self.assertEqual(panel.terrain_shader_version.currentData(), "2.1.0")
+        self.assertIn("Upgraded", panel.shader_upgrade_status.text())
+
+        panel.terrain_shader_version.setCurrentIndex(panel.terrain_shader_version.findData("2.0.0"))
+        self.assertFalse(panel.auto_upgrade_shader.isChecked())
+        self.assertEqual(material.terrain_shader_version, "2.0.0")
+        self.assertIn("disabled", panel.shader_upgrade_status.text())
+
+        material = TerrainMaterial()
+        panel.set_material(material)
+        self.assertFalse(panel.auto_upgrade_shader.isChecked())
+        panel.auto_upgrade_shader.setChecked(True)
+        rules = material.rules_digest()
+        panel.surface_editor.height.factor.setValue(0.5)
+        self.assertEqual(material.terrain_shader_version, "2.1.0")
+        self.assertEqual(material.rules_digest(), rules)
+        self.assertEqual(TerrainMaterial.from_dict(material.to_dict(None), None).terrain_shader_version, "2.1.0")
+
+        future = TerrainMaterial()
+        future.unknown_terrain_shader_settings = {"future": True}
+        panel.set_material(future)
+        panel.auto_upgrade_shader.setChecked(True)
+        panel.height_blend.setChecked(True)
+        self.assertEqual(future.terrain_shader_version, "2.0.0")
+        self.assertEqual(future.unknown_terrain_shader_settings, {"future": True})
+        self.assertIn("unavailable", panel.shader_upgrade_status.text())
+
+        future.unknown_terrain_shader_settings = {}
+        future.terrain_shader_version = "2.9.0"
+        panel.set_material(future)
+        panel.auto_upgrade_shader.setChecked(True)
+        self.assertEqual(future.terrain_shader_version, "2.9.0")
+        self.assertIn("unsupported profile", panel.shader_upgrade_status.text())
+
+    def test_shader_auto_upgrade_after_material_set_import(self):
+        from PIL import Image
+        from PySide6.QtWidgets import QDialog
+        from awt.material_set_import import scan_material_sets
+
+        panel = MaterialPanel()
+        self.addCleanup(panel.close)
+        panel.auto_upgrade_shader.setChecked(True)
+        with tempfile.TemporaryDirectory() as directory:
+            Image.new("RGB", (4, 4), (120, 80, 40)).save(os.path.join(directory, "sample_albedo.png"))
+            Image.new("L", (4, 4), 128).save(os.path.join(directory, "sample_height.png"))
+            scan = scan_material_sets(directory)
+            with patch("awt.gui.material_panel.QFileDialog.getExistingDirectory", return_value=directory), \
+                    patch("awt.gui.material_panel.QSettings"), \
+                    patch("awt.gui.material_panel.QMessageBox.information"), \
+                    patch("awt.gui.material_panel.MaterialSetImportDialog") as dialog_class:
+                dialog = dialog_class.return_value
+                dialog.exec.return_value = QDialog.DialogCode.Accepted
+                dialog.scan = scan
+                dialog.selected_names = {"sample"}
+                dialog.conflict_choices = {}
+                dialog.update_existing = False
+                panel._import_surface_sets()
+            self.assertTrue(panel.material().surface("sample").height_map.path)
+            self.assertEqual(panel.material().terrain_shader_version, "2.1.0")
+            self.assertIn("Upgraded", panel.shader_upgrade_status.text())
+
+    def test_sixteen_bit_multichannel_tiff_height_preview_preserves_selected_channel(self):
+        import tifffile
+        from awt.gui.preview_shader import _height_samples
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "height.tiff")
+            values = np.zeros((2, 3, 4), dtype=np.uint16)
+            values[..., 1] = [[1000, 1001, 1002], [30000, 30001, 30002]]
+            values[..., 3] = 65535
+            tifffile.imwrite(path, values, photometric="rgb", planarconfig="contig")
+            actual = _height_samples(MapSlot(path, channel=1))
+            np.testing.assert_allclose(actual, values[..., 1].astype(np.float32) / 65535.0, atol=1e-7)
+            self.assertGreater(float(actual[0, 1] - actual[0, 0]), 0.0)
+
+    def test_r16_gpu_height_preview_checks_pixel_limit_before_decoding(self):
+        from awt.adm_export import _core
+        from awt.gui.preview_shader import _height_samples
+
+        _core()
+        from adm_blender.core import gputex
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "height.dds")
+            data, _ = gputex.encode_scalar(np.zeros((3, 3), dtype=np.uint16), gputex.MIME_DDS, "R16")
+            with open(path, "wb") as stream:
+                stream.write(data)
+            with patch("awt.gui.preview_shader.MAX_TEXTURE_PIXELS", 4), \
+                    patch.object(gputex, "decode_scalar_level", side_effect=AssertionError("decoded too early")):
+                with self.assertRaisesRegex(ValueError, "dimensions exceed"):
+                    _height_samples(MapSlot(path))
 
     def test_surface_edits_preserve_unmodified_shader_precision(self):
         panel = MaterialPanel()
@@ -520,10 +671,6 @@ raise SystemExit(app.exec())
         reference = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "reference_project"))
         project = load_project(os.path.join(reference, "advanced_reference.awtp"))
         manifest = load_manifest(project.params.out_dir)
-        for surface in project.material.surfaces:
-            surface.normal = ""
-            surface.roughness_map.path = ""
-            surface.ao_map.path = ""
         viewer = viewer3d.Viewer3D()
         self.addCleanup(viewer.shutdown)
         viewer.show()
@@ -542,7 +689,14 @@ raise SystemExit(app.exec())
                     raise TimeoutError("Timed out waiting to release the first tile load")
             return original_load(*args)
 
+        original_install = preview_shader.install_layered_preview
+
+        def limited_install(*args, **kwargs):
+            kwargs["texture_units"] = min(kwargs["texture_units"], 16)
+            return original_install(*args, **kwargs)
+
         with patch.object(viewer3d, "load_tiles", side_effect=delayed_load), \
+                patch.object(preview_shader, "install_layered_preview", side_effect=limited_install), \
                 patch.object(preview_shader, "_height_samples", wraps=preview_shader._height_samples) as samples:
             viewer.show_tiles([(0, 0)], 0)
             self.assertTrue(started.wait(5))
@@ -563,7 +717,157 @@ raise SystemExit(app.exec())
                         for actor in [viewer._actor] + viewer._extra_actors for i in range(4)]
             textures = [texture for texture in textures if texture is not None]
             self.assertGreater(len(textures), len({texture.GetAddressAsString("") for texture in textures}))
-            self.assertEqual(samples.call_count, len({texture.GetAddressAsString("") for texture in textures}))
+            self.assertEqual(samples.call_count, 3 * len({texture.GetAddressAsString("") for texture in textures}))
+            import pyvista as pv
+            plotter = pv.Plotter(off_screen=True, window_size=(300, 300))
+            self.addCleanup(plotter.close)
+            for actor in [viewer._actor] + viewer._extra_actors:
+                plotter.add_actor(actor, reset_camera=False)
+            plotter.reset_camera()
+            plotter.show(auto_close=False)
+            image = plotter.screenshot(return_img=True)
+            self.assertGreater(np.std(image), 10)
+
+    def test_color1_preview_shows_exported_local_palette_channels(self):
+        import pyvista as pv
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        from awt.gui.viewer3d import COLOR1_MODE, Viewer3D
+
+        viewer = Viewer3D()
+        self.addCleanup(viewer.shutdown)
+        viewer.show()
+        self.app.processEvents()
+        weights = np.array([[128, 0, 0, 0, 127], [0, 255, 0, 0, 0],
+                            [0, 0, 255, 0, 0], [0, 0, 0, 255, 0]], dtype=np.uint8)
+        points = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float32)
+        faces = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int64)
+        viewer._data = {"material_tiles": [{"points": points, "faces": faces, "weights": weights}]}
+        viewer.color.setCurrentIndex(COLOR1_MODE)
+        self.assertIn("local palette channel", viewer.status.text())
+        self.assertTrue(viewer.weight_channel.isVisible())
+
+        def arrays():
+            return [vtk_to_numpy(actor.mapper.GetInput().GetPointData().GetArray("channel")).tolist()
+                    for actor in [viewer._actor] + viewer._extra_actors]
+
+        plotter = pv.Plotter(off_screen=True, window_size=(150, 150))
+        self.addCleanup(plotter.close)
+
+        def render():
+            plotter.clear()
+            for actor in [viewer._actor] + viewer._extra_actors:
+                plotter.add_actor(actor, reset_camera=False)
+            plotter.camera_position = [(0.5, 0.5, 3), (0.5, 0.5, 0), (0, 1, 0)]
+            plotter.show(auto_close=False)
+            return plotter.screenshot(return_img=True).astype(int)
+
+        self.assertCountEqual(arrays(), [[128, 0, 0], [255, 0, 0]])
+        red = render()
+        viewer.weight_channel.setCurrentIndex(3)
+        self.assertCountEqual(arrays(), [[127, 0, 0], [0, 0, 0]])
+        alpha = render()
+        self.assertGreater(np.count_nonzero(np.abs(red - alpha) > 5), 100)
+
+    def test_scalar_maps_pack_without_resampling_or_losing_height_precision(self):
+        import pyvista as pv
+        from PIL import Image
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            height_path = os.path.join(directory, "height.png")
+            ao_path = os.path.join(directory, "ao.png")
+            roughness_path = os.path.join(directory, "roughness.png")
+            heights = np.array([[1, 257], [32769, 65534]], dtype=np.uint16)
+            Image.fromarray(heights).save(height_path)
+            Image.new("RGB", (2, 2), (25, 100, 200)).save(ao_path)
+            Image.new("L", (3, 2), 90).save(roughness_path)
+            surface = Surface("mixed", height_map=MapSlot(height_path),
+                              ao_map=MapSlot(ao_path, channel=1, invert=True),
+                              roughness_map=MapSlot(roughness_path))
+            plotter = pv.Plotter(off_screen=True)
+            self.addCleanup(plotter.close)
+            actor = plotter.add_mesh(pv.Plane())
+            install_layered_preview(actor, pv, [surface], [1], TerrainMaterial(),
+                                    height_blend=True, transition=0.2, strength=1, texture_units=6)
+            packed = actor.prop.GetTexture("admLayerHeight0")
+            self.assertIsNotNone(packed)
+            self.assertIsNotNone(actor.prop.GetTexture("admLayerRoughness0"))
+            pixels = vtk_to_numpy(packed.GetInput().GetPointData().GetScalars()).reshape(2, 2, 4)
+            np.testing.assert_allclose(np.sort(pixels[..., 0].ravel()), np.sort(heights.ravel() / 65535),
+                                       rtol=0, atol=1e-7)
+            np.testing.assert_allclose(pixels[..., 1], 155 / 255, rtol=0, atol=1e-7)
+            with patch("awt.gui.preview_shader._height_samples") as samples:
+                with self.assertRaisesRegex(ValueError, "decoded texture budget"):
+                    install_layered_preview(actor, pv, [surface], [1], TerrainMaterial(),
+                                            height_blend=True, transition=0.2, strength=1, texture_units=6,
+                                            texture_cache={}, texture_budget_bytes=63)
+                samples.assert_not_called()
+
+    def test_packed_scalar_maps_match_independent_maps_in_pom_render(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.gui.material_panel import _mesh_with_tangents
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = {name: os.path.join(directory, name + ".png")
+                     for name in ("height", "albedo", "ao", "roughness", "ao_small", "roughness_small")}
+            height = np.broadcast_to(np.linspace(2000, 62000, 64, dtype=np.uint16), (32, 64)).copy()
+            Image.fromarray(height).save(paths["height"])
+            albedo = np.broadcast_to(np.linspace(0, 255, 64, dtype=np.uint8)[None, :, None],
+                                     (32, 64, 3)).copy()
+            Image.fromarray(albedo).save(paths["albedo"])
+            for name, size, value in (("ao", (64, 32), 110), ("roughness", (64, 32), 160),
+                                      ("ao_small", (2, 2), 110), ("roughness_small", (3, 3), 160)):
+                Image.new("L", size, value).save(paths[name])
+            surface = Surface("test", albedo=paths["albedo"], height_map=MapSlot(paths["height"]),
+                              ao_map=MapSlot(paths["ao"]), roughness_map=MapSlot(paths["roughness"]),
+                              parallax_scale=0.15)
+            material = TerrainMaterial(parallax_mode="PARALLAX_OCCLUSION")
+            plotter = pv.Plotter(off_screen=True, window_size=(200, 200))
+            self.addCleanup(plotter.close)
+
+            def render():
+                plotter.clear()
+                plotter.add_light(pv.Light(position=(10, 0, 20), focal_point=(0, 0, 0)))
+                white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                white.SetUseSRGBColorSpace(True)
+                actor = plotter.add_mesh(_mesh_with_tangents(pv.Plane(i_size=15, j_size=15), pv),
+                                         texture=white, pbr=True, metallic=1, roughness=1, render=False)
+                actor.prop.SetTexture("albedoTex", white)
+                actor.prop.SetORMTexture(pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8)))
+                actor.prop.SetNormalTexture(pv.numpy_to_texture(
+                    np.full((2, 2, 3), (128, 128, 255), dtype=np.uint8)))
+                actor.prop.SetEmissiveTexture(white)
+                install_layered_preview(actor, pv, [surface], [1], material, height_blend=True,
+                                        transition=0.2, strength=1, texture_units=16)
+                plotter.camera_position = [(12, 0, 20), (0, 0, 0), (0, 1, 0)]
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True).astype(int)
+
+            packed = render()
+            surface.ao_map.path = paths["ao_small"]
+            surface.roughness_map.path = paths["roughness_small"]
+            independent = render()
+            self.assertGreater(np.count_nonzero(packed), 1000)
+            self.assertLessEqual(np.max(np.abs(packed - independent)), 2)
+            surface.parallax_scale = 0
+            no_pom = render()
+            self.assertGreater(np.count_nonzero(np.abs(independent - no_pom) > 5), 100)
+            for name, value in (("low", 26214), ("high", 26247)):
+                paths[name] = os.path.join(directory, name + ".png")
+                Image.fromarray(np.full((32, 64), value, dtype=np.uint16)).save(paths[name])
+            surface.ao_map.path = paths["ao"]
+            surface.roughness_map.path = paths["roughness"]
+            surface.height_scale = 100
+            surface.height_bias = -40
+            surface.parallax_scale = 0.8
+            surface.height_map.path = paths["low"]
+            low = render()
+            surface.height_map.path = paths["high"]
+            high = render()
+            self.assertGreater(np.count_nonzero(np.abs(high - low) > 2), 100)
 
     def test_layer_texture_cache_distinguishes_channel_and_inversion(self):
         import pyvista as pv
@@ -783,8 +1087,8 @@ raise SystemExit(app.exec())
                 return plotter.screenshot(return_img=True)
 
             with self.assertRaisesRegex(ValueError, "texture units"):
-                actor_for(0.15, 16)
-            if units < 32:
+                actor_for(0.15, 19)
+            if units < 20:
                 with self.assertRaisesRegex(ValueError, "texture units"):
                     actor_for(0.15, units)
                 for surface in surfaces:

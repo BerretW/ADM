@@ -6,10 +6,27 @@
 
 - World Tile's material and detailed-terrain previews render per-layer parallax and POM with the
   VTK shader pipeline. The implementation support matrix describes texture-unit and palette limits.
+- World Tile packs equal-size scalar preview maps into float channels without resampling and
+  exposes the exported `COLOR_1` palette channels in the 3D view.
+- World Tile can opt in to upgrading a legacy terrain shader when advanced settings are used;
+  it announces the upgrade and leaves unsupported shader data unchanged.
+- World Tile preserves multichannel 16-bit data PNGs and converts supported 16-bit
+  RGB/RGBA TIFF data to 16-bit PNG rather than quantizing them. Its TIFF height preview
+  also retains 16-bit samples.
+- World Tile can select DDS or KTX2 and automatic, BC7, or RGBA8 output for converted
+  8-bit maps. It retains compatible GPU sources by default, offers opt-in re-encoding,
+  and preserves 16-bit data precision.
+- World Tile can override encoding per map, including R8, R16, or BC4 for the
+  selected data channel and BC5 for normal maps.
+- Blender retains unknown official shader-version parameters, recognized texture references,
+  samplers, and compatible GPU sources. Unknown schemas and opaque references are not interpreted.
 - Blender preserves optional `ADM_material_height_v1` data through import and export, warns when
   it cannot preview the effect, and rejects it when required. Blender retains unknown optional
-  material-level extension JSON but cannot remap opaque references. Other unknown extension data
-  is not generally preserved; Blender reports these limitations on import and export.
+  root-, scene-, imported node-, mesh-, material-, and primitive-level extension JSON but cannot
+  remap opaque references. Export rejects ambiguous scene merges, primitive splits, and missing face
+  tracking.
+  Other unknown extension data is not generally preserved; Blender reports these limitations
+  on import and export.
 - Blender generates tangents for active layered parallax without a core normal map. When tangent
   effects use different UV sets, it warns that readers must derive additional tangent frames.
 - Blender exports a reconstructed RGB PBR normal when a shader parameter also retains the

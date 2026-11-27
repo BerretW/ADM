@@ -437,6 +437,22 @@ class MainWindow(QMainWindow):
         self.lod_distance = _spin(0, 1_000_000, 0.0, 10, 1, " m")
         self.lod_distance.setSpecialValueText("Tile size")
         self.lod_distance.setToolTip("Camera distance where LOD 1 takes over; every further LOD doubles it")
+        self.gpu_container = QComboBox()
+        self.gpu_container.addItem("DDS", "DDS")
+        self.gpu_container.addItem("KTX2", "KTX2")
+        self.gpu_encoding = QComboBox()
+        self.gpu_encoding.addItem("Automatic by map role", "AUTO")
+        self.gpu_encoding.addItem("BC7 (lossy)", "BC7")
+        self.gpu_encoding.addItem("RGBA8 (uncompressed)", "RGBA8")
+        self.gpu_encoding.setToolTip(
+            "Applies to converted 8-bit images. GPU sources remain unchanged unless conversion is enabled; "
+            "16-bit data keeps its precision and can use R16 or PNG instead.")
+        self.gpu_container.setToolTip(
+            "Container for converted images. Compatible GPU sources remain unchanged unless conversion is enabled.")
+        self.convert_gpu_sources = QCheckBox("Re-encode compatible GPU sources")
+        self.convert_gpu_sources.setToolTip(
+            "Off: preserve supported GPU files byte-for-byte. On: decode and re-encode them with new mipmaps; "
+            "this can lose image quality. R16 data retains 16-bit precision.")
         self.embed = QCheckBox("Embed surface textures in every tile")
         self.embed.setToolTip("Off: surface textures are written once into textures/ next to the tiles "
                               "(ADM_external_images_v1).")
@@ -539,6 +555,9 @@ class MainWindow(QMainWindow):
         row.addWidget(self.browse_export)
         form.addRow("Folder", row)
         form.addRow("LOD 1 from", self.lod_distance)
+        form.addRow("GPU container", self.gpu_container)
+        form.addRow("GPU encoding", self.gpu_encoding)
+        form.addRow(self.convert_gpu_sources)
         form.addRow(self.embed)
         form.addRow(self.validate)
         note = QLabel("Each tile becomes <tile>.adm with its LODs, placed at its world position. Triangles "
@@ -747,18 +766,19 @@ class MainWindow(QMainWindow):
         self.histogram.bandChanged.connect(self._height_band_changed)
         self.histogram.biomeSelected.connect(self.height_biome.setCurrentIndex)
         for signal in (self.material_panel.changed, self.export_dir.textChanged, self.lod_distance.valueChanged,
-                       self.embed.toggled):
+                       self.embed.toggled, self.gpu_container.currentIndexChanged,
+                       self.gpu_encoding.currentIndexChanged, self.convert_gpu_sources.toggled):
             signal.connect(self._schedule_check)
 
         # Anything stored in the project marks it modified; the tile selection does not.
         for box in (self.spacing, self.height_min, self.height_max, self.threads, self.texture_error,
                     self.texture_detail, self.lod_distance):
             box.valueChanged.connect(self._mark_dirty)
-        for box in (self.remap, self.embed, self.validate):
+        for box in (self.remap, self.embed, self.validate, self.convert_gpu_sources):
             box.toggled.connect(self._mark_dirty)
         for edit in (self.lods, self.out_dir, self.export_dir):
             edit.textChanged.connect(self._mark_dirty)
-        for combo in (self.origin, self.tile_cells):
+        for combo in (self.origin, self.tile_cells, self.gpu_container, self.gpu_encoding):
             combo.currentIndexChanged.connect(self._mark_dirty)
         self.material_panel.changed.connect(self._mark_dirty)
 
@@ -790,7 +810,9 @@ class MainWindow(QMainWindow):
     def _export_settings(self) -> ExportSettings:
         return ExportSettings(out_dir=self.export_dir.text().strip(), lod_distance_m=self.lod_distance.value(),
                               embed_textures=self.embed.isChecked(), validate=self.validate.isChecked(),
-                              threads=self.threads.value())
+                              threads=self.threads.value(), gpu_container=self.gpu_container.currentData(),
+                              gpu_encoding=self.gpu_encoding.currentData(),
+                              convert_gpu_sources=self.convert_gpu_sources.isChecked())
 
     def _transform(self) -> tuple[float, float]:
         return height_transform(self.hm, self._params_safe())
@@ -1847,5 +1869,13 @@ class MainWindow(QMainWindow):
         self.lod_distance.setValue(export.lod_distance_m)
         self.embed.setChecked(export.embed_textures)
         self.validate.setChecked(export.validate)
+        self.convert_gpu_sources.setChecked(export.convert_gpu_sources)
+        for combo, value in ((self.gpu_container, export.gpu_container),
+                             (self.gpu_encoding, export.gpu_encoding)):
+            index = combo.findData(value)
+            if index < 0:
+                combo.addItem(f"Unsupported: {value}", value)
+                index = combo.count() - 1
+            combo.setCurrentIndex(index)
         self.viewer.set_material(project.material)
         self._scale_changed()

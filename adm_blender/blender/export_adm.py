@@ -30,8 +30,14 @@ from ..core.validate import PARAM_NAME_RE, validate_adm, validate_adm_resolved
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.37 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.45 (ADM 1.0)"
 UNSUPPORTED_EXTENSIONS_PROPERTY = "_adm_unsupported_optional_extensions"
+UNKNOWN_ROOT_EXTENSIONS_PROPERTY = "_adm_unknown_root_extensions"
+UNKNOWN_NODE_EXTENSIONS_PROPERTY = "_adm_unknown_node_extensions"
+UNKNOWN_MESH_EXTENSIONS_PROPERTY = "_adm_unknown_mesh_extensions"
+UNKNOWN_SCENE_EXTENSIONS_PROPERTY = "_adm_unknown_scene_extensions"
+UNKNOWN_PRIMITIVE_EXTENSIONS_PROPERTY = "_adm_unknown_primitive_extensions"
+UNKNOWN_PRIMITIVE_ATTRIBUTE = "adm_unknown_primitive"
 MESHLIKE = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
 NON_GEOMETRY_TYPES = {"MODEL", "SCENE", "COLLIDER", "LOD_GROUP", "ATTACHMENT"}
 # rig analysis results that would produce a structurally invalid skeletonProfiles entry
@@ -49,6 +55,19 @@ class ExportError(Exception):
         super().__init__(message)
         self.report = report
         self.published = published
+
+
+def _read_unknown_extensions(owner, property_name, scope):
+    try:
+        raw = owner[property_name]
+        if not isinstance(raw, str):
+            raise ValueError("metadata must be a JSON string")
+        unknown = parse_json_strict(raw.encode("utf-8"))
+        if not isinstance(unknown, dict) or any(name in K.SUPPORTED_EXTENSIONS for name in unknown):
+            raise ValueError(f"metadata must contain only unknown {scope} extensions")
+        return unknown
+    except (AdmFormatError, UnicodeError, ValueError) as exc:
+        raise ExportError(f"'{owner.name}': cannot preserve unknown {scope} extensions: {exc}") from exc
 
 
 class ExportOptions:
@@ -274,21 +293,40 @@ class ModelExporter:
             loose = [c for c in kids if c.adm.adm_type != "SCENE"]
             groups = []
             if loose or not scene_objs:
-                groups.append((self.root.name, loose, Matrix.Identity(4)))
+                groups.append((self.root.name, loose, Matrix.Identity(4), self.root))
+            elif UNKNOWN_SCENE_EXTENSIONS_PROPERTY in self.root:
+                raise ExportError(f"'{self.root.name}': its unknown scene extensions have no exported scene")
             for s in scene_objs:
-                groups.append((s.name, self._children(s), self.root_inv @ s.matrix_world))
+                groups.append((s.name, self._children(s), self.root_inv @ s.matrix_world, s))
         else:
             roots = sorted((self.context.view_layer.objects[n] for n in self.allowed
                             if self.context.view_layer.objects[n].parent is None
                             or self.context.view_layer.objects[n].parent.name not in self.allowed),
                            key=lambda o: o.name)
-            groups = [(self.context.scene.name, roots, Matrix.Identity(4))]
-        for name, objs, base in groups:
+            owners = set()
+            for name in self.allowed:
+                owner = self.context.view_layer.objects[name]
+                while owner is not None and UNKNOWN_SCENE_EXTENSIONS_PROPERTY not in owner:
+                    owner = owner.parent
+                owners.add(owner)
+            if len(owners) > 1 and any(owner is not None for owner in owners):
+                raise ExportError("cannot merge selected objects from different scenes with unknown extensions")
+            owner = next(iter(owners)) if owners else None
+            groups = [(self.context.scene.name, roots, Matrix.Identity(4), owner)]
+        for name, objs, base, owner in groups:
             roots = []
             for o in objs:
                 roots.append(len(self.nodes))
                 self._visit_object(o, None, base)
-            self.scenes.append({"name": name, "nodes": roots})
+            scene = {"name": name, "nodes": roots}
+            if owner is not None and UNKNOWN_SCENE_EXTENSIONS_PROPERTY in owner:
+                unknown = _read_unknown_extensions(owner, UNKNOWN_SCENE_EXTENSIONS_PROPERTY, "scene")
+                if unknown:
+                    scene["extensions"] = unknown
+                    self.mat.extensions_used.update(unknown)
+                    self.warn(f"'{owner.name}': unknown scene extensions are preserved as opaque JSON; "
+                              "their internal references and meaning cannot be checked or remapped")
+            self.scenes.append(scene)
         if not self.nodes:
             raise ExportError("nothing to export (no objects)")
 
@@ -430,6 +468,28 @@ class ModelExporter:
             if attr is not None and (attr.domain != "FACE" or attr.data_type != kind):
                 raise ExportError(f"'{obj.name}': {name} must be a FACE {kind} attribute")
             interactive_attrs.append(attr)
+        primitive_extensions = {}
+        primitive_ids = None
+        if obj.type == "MESH" and UNKNOWN_PRIMITIVE_EXTENSIONS_PROPERTY in obj.data:
+            try:
+                metadata = parse_json_strict(obj.data[UNKNOWN_PRIMITIVE_EXTENSIONS_PROPERTY].encode("utf-8"))
+                if set(metadata) != {"primitives"}:
+                    raise ValueError("metadata must contain only primitives")
+                saved = metadata["primitives"]
+                if not isinstance(saved, list) or not saved:
+                    raise ValueError("metadata must be a nonempty array")
+                for index, extensions in enumerate(saved, 1):
+                    if (not isinstance(extensions, dict) or not extensions
+                            or any(not isinstance(name, str) or name in K.SUPPORTED_EXTENSIONS
+                                   for name in extensions)):
+                        raise ValueError(f"invalid extensions for primitive {index}")
+                    primitive_extensions[index] = extensions
+            except (AttributeError, AdmFormatError, UnicodeError, ValueError) as exc:
+                raise ExportError(f"'{obj.name}': cannot preserve unknown primitive extensions: {exc}") from exc
+            primitive_ids = me.attributes.get(UNKNOWN_PRIMITIVE_ATTRIBUTE)
+            if primitive_ids is None or primitive_ids.domain != "FACE" or primitive_ids.data_type != "INT":
+                raise ExportError(f"'{obj.name}': cannot preserve unknown primitive extensions without "
+                                  f"the FACE INT attribute {UNKNOWN_PRIMITIVE_ATTRIBUTE}")
         groups = defaultdict(list)
         for ti, (slot, exported_mat, poly) in enumerate(zip(tri_mat, prim_mats, tri_polygons)):
             source = (obj.material_slots[int(slot)].material
@@ -469,8 +529,21 @@ class ModelExporter:
                 group = (int(exported_mat), ident, texcoord, ratio)
             else:
                 group = (int(exported_mat), "", 0, 0.0)
+            primitive_id = int(primitive_ids.data[int(poly)].value) if primitive_ids is not None else 0
+            if primitive_id < 0 or (primitive_id and primitive_id not in primitive_extensions):
+                raise ExportError(f"'{obj.name}': invalid unknown primitive extension face ID {primitive_id}")
+            group += (primitive_id,)
             groups[group].append(ti)
         has_interactive = any(group[1] for group in groups)
+        if primitive_ids is not None:
+            used_ids = [group[4] for group in groups if group[4]]
+            if len(used_ids) != len(set(used_ids)):
+                raise ExportError(f"'{obj.name}': an unknown primitive extension would be split across "
+                                  "multiple exported primitives")
+            if set(primitive_extensions) != set(used_ids):
+                raise ExportError(f"'{obj.name}': a primitive with unknown extensions has no exported faces")
+            self.warn(f"'{obj.name}': unknown primitive extensions are preserved as opaque JSON; "
+                      "their internal references and meaning cannot be checked or remapped")
         face_physical_ids = None
         physical_attr = me.attributes.get("adm_physical_material_id") if collision else None
         if physical_attr is not None:
@@ -599,7 +672,7 @@ class ModelExporter:
             if has_interactive or has_height_parallax or any(uv != 0 for uv in material_uvs.values()):
                 used_uvs = {
                     material_uvs.get(m, 0)
-                    for m, _, _, _ in groups
+                    for m, _, _, _, _ in groups
                 }
                 for uv_index in used_uvs:
                     if uv_index >= len(uvs):
@@ -649,7 +722,7 @@ class ModelExporter:
         prims = []
         interactive = {}
         mesh_targets_used = bool(key_names)
-        for (m, ident, texcoord, ratio), triangles in sorted(groups.items()):
+        for (m, ident, texcoord, ratio, primitive_id), triangles in sorted(groups.items()):
             tri_sel = np.asarray(triangles, dtype=np.int64)
             corner_sel = (tri_sel[:, None] * 3 + np.arange(3)[None, :]).reshape(-1)
             group_tangents = tangents
@@ -688,6 +761,9 @@ class ModelExporter:
                 attrs["WEIGHTS_0"] = self.b.add_accessor(weights[src_vert], "F32", "VEC4")
             ct = "U16" if len(first) <= 65535 else "U32"
             prim = {"attributes": attrs, "indices": self.b.add_accessor(indices, ct, "SCALAR")}
+            if primitive_id:
+                prim["extensions"] = primitive_extensions[primitive_id]
+                self.mat.extensions_used.update(primitive_extensions[primitive_id])
             if m >= 0:
                 prim["material"] = int(m)
             if face_physical_ids is not None and any(face_physical_ids[i] for i in tri_sel):
@@ -718,6 +794,13 @@ class ModelExporter:
                 interactive[len(prims)] = (ident, texcoord, ratio)
             prims.append(prim)
         out = {"name": obj.data.name if obj.type == "MESH" else obj.name, "primitives": prims}
+        if obj.type == "MESH" and UNKNOWN_MESH_EXTENSIONS_PROPERTY in obj.data:
+            unknown = _read_unknown_extensions(obj.data, UNKNOWN_MESH_EXTENSIONS_PROPERTY, "mesh")
+            if unknown:
+                out["extensions"] = unknown
+                self.mat.extensions_used.update(unknown)
+                self.warn(f"'{obj.name}': unknown mesh extensions are preserved as opaque JSON; "
+                          "their internal references and meaning cannot be checked or remapped")
         if mesh_targets_used:
             out["targetNames"] = key_names
             if any(w != 0.0 for w in key_weights):
@@ -862,6 +945,14 @@ class ModelExporter:
                 }
                 self.mat.extensions_used.add(K.JOINT_DISPLAY_EXT)
                 self.mat.extensions_required.add(K.JOINT_DISPLAY_EXT)
+            owner = rec.bone if rec.kind == "BONE" else rec.obj
+            if owner is not None and UNKNOWN_NODE_EXTENSIONS_PROPERTY in owner:
+                unknown = _read_unknown_extensions(owner, UNKNOWN_NODE_EXTENSIONS_PROPERTY, "node")
+                if unknown:
+                    n.setdefault("extensions", {}).update(unknown)
+                    self.mat.extensions_used.update(unknown)
+                    self.warn("Unknown node extensions are preserved as opaque JSON; their references "
+                              "and meaning cannot be checked or remapped during export")
             if rec.index in self.node_mesh:
                 n["mesh"] = self.node_mesh[rec.index]
             if rec.index in self.node_skin:
@@ -1207,6 +1298,7 @@ class ModelExporter:
         if self.root is not None:
             origins.append(self.root)
         seen = set()
+        unknown_root_extensions = {}
         for origin in origins:
             while origin is not None and origin not in seen:
                 seen.add(origin)
@@ -1216,7 +1308,18 @@ class ModelExporter:
                         raise ExportError("invalid unsupported-extension import metadata on model root")
                     self.warn(f"OPTIONAL_EXTENSIONS_UNSUPPORTED: {names} may be lost or have references "
                               "that cannot be remapped during export")
+                if UNKNOWN_ROOT_EXTENSIONS_PROPERTY in origin:
+                    unknown = _read_unknown_extensions(origin, UNKNOWN_ROOT_EXTENSIONS_PROPERTY, "root")
+                    for name, value in unknown.items():
+                        if name in unknown_root_extensions and json.dumps(
+                                unknown_root_extensions[name], sort_keys=True) != json.dumps(value, sort_keys=True):
+                            raise ExportError(f"conflicting unknown root extension '{name}' in exported models")
+                        unknown_root_extensions[name] = value
+                    if unknown:
+                        self.warn("Unknown root extensions are preserved as opaque JSON; their references "
+                                  "and meaning cannot be checked or remapped during export")
                 origin = origin.parent
+        self.mat.extensions_used.update(unknown_root_extensions)
         if self.opts.vertex_controls:
             self.mat.extensions_used.add(K.VERTEX_CONTROL_EXT)
             self.mat.extensions_required.add(K.VERTEX_CONTROL_EXT)
@@ -1272,7 +1375,7 @@ class ModelExporter:
         for key, val in optional:
             if val:
                 doc[key] = val
-        extensions = {}
+        extensions = dict(unknown_root_extensions)
         if surfaces:
             extensions[K.INTERACTIVE_SURFACES_EXT] = {
                 "version": K.INTERACTIVE_SURFACES_VERSION, "surfaces": surfaces,

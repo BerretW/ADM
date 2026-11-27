@@ -117,8 +117,7 @@ class MaterialPreview(QWidget):
         self.reset = QPushButton("Reset view")
         self.scale_info = QLabel()
         self.scale_info.setWordWrap(True)
-        self.status = QLabel("Preview shows albedo, tint and scalar metallic/roughness. "
-                             "AO, height, emission, normal and parallax maps are not rendered.")
+        self.status = QLabel("Select a surface to preview its material and maps.")
         self.status.setWordWrap(True)
         self.plotter = QtInteractor(self)
         self.plotter.set_background("#15181c", top="#3b4652")
@@ -364,8 +363,9 @@ class TexturePicker(QWidget):
     """Thumbnail, file name, browse and clear."""
 
     changed = Signal()
+    encoding_changed = Signal()
 
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent=None, allow_bc5: bool = False, allow_scalar: bool = False):
         super().__init__(parent)
         self._title = title
         self._path = ""
@@ -379,6 +379,19 @@ class TexturePicker(QWidget):
         self.info.setWordWrap(True)
         self.info.setTextFormat(Qt.TextFormat.PlainText)
         self.info.setStyleSheet("color: #9aa3ad")
+        self.encoding = QComboBox()
+        self.encoding.addItem("GPU: use export setting", "")
+        self.encoding.addItem("GPU: automatic by role", "AUTO")
+        self.encoding.addItem("GPU: BC7 (lossy)", "BC7")
+        self.encoding.addItem("GPU: RGBA8 (uncompressed)", "RGBA8")
+        if allow_bc5:
+            self.encoding.addItem("GPU: BC5 normal (lossy)", "BC5")
+        if allow_scalar:
+            self.encoding.addItem("GPU: R8 selected channel", "R8")
+            self.encoding.addItem("GPU: R16 selected channel", "R16")
+            self.encoding.addItem("GPU: BC4 selected channel (lossy)", "BC4")
+        self.encoding.setToolTip("Encoding for this map. Compatible GPU files remain unchanged unless "
+                                "GPU source conversion is enabled in the export settings.")
         self.browse = QPushButton("Choose…")
         self.clear = QToolButton()
         self.clear.setText("✕")
@@ -389,15 +402,28 @@ class TexturePicker(QWidget):
         details = QVBoxLayout()
         details.addWidget(self.name)
         details.addWidget(self.info)
+        details.addWidget(self.encoding)
         row.addLayout(details, 1)
         row.addWidget(self.browse)
         row.addWidget(self.clear)
         self.browse.clicked.connect(self._choose)
         self.clear.clicked.connect(lambda: self._set(""))
+        self.encoding.currentIndexChanged.connect(self.encoding_changed)
         self._refresh()
 
     def path(self) -> str:
         return self._path
+
+    def set_encoding(self, value: str) -> None:
+        blocked = self.encoding.blockSignals(True)
+        try:
+            index = self.encoding.findData(value)
+            if index < 0:
+                self.encoding.addItem(f"Unsupported GPU encoding: {value}", value)
+                index = self.encoding.count() - 1
+            self.encoding.setCurrentIndex(index)
+        finally:
+            self.encoding.blockSignals(blocked)
 
     def set_path(self, path: str) -> None:
         self._path = path or ""
@@ -454,7 +480,7 @@ class MapRow(QWidget):
         self.factor.setSingleStep(0.05)
         self.factor.setKeyboardTracking(False)
         self.factor.setToolTip(f"{title} factor; multiplies the texture value when a texture is set")
-        self.picker = TexturePicker(f"{title} texture")
+        self.picker = TexturePicker(f"{title} texture", allow_scalar=True)
         self.channel = QComboBox()
         for letter in CHANNELS:
             self.channel.addItem(letter)
@@ -574,7 +600,7 @@ class SurfaceEditor(QGroupBox):
         self.parallax_scale.setSuffix(" m")
         self.parallax_scale.setToolTip("Maximum apparent depth for this surface")
         self.emission = TexturePicker("Emission texture")
-        self.normal = TexturePicker("Normal map")
+        self.normal = TexturePicker("Normal map", allow_bc5=True)
         form = QFormLayout()
         form.addRow("Albedo", self.albedo)
         row = QHBoxLayout()
@@ -610,6 +636,10 @@ class SurfaceEditor(QGroupBox):
         for name in ("metallic", "roughness", "ao", "height"):
             getattr(self, name).changed.connect(
                 lambda field, name=name: self.changed.emit(f"{name}.{field}"))
+        for name in ("albedo", "normal", "emission"):
+            getattr(self, name).encoding_changed.connect(lambda name=name: self.changed.emit(f"gpu.{name}"))
+        for name in ("metallic", "roughness", "ao", "height"):
+            getattr(self, name).picker.encoding_changed.connect(lambda name=name: self.changed.emit(f"gpu.{name}"))
         for name in ("repeat", "height_bias", "parallax_scale"):
             getattr(self, name).valueChanged.connect(lambda _value, name=name: self.changed.emit(name))
         self.show_terrain.clicked.connect(self.terrain_requested)
@@ -629,9 +659,22 @@ class SurfaceEditor(QGroupBox):
         self.parallax_scale.setValue(surface.parallax_scale)
         self.emission.set_path(surface.emission)
         self.normal.set_path(surface.normal)
+        for name in ("albedo", "normal", "emission"):
+            getattr(self, name).set_encoding(surface.gpu_encodings.get(name, ""))
+        for name in ("metallic", "roughness", "ao", "height"):
+            getattr(self, name).picker.set_encoding(surface.gpu_encodings.get(name, ""))
 
     def apply(self, surface: Surface, field: str) -> None:
-        if "." in field:
+        if field.startswith("gpu."):
+            name = field.split(".", 1)[1]
+            control = getattr(self, name)
+            picker = control.picker if isinstance(control, MapRow) else control
+            value = picker.encoding.currentData()
+            if value:
+                surface.gpu_encodings[name] = value
+            else:
+                surface.gpu_encodings.pop(name, None)
+        elif "." in field:
             name, part = field.split(".", 1)
             row = getattr(self, name)
             factor_name = {"metallic": "metallic", "roughness": "roughness",
@@ -980,6 +1023,11 @@ class MaterialPanel(QWidget):
         self.terrain_shader_version.addItem("AO, height and parallax profile (2.1.0)", "2.1.0")
         self.terrain_shader_version.setToolTip(
             "Choose 2.1.0 explicitly to export AO, height blending, emission maps or parallax settings")
+        self.auto_upgrade_shader = QCheckBox("Automatically upgrade the legacy profile for advanced settings")
+        self.auto_upgrade_shader.setToolTip(
+            "Opt in for this material while the editor is open. Upgrades to 2.1.0 when advanced settings are used.")
+        self.shader_upgrade_status = QLabel()
+        self.shader_upgrade_status.setWordWrap(True)
         self.height_blend = QCheckBox("Blend surfaces by height")
         self.height_blend.setToolTip("Use height maps to choose the visible surface at layer transitions")
         self.height_blend_transition = QDoubleSpinBox()
@@ -1002,6 +1050,8 @@ class MaterialPanel(QWidget):
         self.parallax_min_steps.setToolTip("Minimum parallax-occlusion ray-march steps")
         self.parallax_max_steps.setToolTip("Maximum parallax-occlusion ray-march steps")
         effects_form.addRow("Terrain shader profile", self.terrain_shader_version)
+        effects_form.addRow(self.auto_upgrade_shader)
+        effects_form.addRow(self.shader_upgrade_status)
         effects_form.addRow(self.height_blend)
         effects_form.addRow("Transition width", self.height_blend_transition)
         effects_form.addRow("Blend strength", self.height_blend_strength)
@@ -1038,6 +1088,7 @@ class MaterialPanel(QWidget):
             spin.valueChanged.connect(self._global_edited)
         self.double_sided.toggled.connect(self._global_edited)
         self.terrain_shader_version.currentIndexChanged.connect(self._global_edited)
+        self.auto_upgrade_shader.toggled.connect(self._auto_upgrade_toggled)
         self.height_blend.toggled.connect(self._global_edited)
         for spin in (self.height_blend_transition, self.height_blend_strength,
                      self.parallax_min_steps, self.parallax_max_steps):
@@ -1053,6 +1104,8 @@ class MaterialPanel(QWidget):
     def set_material(self, material: TerrainMaterial) -> None:
         self._material = material
         self._loading = True
+        self.auto_upgrade_shader.setChecked(False)
+        self.shader_upgrade_status.setText("")
         self.slope_radius.setValue(material.slope_radius_m)
         self.paint_softness.setValue(material.paint_softness_m)
         self.double_sided.setChecked(material.double_sided)
@@ -1147,6 +1200,7 @@ class MaterialPanel(QWidget):
     # ------------------------------------------------------------ edits
     def _emit(self) -> None:
         if not self._loading:
+            self._auto_upgrade_if_needed()
             self.changed.emit()
 
     def _surface_edited(self, field: str) -> None:
@@ -1188,7 +1242,40 @@ class MaterialPanel(QWidget):
         }
         name, value = controls[self.sender()]
         setattr(self._material, name, value())
+        if name == "terrain_shader_version" and value() == "2.0.0" and self.auto_upgrade_shader.isChecked():
+            self.auto_upgrade_shader.setChecked(False)
+            self.shader_upgrade_status.setText("Automatic upgrade disabled because you selected the legacy profile.")
         self._emit()
+
+    def _auto_upgrade_toggled(self, enabled: bool) -> None:
+        if self._loading:
+            return
+        if enabled:
+            self.shader_upgrade_status.setText("Automatic upgrade is enabled for this material in this session.")
+            if self._auto_upgrade_if_needed():
+                self._emit()
+        else:
+            self.shader_upgrade_status.setText("")
+
+    def _auto_upgrade_if_needed(self) -> bool:
+        material = self._material
+        if not self.auto_upgrade_shader.isChecked():
+            return False
+        if material.terrain_shader_version not in ("2.0.0", "2.1.0"):
+            self.shader_upgrade_status.setText("Automatic upgrade unavailable for an unsupported profile.")
+            return False
+        if (material.unknown_terrain_shader_settings
+                or material.parallax_mode not in ("NONE", "PARALLAX", "PARALLAX_OCCLUSION")):
+            self.shader_upgrade_status.setText("Automatic upgrade unavailable for unsupported shader settings.")
+            return False
+        if material.terrain_shader_version != "2.0.0" or not material.has_advanced_shader_features():
+            return False
+        material.terrain_shader_version = "2.1.0"
+        self._loading = True
+        self.terrain_shader_version.setCurrentIndex(self.terrain_shader_version.findData("2.1.0"))
+        self._loading = False
+        self.shader_upgrade_status.setText("Upgraded the terrain shader profile from 2.0.0 to 2.1.0.")
+        return True
 
     def _ask_name(self, title: str, current: str, taken: list[str]) -> str | None:
         name, ok = QInputDialog.getText(self, title, "Name:", text=current)

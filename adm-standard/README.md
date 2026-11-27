@@ -131,9 +131,30 @@ These tests are executed by the reference Blender toolkit (`adm_blender/tests/te
 - `shaders/adm.surface.two_layer.v1.md` defines the grayscale-mask two-layer PBR profile.
 - `shaders/ADM_shader_vertex_masks_v2.md` defines the `COLOR_1` contracts for profile 2.0.0.
 - `shaders/ADM_shader_vertex_masks_v2_1.md` defines PBR metallic-roughness 2.1.0 edge wear and dirt.
+- `shaders/ADM_layered_height_profiles_v1.md` defines the advanced layered AO, height,
+  height-blend, parallax, and POM contracts and their exact sampling algorithms.
 - `shaders/*.v1.md` contains a contract annex for each non-core profile; §8 retains the existing core and layered semantics.
 - `tools/build_shader_registry.py --check` detects drift between Blender's normative parameter tables and the generated registry.
 - `tools/test_shader_registry.py` validates IDs, parameter defaults and annex presence. `adm_blender/tests/test_shader_math.py` checks independent scalar/vector reference values.
 - Blender round-trip tests preserve the registered identities and schemas. The interactive shader uses
   static fallback preview rather than runtime rendering. This is not independent renderer conformance;
   see `SPEC_GAPS.md`.
+
+## Terrain material techniques
+
+These techniques operate at different stages and are not interchangeable:
+
+- **Surface Noise** is a World Tile authoring operation that varies generated
+  surface weights in world space. It is not a runtime ADM shader requirement.
+- **`COLOR_1` blending** stores layer weights in vertex channels. A primitive's
+  material identifies the surface assigned to each channel.
+- **Height Based Blending** adjusts the base layer weights using the sampled
+  height of each active layer. It does not move terrain vertices.
+- **Parallax** offsets material texture coordinates according to the view direction
+  and sampled height. **POM** traces multiple height samples to estimate an
+  intersection and may cost more than a single parallax sample.
+- **Geometric terrain heightmap** changes terrain vertex positions and silhouettes;
+  it is separate from the material height textures used by blending and parallax.
+
+For exact inputs, algorithms, bounds, and fallback rules, see the
+[layered material contracts](shaders/ADM_layered_height_profiles_v1.md).

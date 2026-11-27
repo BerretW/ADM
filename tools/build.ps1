@@ -532,6 +532,17 @@ try {
     if ($zipInfo.Length -eq 0 -or $zipInfo.LastWriteTimeUtc -lt $buildStartedUtc.AddSeconds(-2)) {
         throw "The expected package was not freshly written: $zipPath"
     }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        $nestedArchives = @($archive.Entries | Where-Object { $_.FullName -match '(?i)\.zip$' })
+        if ($nestedArchives.Count -gt 0) {
+            throw "The package contains nested ZIP files: $(($nestedArchives.FullName -join ', '))"
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
     Add-ReportLine "PACKAGE: $zipPath"
     Add-ReportLine "RESULT: PASS"
     $buildStatus = "PASS"

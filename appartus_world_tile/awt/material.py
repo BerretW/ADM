@@ -33,6 +33,9 @@ from .roads import Road
 SHADER_ID = "adm.terrain.four_layer"
 SHADER_VERSION = "2.0.0"
 CHANNELS = "RGBA"
+SCALAR_GPU_ENCODINGS = ("R8", "R16", "BC4")
+GPU_ENCODINGS = ("AUTO", "BC7", "RGBA8", "BC5", *SCALAR_GPU_ENCODINGS)
+TEXTURE_MAPS = ("albedo", "metallic", "roughness", "normal", "ao", "height", "emission")
 MAX_SURFACES = 32
 MAX_BIOMES = 16
 SURFACES_PER_BIOME = 4
@@ -72,6 +75,7 @@ class Surface:
     height_bias: float = 0.0
     parallax_scale: float = 0.0
     emission: str = ""
+    gpu_encodings: dict[str, str] = field(default_factory=dict)
 
     def textures(self) -> list[str]:
         return [p for p in (self.albedo, self.metallic_map.path, self.roughness_map.path, self.normal,
@@ -391,6 +395,12 @@ class TerrainMaterial:
     def validate(self) -> None:
         self.validate_rules()
         for surface in self.surfaces:
+            if (not isinstance(surface.gpu_encodings, dict) or
+                    any(name not in TEXTURE_MAPS or value not in GPU_ENCODINGS
+                        or (value == "BC5" and name != "normal")
+                        or (value in SCALAR_GPU_ENCODINGS and name not in ("metallic", "roughness", "ao", "height"))
+                        for name, value in surface.gpu_encodings.items())):
+                raise ValueError(f"Surface '{surface.name}': unsupported per-map GPU encoding")
             if not surface.repeat_m > 0:
                 raise ValueError(f"Surface '{surface.name}': texture repeat must be positive")
             for value in (surface.metallic, surface.roughness):
@@ -558,6 +568,10 @@ class TerrainMaterial:
                 surface.height_bias = float(raw.get("height_bias", 0.0))
                 surface.parallax_scale = float(raw.get("parallax_scale", 0.0))
                 surface.emission = absolute(raw.get("emission"))
+                encodings = raw.get("gpu_encodings", {})
+                if not isinstance(encodings, dict):
+                    raise ValueError(f"Surface '{surface.name}': per-map GPU encodings must be an object")
+                surface.gpu_encodings = copy.deepcopy(encodings)
                 material.surfaces.append(surface)
         raw_biomes = [b for b in data.get("biomes", []) if isinstance(b, dict) and b.get("name")]
         if raw_biomes:
@@ -650,6 +664,7 @@ def _surface_dict(surface: Surface, base_dir: str | None) -> dict:
         "height_bias": 0.0,
         "parallax_scale": 0.0,
         "emission": "",
+        "gpu_encodings": {},
     }
     for key, default in defaults.items():
         if data[key] == default:

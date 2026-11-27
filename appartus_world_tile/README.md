@@ -114,8 +114,12 @@ override those automatic levels. `--texture-error 0` disables transition refinem
 * **Material tab:** a surface library (albedo, tint, texture repeat in metres, metallic,
   roughness, AO and height maps with channel and invert, plus normal and emission maps) and
   optional height-blend/parallax settings, plus biomes that select and blend those surfaces.
-  Choose the terrain shader profile explicitly: profile 2.1.0 is required to export AO, height,
-  emission, height blending, or parallax. Unrecognized terrain shader settings are retained
+  Profile 2.1.0 is required to export AO, height, emission, height blending, or parallax.
+  Select it explicitly or enable **Automatically upgrade the legacy profile for advanced
+  settings**. The checkbox applies only to the material open in the editor and resets when
+  you load another material. The editor announces an upgrade; choosing the legacy profile
+  disables automatic upgrade. The selected profile is saved with the project.
+  Unrecognized terrain shader settings are retained
   in the project but cannot be used for validation, build, or ADM export. Their values are
   opaque, so any references inside them aren't collected or remapped. Unsupported profile
   versions and parallax modes remain visible until you explicitly select a supported value.
@@ -133,6 +137,7 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   and whether the file is external. GPU sources show the mip payload size; authoring images
   show an uncompressed RGBA base-level estimate rather than a promised export allocation.
   Presets with surface noise use version 2; presets with advanced shader settings use version 3.
+  Presets with per-map GPU encodings use version 4.
   Neighbouring biomes should share at least one surface so the transition uses a common
   texture rather than changing abruptly. Texture repeat is rounded to a whole number per tile,
   so textures continue across tiles. The **Surface** tab on the right shows the selected
@@ -157,7 +162,9 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   to the layer's parallax scale. Neutral offset is 0.5 in linear color. CPU weight views and
   displayed mean weights use unshifted coordinates. When parallax is disabled, the CPU-composited preview
   approximates AO by darkening the final color. The renderer reports when the available
-  texture units cannot accommodate the selected maps.
+  texture units cannot accommodate the selected maps. Scalar maps with matching dimensions
+  share a floating-point texture without resampling; maps with different dimensions retain
+  separate textures. The preview does not modify the source files.
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.
@@ -175,6 +182,10 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   The detailed view also limits unique decoded texture base levels to 512 MiB per redraw;
   select fewer tiles or smaller textures if it exceeds that limit. This estimate excludes
   GPU mipmaps, renderer overhead, and temporary decoding allocations.
+  Select **COLOR_1 palette channel**, then R, G, B, or A, to inspect the quantized
+  vertex weights exported for each primitive. Channels name local palette slots, so the
+  same channel can represent different surfaces in different primitives. This view uses
+  the detailed triangle and palette budgets but does not load material textures.
   The other modes retain the 8 M triangle budget. LOD, vertical exaggeration, and wireframe
   remain available.
 
@@ -229,9 +240,10 @@ JSON with the build parameters (heightmap, scale, tiles, LOD errors, biome rules
 build folder), roads, the surface/biome material, the export settings and the tile selection. Paths are stored
 relative to the project file, so the folder can be moved together with its heightmap and
 textures. Reopening a project loads the heightmap and the built tiles from the build folder.
-Version 2, 3, and 4 projects can be opened. Projects with advanced shader settings use version 5;
-projects with biome surface noise use version 4; projects without either use version 3. Older
-tool versions cannot open files saved with a newer format version.
+Version 2 through 6 projects can be opened. Projects with per-map GPU encodings or non-default GPU export settings use
+version 6; otherwise, projects with advanced shader settings use version 5, projects with biome
+surface noise use version 4, and projects without either use version 3. Older tool versions
+cannot open files saved with a newer format version.
 
 ## Create a road
 
@@ -255,8 +267,7 @@ grid of at most 4096 cells per side; a road must be at least one paint cell wide
 ```
 adm/
   x000_y000.adm           one model per tile: all LODs, selected layered profile and COLOR_1
-  textures/<name>_<hash>.dds   primary layer textures (unless they are embedded)
-  textures/<name>_<hash>.png   PNG fallback for each primary texture
+  textures/<name>_<hash>.*     primary layer textures and GPU texture PNG fallbacks
   world.json              what was exported: per-tile digest, origin, size; settings; material
 ```
 
@@ -266,8 +277,9 @@ adm/
   doubles that distance. A single LOD is written as a plain mesh.
 * Material profile defaults to `adm.terrain.four_layer@2.0.0`. Choose
   `adm.terrain.four_layer@2.1.0` in **Terrain shader settings** to export AO, height, emission,
-  height blending, or parallax. Profile 2.0.0 remains unchanged; if you author advanced settings
-  without selecting 2.1.0, export stops with an explicit error. Surface weights are per-vertex
+  height blending, or parallax, or enable automatic upgrade in the material editor.
+  Profile 2.0.0 remains unchanged; if you author advanced settings without selecting or
+  upgrading to 2.1.0, export stops with an explicit error. Surface weights are per-vertex
   `COLOR_1`; each primitive uses up to four surfaces. A tile using more than four surfaces is
   split across multiple primitives/materials. Each material includes layer albedo, base color,
   metallic and roughness factors and maps, normal, and UV scale. Profile 2.1.0 also includes
@@ -278,12 +290,12 @@ adm/
   reproduce vertex-weighted layers, metallic/roughness maps, AO maps, height blending, or
   parallax; the export result reports these limitations.
 * Layer textures are shared through `ADM_external_images_v1` by default (content hash in the
-  file name and in the tile, checked on import). Each texture has a DDS or KTX2 primary image and
-  same-size PNG fallback. **Embed** puts both images into every tile, instead, repeating the
+  file name and in the tile, checked on import). GPU textures have a DDS or KTX2 primary image
+  and a same-size PNG fallback. **Embed** puts the images into every tile, instead, repeating the
   data per tile. ADM-compatible DDS and KTX2 files are preserved byte-for-byte when their color
   space matches the texture role. If an ADM-compatible GPU source has a mismatched color space,
   export stops; convert the source explicitly or choose a compatible map. Other inputs are
-  converted to DDS: albedo uses automatic BC1/BC3
+  generally converted to DDS: albedo uses automatic BC1/BC3
   selection, normal maps use uncompressed RGBA8, and data maps use BC3 or keep a compatible
   scalar format. Albedo and emission use sRGB; normal, AO, height, metallic, and roughness maps
   use linear UNORM. PNG is used as the importer-friendly fallback. DDS textures using BC1, BC3,
@@ -292,18 +304,37 @@ adm/
   BC5 normal maps reconstruct their Z component in the surface and blend previews.
   Scalar GPU fallbacks retain red values and use zero for green and blue.
   16-bit grayscale TIFF inputs retain their samples in the R16 primary and PNG
-  fallback. When a 16-bit grayscale PNG or TIFF uses a green or blue map channel, export remaps
+  fallback. Multichannel 16-bit data PNGs remain byte-identical PNG primaries; RGB and RGBA
+  16-bit TIFF data maps become 16-bit PNG primaries without reducing channel precision. They
+  have no separate fallback, and export reports the choice. Other multichannel 16-bit TIFF
+  layouts are rejected rather than quantized. The height preview also retains the selected
+  channel's 16-bit TIFF samples. When a 16-bit grayscale PNG or TIFF uses a green or blue map channel, export remaps
   that selection to red in ADM and reports the change. The project keeps the
   original selection. Scalar GPU input channels are not remapped.
   Single 2D textures are supported (not texture arrays, cubemaps or volumes).
+* **GPU container** selects DDS or KTX2 for converted images. **GPU encoding** selects the
+  role-based default, BC7, or uncompressed RGBA8 for converted 8-bit images. Compatible GPU
+  sources remain byte-identical, even when they use another container or encoding, unless you
+  enable **Re-encode compatible GPU sources**. That option rebuilds mipmaps and can lose
+  quality. Scalar 16-bit data uses R16,
+  and multichannel 16-bit data stays in PNG rather than being quantized to the selected 8-bit
+  encoding. The export report identifies textures that retain a different format.
+  Each surface map can override the export encoding. Data maps also offer R8, R16, and BC4:
+  export copies the selected channel to red, updates the ADM channel selection, and retains
+  inversion. The source and project selection stay unchanged. Normal maps offer BC5 with a
+  reconstructed RGB normal for portable PBR. Compatible GPU sources and 16-bit data still
+  follow the preservation rules; enable GPU source conversion to re-encode compatible GPU files.
 * **Export changed** compares a digest of every tile's meshes, vertex weights, material
   (including the complete source texture bytes and mip levels), placement and export settings
   with `world.json`. Shader-only
   material edits do not rebuild terrain geometry or vertex weights. For newly built tiles, a
   surface edit marks only tiles that use that surface in at least one LOD. Global shader and
-  export settings can affect every tile. Older manifests without surface-use metadata conservatively
+  export settings can affect every tile. A global GPU encoding change does not mark a tile
+  when every texture it uses has a per-map encoding override. Older manifests without surface-use metadata conservatively
   mark all tiles for a material edit. The first export with the per-tile fingerprints also
   refreshes tiles recorded with older fingerprints. A missing `.adm` file is always exported again.
+  GPU export setting changes mark textured tiles as changed; tiles that use no textures remain
+  unchanged. Textured tiles with only preserved sources are conservatively marked as changed.
 * Each terrain primitive supports at most four surfaces. Weights at or below 2/255 are omitted
   from a triangle's surface set. If a triangle needs more than four surfaces, export retains
   the four with the greatest total corner weight and reports the number of affected triangles.

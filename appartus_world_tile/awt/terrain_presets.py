@@ -14,7 +14,7 @@ from .material import TerrainMaterial, prepare_texture
 
 PRESET_FILE = "preset.json"
 PRESET_FORMAT = "appartus-world-tile-terrain-preset"
-PRESET_VERSION = 3
+PRESET_VERSION = 4
 MAX_PRESET_BYTES = 5 * 1024 * 1024
 _KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -44,7 +44,7 @@ def _document(path: str) -> dict:
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
     if (not isinstance(data, dict) or data.get("format") != PRESET_FORMAT
-            or data.get("version") not in (1, 2, PRESET_VERSION) or not isinstance(data.get("material"), dict)
+            or data.get("version") not in (1, 2, 3, PRESET_VERSION) or not isinstance(data.get("material"), dict)
             or not isinstance(data.get("name"), str)):
         raise ValueError("This is not a supported AWT terrain preset")
     return data
@@ -115,7 +115,8 @@ def save_preset(root: str, name: str, material: TerrainMaterial, overwrite: bool
 
     document = {
         "format": PRESET_FORMAT,
-        "version": (3 if prepared_material.has_advanced_shader_features() else
+        "version": (4 if any(s.gpu_encodings for s in prepared_material.surfaces) else
+                    3 if prepared_material.has_advanced_shader_features() else
                     2 if any(b.noise != 0.0 for b in prepared_material.biomes) else 1),
         "name": name.strip(),
         "material": prepared_material.to_dict(folder),
