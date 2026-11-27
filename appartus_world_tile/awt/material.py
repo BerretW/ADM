@@ -259,6 +259,8 @@ class TerrainMaterial:
     parallax_max_steps: int = 32
     terrain_shader_version: str = SHADER_VERSION
     unknown_terrain_shader_settings: dict = field(default_factory=dict, repr=False)
+    external_control_map_path: str = ""
+    external_control_map_surface_ids: list[str] = field(default_factory=list)
 
     # ------------------------------------------------------------ lookups
     def surface_names(self) -> list[str]:
@@ -616,6 +618,17 @@ class TerrainMaterial:
                 "cell": self.physical_paint_cell, "png": base64.b64encode(out.getvalue()).decode("ascii")}
         if self.roads:
             data["roads"] = [road.to_dict() for road in self.roads]
+        if self.external_control_map_path or self.external_control_map_surface_ids:
+            path = self.external_control_map_path
+            if path and base_dir is not None:
+                try:
+                    path = os.path.relpath(path, base_dir).replace("\\", "/")
+                except ValueError:
+                    pass
+            data["external_control_map"] = {
+                "path": path,
+                "surface_ids": list(self.external_control_map_surface_ids),
+            }
         return data
 
     @classmethod
@@ -632,6 +645,18 @@ class TerrainMaterial:
                            invert=bool(value.get("invert", False)))
 
         material = cls()
+        raw_control_map = data.get("external_control_map")
+        if raw_control_map is not None:
+            if not isinstance(raw_control_map, dict):
+                raise ValueError("External Control Map settings must be an object")
+            path = raw_control_map.get("path", "")
+            surface_ids = raw_control_map.get("surface_ids", [])
+            if not isinstance(path, str) or not isinstance(surface_ids, list) or len(surface_ids) not in (0, 4):
+                raise ValueError("External Control Map requires a path and zero or four surface IDs")
+            if not all(isinstance(ident, str) for ident in surface_ids):
+                raise ValueError("External Control Map surface IDs must be strings")
+            material.external_control_map_path = absolute(path)
+            material.external_control_map_surface_ids = list(surface_ids)
         raw_surfaces = [s for s in data.get("surfaces", []) if isinstance(s, dict) and s.get("name")]
         if raw_surfaces:
             material.surfaces = []

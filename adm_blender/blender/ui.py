@@ -1431,6 +1431,33 @@ def draw_material(lay, context, mat):
                            text="Sync Parameters" if in_sync else "Sync Parameters (out of date)")
             _draw_shader_params(lay, p, params)
 
+    if p.shader_key() in K.TERRAIN_CONTROL_MAP_PROFILES or p.control_map_enabled:
+        control_map = lay.box()
+        control_map.label(text="Terrain Control Map", icon="TEXTURE")
+        control_map.prop(p, "control_map_enabled")
+        if p.control_map_enabled:
+            control_map.template_ID(p, "control_map_image", new="image.new", open="image.open")
+            control_map.prop(p, "control_map_mode")
+            control_map.prop(p, "control_map_mapping")
+            control_map.prop(p, "control_map_strength")
+            control_map.prop(p, "control_map_channel_order")
+            for index in range(4):
+                control_map.prop(p, f"control_map_surface_{index}")
+            control_map.prop(p, "control_map_scale")
+            control_map.prop(p, "control_map_offset")
+            if p.control_map_mapping == "UV":
+                control_map.prop(p, "control_map_tex_coord")
+            else:
+                control_map.prop(p, "control_map_origin")
+            if p.control_map_mode == "VERTEX_OVERRIDE":
+                control_map.prop(p, "control_map_override_mask")
+            if p.control_map_mode != "VERTEX_ONLY" and p.control_map_image is None:
+                control_map.label(text="Choose an image to render and export this mode", icon="ERROR")
+            if p.shader_key() not in K.TERRAIN_CONTROL_MAP_PROFILES:
+                control_map.label(text="The active shader profile cannot use Control Maps", icon="ERROR")
+            control_map.label(text="Linear weights affect visual blending only, not collider assignments",
+                              icon="INFO")
+
     controls = lay.box()
     controls.label(text="ADM Vertex Control", icon="COLOR")
     controls.label(text="Serialized when Export > Vertex Controls is enabled", icon="INFO")

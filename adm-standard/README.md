@@ -41,6 +41,8 @@ record instead of freezing published entries.
   missing fixture data and expectations for eight test categories.
 - `tools/run_tests.py`: reproducible tests for the supplied files.
 - `TEST-RESULTS.md`: executed tests and known gaps.
+- `MATERIAL_FEATURE_COMPATIBILITY.md`: contract, reference, authoring, renderer,
+  and collision-classification status for advanced terrain material features.
 - `CHANGELOG.md`: development and publication history.
 
 ## Run tests
@@ -53,6 +55,9 @@ python3 tools/test_shader_vertex_masks.py
 python3 tools/test_shader_registry.py
 python3 tools/check_shader_registry_changes.py
 python3 tools/test_reference_catalog.py
+python3 tools/test_terrain_control_maps.py
+python3 tools/test_terrain_macro_color.py
+python3 tools/test_terrain_macro_normal.py
 python3 tools/container.py fixtures/valid/triangle.adm
 ```
 
@@ -120,6 +125,12 @@ Run `python3 tools/test_profiles.py` alongside the existing `python3 tools/run_t
   metadata for exact authoring-timeline round trips under `ADM-ANIMATION-TIMING-1`.
 - `extensions/ADM_terrain_surface_v1.md`: stable terrain-surface IDs mapped to local material-layer
   slots without changing rendering behavior.
+- `extensions/ADM_terrain_control_map_v1.md`: versioned four-layer Control Map sampling, channel
+  identity, weight combination, coordinate mapping and seam requirements.
+- `extensions/ADM_terrain_macro_color_v1.md`: versioned terrain macro color projection, sRGB
+  decoding, blend equations, per-layer influence, and physical-classification boundary.
+- `extensions/ADM_terrain_macro_normal_v1.md`: BC5 terrain normal overlays, local/shared
+  projection, deterministic tangent frames, RNM blending, and collision independence.
 - `extensions/ADM_physical_surface_types_v1.md`: descriptive physical type, subtype and tag metadata
   added to existing physical materials without changing their physics coefficients.
 - `extensions/ADM_physical_surfaces_v1.md`: collider defaults, stable per-triangle assignments and
@@ -156,6 +167,18 @@ These techniques operate at different stages and are not interchangeable:
   surface weights in world space. It is not a runtime ADM shader requirement.
 - **`COLOR_1` blending** stores layer weights in vertex channels. A primitive's
   material identifies the surface assigned to each channel.
+- **Control Maps** provide a linear texture source for four-layer weights before
+  per-layer projection and height blending. The normative contract and its
+  independent vectors are recorded in `extensions/ADM_terrain_control_map_v1.md`
+  and `fixtures/expectations/terrain_control_maps_v1.json`.
+- **Macro Color** overlays terrain albedo through shared world-space or local UV coordinates, with
+  per-layer influence and explicit `MULTIPLY`, `TINT`, and `LERP` equations. Its independent
+  vectors are recorded in `fixtures/expectations/terrain_macro_color_v1.json`; contract and
+  reference math do not imply renderer support.
+- **Macro Normal** composes BC5 tangent-space overlays with layer normals through deterministic
+  local-UV or shared-world tangent frames and RNM. Its independent vectors are recorded in
+  `fixtures/expectations/terrain_macro_normal_v1.json`; contract and reference math do not imply
+  renderer support.
 - **Height Based Blending** adjusts the base layer weights using the sampled
   height of each active layer. It does not move terrain vertices.
 - **Parallax** offsets material texture coordinates according to the view direction

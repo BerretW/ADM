@@ -80,6 +80,133 @@ class Draft4Tests(unittest.TestCase):
     def codes(self, doc=None):
         return {issue.code for issue in self.validate(doc).errors}
 
+    def terrain_macro_color_doc(self):
+        doc = copy.deepcopy(self.doc)
+        doc["materials"] = [{
+            "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "metallicFactor": 0.0,
+            "roughnessFactor": 1.0,
+            "emissiveFactor": [0.0, 0.0, 0.0],
+            "alphaMode": "OPAQUE",
+            "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+            "extensions": {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_MACRO_COLOR_EXT: {
+                    "version": "1.0.0",
+                    "texture": {"index": 0, "texCoord": 0},
+                    "projection": "LOCAL_UV",
+                    "blendMode": "MULTIPLY",
+                },
+            },
+        }]
+        doc["textures"] = [{"source": 0}]
+        doc["images"] = [{"uri": "textures/macro.png", "mimeType": "image/png"}]
+        doc["extensionsUsed"] = [
+            K.EXTERNAL_IMAGES_EXT, K.TERRAIN_SURFACE_EXT, K.TERRAIN_MACRO_COLOR_EXT,
+        ]
+        doc["extensionsRequired"] = [K.EXTERNAL_IMAGES_EXT, K.TERRAIN_MACRO_COLOR_EXT]
+        return doc
+
+    def test_terrain_macro_color_contract_and_resolved_rgb_image(self):
+        doc = self.terrain_macro_color_doc()
+        data = write_container(K.ADM_MAGIC, doc, self.chunks)
+        report = validate_adm(data)
+        self.assertTrue(report.ok, report.format())
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "textures").mkdir()
+            (root / "textures" / "macro.png").write_bytes(
+                encode_png(1, 1, bytes((255, 64, 0)), channels=3)
+            )
+            model_path = root / "model.adm"
+            model_path.write_bytes(data)
+            report = validate_adm_resolved(data, model_path)
+        self.assertTrue(report.ok, report.format())
+
+        invalid_cases = (
+            ("shader", {"id": K.SHADER_CORE[0], "version": K.SHADER_CORE[1]},
+             "TERRAIN_MACRO_COLOR_PROFILE"),
+            ("surfaceIds", ["a", "b", "c"], "TERRAIN_MACRO_COLOR_SURFACES"),
+            ("blendMode", "SCREEN", "TERRAIN_MACRO_COLOR_MODE"),
+            ("scale", [0.0, 0.0], "TERRAIN_MACRO_COLOR_SCALE"),
+            ("layerInfluence", [1.0, 1.0, 1.0], "TERRAIN_MACRO_COLOR_INFLUENCE"),
+        )
+        for field, value, code in invalid_cases:
+            with self.subTest(field=field):
+                changed = copy.deepcopy(doc)
+                if field == "shader":
+                    changed["materials"][0][field] = value
+                elif field == "surfaceIds":
+                    changed["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT][field] = value
+                else:
+                    changed["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT][field] = value
+                self.assertIn(code, {issue.code for issue in self.validate(changed).errors})
+
+        changed = copy.deepcopy(doc)
+        changed["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]["projection"] = \
+            "SHARED_WORLD_XZ"
+        self.assertIn("TERRAIN_MACRO_COLOR_TEXCOORD", self.codes(changed))
+
+        changed = copy.deepcopy(doc)
+        changed["samplers"] = [{"magFilter": "NEAREST"}]
+        changed["textures"][0]["sampler"] = 0
+        self.assertIn("TERRAIN_MACRO_COLOR_FILTER", self.codes(changed))
+
+    def test_terrain_macro_normal_contract_and_invalid_inputs(self):
+        doc = self.terrain_macro_color_doc()
+        material = doc["materials"][0]
+        material["extensions"].pop(K.TERRAIN_MACRO_COLOR_EXT)
+        material["extensions"][K.TERRAIN_MACRO_NORMAL_EXT] = {
+            "version": "1.0.0", "texture": {"index": 0, "texCoord": 0},
+            "projection": "LOCAL_UV",
+        }
+        doc["extensionsUsed"].remove(K.TERRAIN_MACRO_COLOR_EXT)
+        doc["extensionsUsed"].append(K.TERRAIN_MACRO_NORMAL_EXT)
+        doc["extensionsRequired"].remove(K.TERRAIN_MACRO_COLOR_EXT)
+        doc["extensionsRequired"].append(K.TERRAIN_MACRO_NORMAL_EXT)
+        report = self.validate(doc)
+        self.assertTrue(report.ok, report.format())
+
+        changed = copy.deepcopy(doc)
+        changed["extensionsRequired"].remove(K.TERRAIN_MACRO_NORMAL_EXT)
+        self.assertIn("TERRAIN_MACRO_NORMAL_REQUIRED", self.codes(changed))
+
+        invalid_cases = (
+            ("shader", {"id": K.SHADER_CORE[0], "version": K.SHADER_CORE[1]},
+             "TERRAIN_MACRO_NORMAL_PROFILE"),
+            ("surfaceIds", ["a", "b", "c"], "TERRAIN_MACRO_NORMAL_SURFACES"),
+            ("projection", "TRIPLANAR", "TERRAIN_MACRO_NORMAL_PROJECTION"),
+            ("strength", 1.1, "TERRAIN_MACRO_NORMAL_STRENGTH"),
+            ("layerInfluence", [1.0, 1.0, 1.0], "TERRAIN_MACRO_NORMAL_INFLUENCE"),
+            ("scale", [0.0, 0.0], "TERRAIN_MACRO_NORMAL_SCALE"),
+        )
+        for field, value, code in invalid_cases:
+            with self.subTest(field=field):
+                changed = copy.deepcopy(doc)
+                if field == "shader":
+                    changed["materials"][0][field] = value
+                elif field == "surfaceIds":
+                    changed["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT][field] = value
+                else:
+                    changed["materials"][0]["extensions"][K.TERRAIN_MACRO_NORMAL_EXT][field] = value
+                self.assertIn(code, {issue.code for issue in self.validate(changed).errors})
+
+        changed = copy.deepcopy(doc)
+        changed["materials"][0]["extensions"][K.TERRAIN_MACRO_NORMAL_EXT]["projection"] = \
+            "SHARED_WORLD_XZ"
+        self.assertIn("TERRAIN_MACRO_NORMAL_TEXCOORD", self.codes(changed))
+
+        changed = copy.deepcopy(doc)
+        changed["images"][0]["mimeType"] = "image/jpeg"
+        self.assertIn("TERRAIN_MACRO_NORMAL_IMAGE_FORMAT", self.codes(changed))
+
+        changed = copy.deepcopy(doc)
+        changed["samplers"] = [{"magFilter": "NEAREST"}]
+        changed["textures"][0]["sampler"] = 0
+        self.assertIn("TERRAIN_MACRO_NORMAL_FILTER", self.codes(changed))
+
     def test_published_fixtures(self):
         for path in sorted(FIXTURES.glob("*.adm*")):
             with self.subTest(path=path.name):
@@ -352,6 +479,120 @@ class Draft4Tests(unittest.TestCase):
         self.doc["extensionsRequired"] = []
         self.doc["extensions"] = {K.TERRAIN_SURFACE_EXT: {}}
         self.assertIn("TERRAIN_SURFACE_SCOPE", self.codes())
+
+    def test_terrain_control_map_contract_and_required_declaration(self):
+        builder = BinBuilder()
+        positions = builder.add_accessor([(0, 0, 0), (1, 0, 0), (0, 0, 1)], "F32", "VEC3")
+        indices = builder.add_accessor([0, 1, 2], "U16", "SCALAR")
+        image = builder.add_view(encode_png(1, 1, bytes((64, 128, 192, 255))), chunk_type="IMAG")
+        surface_ids = ["surface.0", "surface.1", "surface.2", "surface.3"]
+        material = {
+            "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "metallicFactor": 0.0, "roughnessFactor": 1.0,
+            "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+            "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+            "extensions": {
+                K.TERRAIN_SURFACE_EXT: {"version": "1.0.0", "surfaceIds": surface_ids},
+                K.TERRAIN_CONTROL_MAP_EXT: {
+                    "version": "1.0.0", "mode": "TEXTURE_RGBA", "texture": {"index": 0},
+                    "mapping": "WORLD_PLANAR_XZ", "channelOrder": [0, 1, 2, 3],
+                },
+            },
+        }
+        self.doc = {
+            "asset": {}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": positions},
+                                        "indices": indices, "material": 0}]}],
+            "materials": [material], "textures": [{"source": 0, "sampler": 0}],
+            "samplers": [{"magFilter": "LINEAR", "minFilter": "LINEAR"}],
+            "images": [{"bufferView": image, "mimeType": "image/png"}],
+            "accessors": builder.accessors, "bufferViews": builder.buffer_views,
+            "extensionsUsed": [K.TERRAIN_SURFACE_EXT, K.TERRAIN_CONTROL_MAP_EXT],
+            "extensionsRequired": [K.TERRAIN_CONTROL_MAP_EXT],
+        }
+        self.chunks = builder.bytes()
+        report = self.validate()
+        self.assertTrue(report.ok, report.format())
+
+        material["extensions"][K.TERRAIN_CONTROL_MAP_EXT]["channelOrder"] = [0, 1, 1, 3]
+        self.assertIn("TERRAIN_CONTROL_MAP_CHANNEL_ORDER", self.codes())
+        material["extensions"][K.TERRAIN_CONTROL_MAP_EXT]["channelOrder"] = [0, 1, 2, 3]
+        control = material["extensions"][K.TERRAIN_CONTROL_MAP_EXT]
+        control["texture"]["texCoord"] = 0
+        self.assertIn("TERRAIN_CONTROL_MAP_TEXCOORD", self.codes())
+        del control["texture"]["texCoord"]
+        control["mapping"] = "UV"
+        control["origin"] = [1.0, 2.0]
+        self.assertIn("TERRAIN_CONTROL_MAP_ORIGIN", self.codes())
+        del control["origin"]
+        control["mapping"] = "WORLD_PLANAR_XZ"
+
+        rgb_image = builder.add_view(
+            encode_png(1, 1, bytes((64, 128, 192)), channels=3), chunk_type="IMAG"
+        )
+        self.doc["bufferViews"] = builder.buffer_views
+        self.doc["images"].append({"bufferView": rgb_image, "mimeType": "image/png"})
+        self.doc["textures"][0]["source"] = 1
+        self.chunks = builder.bytes()
+        self.assertIn("TERRAIN_CONTROL_MAP_CHANNELS", self.codes())
+        control["mode"] = "TEXTURE_RGB_IMPLICIT"
+        self.assertNotIn("TERRAIN_CONTROL_MAP_CHANNELS", self.codes())
+        control["mode"] = "TEXTURE_RGBA"
+        self.doc["textures"][0]["source"] = 0
+
+        self.doc["samplers"][0]["minFilter"] = "NEAREST"
+        self.assertIn("TERRAIN_CONTROL_MAP_FILTER", self.codes())
+        self.doc["samplers"][0]["minFilter"] = "LINEAR"
+        self.doc["extensionsRequired"] = []
+        self.assertIn("TERRAIN_CONTROL_MAP_REQUIRED", self.codes())
+        self.doc["extensionsRequired"] = [K.TERRAIN_CONTROL_MAP_EXT]
+        material["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] = surface_ids[:3]
+        self.assertIn("TERRAIN_CONTROL_MAP_SURFACES", self.codes())
+        material["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] = surface_ids
+        material["shader"] = {"id": K.SHADER_CORE[0], "version": K.SHADER_CORE[1]}
+        self.assertIn("TERRAIN_CONTROL_MAP_PROFILE", self.codes())
+        material["shader"] = {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]}
+        control["mode"] = "VERTEX_ONLY"
+        del control["texture"]
+        del control["mapping"]
+        material["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] = surface_ids[:3]
+        self.assertIn("TERRAIN_CONTROL_MAP_SURFACES", self.codes())
+
+    def test_external_control_map_validates_channels_after_resolution(self):
+        blob = encode_png(1, 1, bytes((64, 128, 192)), channels=3)
+        material = {
+            "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "metallicFactor": 0.0, "roughnessFactor": 1.0,
+            "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+            "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+            "extensions": {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_CONTROL_MAP_EXT: {
+                    "version": "1.0.0", "mode": "TEXTURE_RGBA", "texture": {"index": 0},
+                    "mapping": "WORLD_PLANAR_XZ",
+                },
+            },
+        }
+        self.doc["materials"] = [material]
+        self.doc["meshes"][0]["primitives"][0]["material"] = 0
+        self.doc["textures"] = [{"source": 0}]
+        self.doc["images"] = [{"uri": "textures/control.png", "mimeType": "image/png"}]
+        self.doc["extensionsUsed"] = [
+            K.EXTERNAL_IMAGES_EXT, K.TERRAIN_SURFACE_EXT, K.TERRAIN_CONTROL_MAP_EXT,
+        ]
+        self.doc["extensionsRequired"] = [K.EXTERNAL_IMAGES_EXT, K.TERRAIN_CONTROL_MAP_EXT]
+        data = write_container(K.ADM_MAGIC, self.doc, self.chunks)
+        self.assertTrue(validate_adm(data).ok, validate_adm(data).format())
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "textures").mkdir()
+            (root / "textures" / "control.png").write_bytes(blob)
+            model_path = root / "model.adm"
+            model_path.write_bytes(data)
+            report = validate_adm_resolved(data, model_path)
+        self.assertIn("TERRAIN_CONTROL_MAP_CHANNELS", {issue.code for issue in report.errors})
 
     def test_external_image_uri_hash_and_resolved_validation(self):
         blob = encode_png(2, 1, bytes((255, 0, 0, 255, 0, 255, 0, 255)))

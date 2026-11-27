@@ -453,6 +453,20 @@ class MainWindow(QMainWindow):
         self.lod_distance = _spin(0, 1_000_000, 0.0, 10, 1, " m")
         self.lod_distance.setSpecialValueText("Tile size")
         self.lod_distance.setToolTip("Camera distance where LOD 1 takes over; every further LOD doubles it")
+        self.control_map_resolution = QSpinBox()
+        self.control_map_resolution.setRange(0, 4096)
+        self.control_map_resolution.setSingleStep(128)
+        self.control_map_resolution.setSpecialValueText("Off")
+        self.control_map_resolution.setToolTip(
+            "Generate density-independent RGBA surface weights from the source heightmap and current rules. "
+            "This is opt-in and requires a four-layer terrain shader profile.")
+        self.external_control_map_path = QLineEdit()
+        self.external_control_map_path.setPlaceholderText("Optional RGBA image spanning the full heightmap")
+        self.browse_external_control_map = QPushButton("…")
+        self.browse_external_control_map.setFixedWidth(32)
+        self.external_control_map_channels = [QComboBox() for _ in range(4)]
+        for channel, combo in zip("RGBA", self.external_control_map_channels):
+            combo.setToolTip(f"Stable terrain surface ID assigned to the {channel} mask channel")
         self.gpu_container = QComboBox()
         self.gpu_container.addItem("DDS", "DDS")
         self.gpu_container.addItem("KTX2", "KTX2")
@@ -580,6 +594,13 @@ class MainWindow(QMainWindow):
         row.addWidget(self.browse_export)
         form.addRow("Folder", row)
         form.addRow("LOD 1 from", self.lod_distance)
+        form.addRow("Control Map", self.control_map_resolution)
+        row = QHBoxLayout()
+        row.addWidget(self.external_control_map_path)
+        row.addWidget(self.browse_external_control_map)
+        form.addRow("External RGBA map", row)
+        for channel, combo in zip("RGBA", self.external_control_map_channels):
+            form.addRow(f"{channel} surface", combo)
         form.addRow("GPU container", self.gpu_container)
         form.addRow("GPU encoding", self.gpu_encoding)
         form.addRow("Palette conflicts", self.palette_conflict_policy)
@@ -783,6 +804,7 @@ class MainWindow(QMainWindow):
         self.side_tabs.currentChanged.connect(self._side_tab_changed)
 
         self.browse_export.clicked.connect(self._choose_export)
+        self.browse_external_control_map.clicked.connect(self._choose_external_control_map)
         self.export_changed.clicked.connect(lambda: self._start_export("changed"))
         self.export_selected.clicked.connect(lambda: self._start_export("selected"))
         self.export_all.clicked.connect(lambda: self._start_export("all"))
@@ -797,15 +819,24 @@ class MainWindow(QMainWindow):
         self.histogram.bandChanged.connect(self._height_band_changed)
         self.histogram.biomeSelected.connect(self.height_biome.setCurrentIndex)
         for signal in (self.material_panel.changed, self.export_dir.textChanged, self.lod_distance.valueChanged,
+                       self.control_map_resolution.valueChanged,
+                       self.external_control_map_path.textChanged,
                        self.embed.toggled, self.gpu_container.currentIndexChanged,
                        self.gpu_encoding.currentIndexChanged, self.palette_conflict_policy.currentIndexChanged,
                        self.convert_gpu_sources.toggled):
             signal.connect(self._schedule_check)
+        self.control_map_resolution.valueChanged.connect(self.viewer.set_control_map_resolution)
+        for combo in self.external_control_map_channels:
+            combo.currentIndexChanged.connect(self._schedule_check)
+            combo.currentIndexChanged.connect(self._mark_dirty)
+            combo.currentIndexChanged.connect(self._material_changed)
+        self.external_control_map_path.textChanged.connect(self._mark_dirty)
+        self.external_control_map_path.textChanged.connect(self._material_changed)
 
         # Anything stored in the project marks it modified; the tile selection does not.
         for box in (self.spacing, self.height_min, self.height_max, self.threads, self.texture_error,
                     self.texture_detail, self.collision_error, self.collision_boundary_edge,
-                    self.collision_triangles, self.lod_distance):
+                    self.collision_triangles, self.lod_distance, self.control_map_resolution):
             box.valueChanged.connect(self._mark_dirty)
         for box in (self.remap, self.embed, self.validate, self.convert_gpu_sources):
             box.toggled.connect(self._mark_dirty)
@@ -842,7 +873,25 @@ class MainWindow(QMainWindow):
         )
 
     def _material(self) -> TerrainMaterial:
-        return self.material_panel.material()
+        material = self.material_panel.material()
+        material.external_control_map_path = self.external_control_map_path.text().strip()
+        surface_ids = [str(combo.currentData() or "") for combo in self.external_control_map_channels]
+        material.external_control_map_surface_ids = surface_ids if any(surface_ids) else []
+        return material
+
+    def _refresh_external_control_map_channels(self, material: TerrainMaterial) -> None:
+        ids = material.external_control_map_surface_ids
+        ids = ids if len(ids) == 4 else [""] * 4
+        for combo, surface_id in zip(self.external_control_map_channels, ids):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("Select surface", "")
+            for surface in material.surfaces:
+                combo.addItem(surface.name, surface.id)
+            if surface_id and combo.findData(surface_id) < 0:
+                combo.addItem(f"Missing surface ({surface_id})", surface_id)
+            combo.setCurrentIndex(max(0, combo.findData(surface_id)))
+            combo.blockSignals(False)
 
     def _export_settings(self) -> ExportSettings:
         return ExportSettings(out_dir=self.export_dir.text().strip(), lod_distance_m=self.lod_distance.value(),
@@ -850,7 +899,8 @@ class MainWindow(QMainWindow):
                               threads=self.threads.value(), gpu_container=self.gpu_container.currentData(),
                               gpu_encoding=self.gpu_encoding.currentData(),
                               palette_conflict_policy=self.palette_conflict_policy.currentData(),
-                              convert_gpu_sources=self.convert_gpu_sources.isChecked())
+                              convert_gpu_sources=self.convert_gpu_sources.isChecked(),
+                              control_map_resolution=self.control_map_resolution.value())
 
     def _transform(self) -> tuple[float, float]:
         return height_transform(self.hm, self._params_safe())
@@ -951,6 +1001,22 @@ class MainWindow(QMainWindow):
                                                 or self.settings.value("last_out", ""))
         if path:
             self.export_dir.setText(path)
+
+    def _choose_external_control_map(self) -> None:
+        start = self.external_control_map_path.text().strip() or self.settings.value("last_dir", "")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open external Control Map", start,
+            "RGBA masks (*.png *.tif *.tiff *.tga);;All files (*)")
+        if not path:
+            return
+        self.external_control_map_path.setText(path)
+        material = self._material()
+        if len(material.external_control_map_surface_ids) != 4 or not any(
+                material.external_control_map_surface_ids):
+            for combo, surface in zip(self.external_control_map_channels, material.surfaces[:4]):
+                index = combo.findData(surface.id)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
 
     def _load_source(self, path: str, raw_size: tuple[int, int] | None = None) -> None:
         material = self._material()
@@ -1192,6 +1258,7 @@ class MainWindow(QMainWindow):
     def _material_changed(self) -> None:
         """Any edit of surfaces, biomes, blending or paint."""
         material = self._material()
+        self._refresh_external_control_map_channels(material)
         self.surface_preview.set_material(material)
         self.histogram.set_material(material)
         self._refresh_height_controls()
@@ -1965,9 +2032,14 @@ class MainWindow(QMainWindow):
         self.out_dir.setText(params.out_dir)
         self.threads.setValue(params.threads)
         self.material_panel.set_material(project.material)
+        self.external_control_map_path.blockSignals(True)
+        self.external_control_map_path.setText(project.material.external_control_map_path)
+        self.external_control_map_path.blockSignals(False)
+        self._refresh_external_control_map_channels(project.material)
         self._material_changed()
         self.export_dir.setText(export.out_dir)
         self.lod_distance.setValue(export.lod_distance_m)
+        self.control_map_resolution.setValue(export.control_map_resolution)
         self.embed.setChecked(export.embed_textures)
         self.validate.setChecked(export.validate)
         self.convert_gpu_sources.setChecked(export.convert_gpu_sources)

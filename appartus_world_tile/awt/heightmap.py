@@ -6,12 +6,23 @@ metres happens inside the kernels through ``scale`` and ``offset``.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 
 import numpy as np
 
 MAX_SAMPLES = 1 << 30  # 32768 x 32768
+
+
+def sample_digest(data: np.ndarray) -> str:
+    """Hash heightmap samples together with their dtype and dimensions."""
+    samples = np.ascontiguousarray(data)
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(samples.dtype.str.encode("ascii"))
+    digest.update(str(samples.shape).encode("ascii"))
+    digest.update(samples.view(np.uint8))
+    return digest.hexdigest()
 
 
 @dataclass

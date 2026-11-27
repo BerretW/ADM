@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 
@@ -66,6 +67,18 @@ if (gl_FrontFacing && abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
 }
 //VTK::UniformFlow::Impl
 """
+
+
+def _mip_chain_bytes(shape, itemsize: int) -> int:
+    height, width = shape[:2]
+    components = int(np.prod(shape[2:])) if len(shape) > 2 else 1
+    total = 0
+    while True:
+        total += width * height * components * itemsize
+        if width == 1 and height == 1:
+            return total
+        width = max(1, width // 2)
+        height = max(1, height // 2)
 
 
 def _height_samples(slot: MapSlot) -> np.ndarray:
@@ -244,7 +257,7 @@ if (abs(admDet) > 1e-12 && length(admCross) > 1e-12) {
 
 def install_layered_preview(actor, pv, surfaces, weights, material, *, height_blend, transition, strength,
                             texture_units, vertex_weights=None, uv_scales=None, diagnostic=None,
-                            texture_cache=None, texture_budget_bytes=None):
+                            texture_cache=None, texture_budget_bytes=None, control_map_pixels=None):
     """Bind independent layer textures and evaluate the material at each fragment."""
     if material.parallax_mode not in ("NONE", "PARALLAX", "PARALLAX_OCCLUSION"):
         raise ValueError(f"Unsupported layered parallax mode: {material.parallax_mode}")
@@ -262,7 +275,8 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         raise ValueError("Layer UV scales must be finite and positive")
     if diagnostic is not None:
         kind, layer = diagnostic
-        if kind not in ("base", "final", "offset") or not 0 <= layer < len(surfaces):
+        if kind not in ("base", "final", "offset", "control") or not 0 <= layer < (
+                4 if kind == "control" else len(surfaces)):
             raise ValueError("Unknown layer diagnostic")
     if vertex_weights is not None:
         if not hasattr(actor.mapper, "MapDataArrayToVertexAttribute"):
@@ -275,10 +289,19 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         values = np.asarray(dataset.point_data[vertex_weights])
         if values.shape != (dataset.n_points, 4) or not np.isfinite(values).all() or np.any(values < 0):
             raise ValueError("Point weights must have four finite non-negative components")
+    if control_map_pixels is not None:
+        control_map_pixels = np.asarray(control_map_pixels)
+        if (control_map_pixels.ndim != 3 or control_map_pixels.shape[2] != 4
+                or not 2 <= control_map_pixels.shape[0] <= 4096
+                or not 2 <= control_map_pixels.shape[1] <= 4096
+                or control_map_pixels.dtype != np.uint8):
+            raise ValueError("Control Map preview needs a four-channel 8-bit image from 2 to 4096 pixels per side")
+    if diagnostic is not None and diagnostic[0] == "control" and control_map_pixels is None:
+        raise ValueError("Control Map channel diagnostics require a Control Map image")
 
     textures = {}
     lines = [_LAYER_FRAME]
-    if vertex_weights is not None:
+    if control_map_pixels is None and vertex_weights is not None:
         components = "rgba"[:len(surfaces)]
         lines.append("float admBaseWeightSum = " + " + ".join(f"admWeightsVC.{c}" for c in components) + ";")
 
@@ -296,11 +319,13 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
                 raise ValueError(f"Detailed material exceeds the {texture_budget_bytes // (1024 * 1024):,} MiB "
                                  "decoded texture budget; select fewer tiles or smaller textures")
 
-    def bind(name, pixels, srgb=False):
-        check_budget(pixels.nbytes)
+    def bind(name, pixels, srgb=False, repeat=True):
+        allocation_bytes = _mip_chain_bytes(pixels.shape, pixels.dtype.itemsize)
+        check_budget(allocation_bytes)
         texture = pv.Texture(pixels)
-        texture.repeat = True
+        texture.repeat = repeat
         texture.interpolate = True
+        texture.mipmap = True
         texture.SetUseSRGBColorSpace(srgb)
         textures[name] = texture
 
@@ -317,7 +342,7 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
                 pixels = np.asarray(image.convert("RGBA"))
         bind(name, pixels, not normal)
         if texture_cache is not None:
-            texture_cache[key] = (textures[name], pixels.nbytes)
+            texture_cache[key] = (textures[name], _mip_chain_bytes(pixels.shape, pixels.dtype.itemsize))
 
     def scalar_map(name, slot):
         key = ("scalar", slot.path, slot.channel, slot.invert)
@@ -327,7 +352,7 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         pixels = _height_samples(slot)
         bind(name, pixels)
         if texture_cache is not None:
-            texture_cache[key] = (textures[name], pixels.nbytes)
+            texture_cache[key] = (textures[name], _mip_chain_bytes(pixels.shape, pixels.dtype.itemsize))
 
     def scalar_maps(surface, index):
         groups = {}
@@ -346,16 +371,32 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
                 if texture_cache is not None and key in texture_cache:
                     textures[name] = texture_cache[key][0]
                 else:
-                    check_budget(width * height * 4 * np.dtype(np.float32).itemsize)
+                    check_budget(_mip_chain_bytes((height, width, 4), np.dtype(np.float32).itemsize))
                     pixels = np.ones((height, width, 4), dtype=np.float32)
                     for component, (_, slot) in enumerate(group):
                         pixels[..., component] = _height_samples(slot)
                     bind(name, pixels)
                     if texture_cache is not None:
-                        texture_cache[key] = (textures[name], pixels.nbytes)
+                        texture_cache[key] = (textures[name], _mip_chain_bytes(pixels.shape, pixels.dtype.itemsize))
             for component, (label, _) in enumerate(group):
                 bindings[label] = (name, "rgba"[component])
         return bindings
+
+    if control_map_pixels is not None:
+        control_hash = hashlib.blake2b(control_map_pixels, digest_size=16).hexdigest()
+        control_key = ("control_map", control_map_pixels.shape, control_hash)
+        if texture_cache is not None and control_key in texture_cache:
+            textures["admControlMap"] = texture_cache[control_key][0]
+        else:
+            bind("admControlMap", control_map_pixels, repeat=False)
+            if texture_cache is not None:
+                texture_cache[control_key] = (
+                    textures["admControlMap"],
+                    _mip_chain_bytes(control_map_pixels.shape, control_map_pixels.dtype.itemsize))
+        lines += [
+            "vec4 admControlWeights = textureGrad(admControlMap, admBaseUv, admBaseDx, admBaseDy);",
+            "float admBaseWeightSum = dot(admControlWeights, vec4(1.0));",
+        ]
 
     total = sum(weights)
     mode = {"NONE": 0, "PARALLAX": 1, "PARALLAX_OCCLUSION": 2}[material.parallax_mode]
@@ -363,9 +404,14 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
         if surface.repeat_m <= 0:
             raise ValueError(f"Surface '{surface.name}' repeat must be positive")
         repeat = number(uv_scales[i] if uv_scales is not None else 15.0 / surface.repeat_m)
-        weight_expr = (f"(admBaseWeightSum > 0.0 ? admWeightsVC.{'rgba'[i]} / admBaseWeightSum"
-                       f" : {1 if i == 0 else 0}.0)"
-                       if vertex_weights is not None else number(weight / total))
+        if control_map_pixels is not None:
+            weight_expr = (f"(admBaseWeightSum > 0.0 ? admControlWeights.{'rgba'[i]} / admBaseWeightSum"
+                           f" : {1 if i == 0 else 0}.0)")
+        elif vertex_weights is not None:
+            weight_expr = (f"(admBaseWeightSum > 0.0 ? admWeightsVC.{'rgba'[i]} / admBaseWeightSum"
+                           f" : {1 if i == 0 else 0}.0)")
+        else:
+            weight_expr = number(weight / total)
         lines += [f"vec2 admUV{i} = admBaseUv * {repeat};",
                   f"vec2 admDX{i} = admBaseDx * {repeat};",
                   f"vec2 admDY{i} = admBaseDy * {repeat};",
@@ -463,7 +509,9 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
                    "emissiveTex": "vec4(admMixedEmission, 1.0)"}
     if diagnostic is not None:
         kind, layer = diagnostic
-        if kind == "offset":
+        if kind == "control":
+            color = f"vec3(admControlWeights.{'rgba'[layer]})"
+        elif kind == "offset":
             scale = number(max(float(surfaces[layer].parallax_scale), 1e-12))
             color = f"vec3(clamp(vec2(0.5) + admOffset{layer} / (2.0 * {scale}), 0.0, 1.0), 0.5)"
         else:

@@ -12,11 +12,14 @@ Light-dependent terms that Blender material nodes cannot express exactly (skin w
 fabric tangent lobes) use Principled BSDF approximations; ``APPROXIMATE`` lists those profiles.
 """
 
+import json
+
 import bpy
 
 from ..core import constants as K
 from .materials import (
-    PREVIEW_PREFIX, UV_NAMES, _from, material_output, normal_map_node, principled_of, slot_texture_node,
+    MATERIAL_CONTROL_MAP_DATA, MATERIAL_CONTROL_MAP_SAMPLER, PREVIEW_PREFIX, UV_NAMES, _from,
+    material_output, normal_map_node, principled_of, slot_texture_node,
 )
 
 APPROXIMATE = frozenset({"SKIN", "FUR", "FABRIC"})
@@ -477,7 +480,8 @@ def _rock(g):
 
 def _terrain(g):
     b = g.bsdf()
-    mask = g.tex("blend_mask")
+    control_map_data = _control_map_config(g)
+    mask = g.tex("blend_mask") if control_map_data is None else None
     if g.a.shader == "TWO_LAYER":
         blend = g.math("MINIMUM", g.math("MAXIMUM", g.red(mask), 0.0), 1.0) if mask else 0.0
         w = [g.math("SUBTRACT", 1.0, blend), blend]
@@ -510,6 +514,8 @@ def _terrain(g):
         w[0] = g.math("ADD", w[0], zero)
     else:
         w = [1.0, 0.0, 0.0, 0.0]
+    if control_map_data is not None:
+        w = _control_map_weights(g, w, control_map_data)
     layer_count = K.SHADER_LAYERED_HEIGHT_COUNTS.get(
         g.a.shader_key(), 2 if g.a.shader == "TWO_LAYER" else 4)
     if "height_blend_enabled" in g.schema and g.boolean("height_blend_enabled"):
@@ -616,6 +622,119 @@ def _terrain(g):
     g.link(enc, nm.inputs["Color"])
     g.link(nm.outputs["Normal"], b.inputs["Normal"])
     return b
+
+
+def _control_map_config(g):
+    props = g.a
+    if not props.control_map_enabled:
+        return None
+    raw_data = g.mat.get(MATERIAL_CONTROL_MAP_DATA)
+    data = json.loads(raw_data) if raw_data is not None else {"version": "1.0.0"}
+    if not isinstance(data, dict):
+        raise ValueError(f"material '{g.mat.name}' has invalid Control Map metadata")
+    data.update({
+        "mode": props.control_map_mode,
+        "mapping": props.control_map_mapping,
+        "scale": list(props.control_map_scale),
+        "offset": list(props.control_map_offset),
+        "strength": float(props.control_map_strength),
+        "channelOrder": list(props.control_map_channel_order),
+    })
+    if props.control_map_mapping == "WORLD_PLANAR_XZ":
+        data["origin"] = list(props.control_map_origin)
+        if props.control_map_mode != "VERTEX_ONLY":
+            data["texture"] = {}
+    else:
+        data.pop("origin", None)
+        if props.control_map_mode != "VERTEX_ONLY":
+            data["texture"] = {"texCoord": int(props.control_map_tex_coord)}
+    if props.control_map_mode == "VERTEX_OVERRIDE":
+        data["overrideMask"] = list(props.control_map_override_mask)
+    else:
+        data.pop("overrideMask", None)
+    return data
+
+
+def _control_map_weights(g, vertex_weights, data):
+    def normalize(weights):
+        clamped = [g.math("MAXIMUM", weight, 0.0) for weight in weights]
+        total = clamped[0]
+        for weight in clamped[1:]:
+            total = g.math("ADD", total, weight)
+        safe = g.math("MAXIMUM", total, 1e-8)
+        zero = g.math("LESS_THAN", total, 1e-8)
+        result = [g.math("DIVIDE", weight, safe) for weight in clamped]
+        result[0] = g.math("ADD", result[0], zero)
+        return result
+
+    vertex = normalize(vertex_weights)
+    mode = data["mode"]
+    if mode == "VERTEX_ONLY":
+        return vertex
+    image = g.a.control_map_preview_image or g.a.control_map_image
+    texture = data.get("texture")
+    if image is None or texture is None:
+        return vertex
+
+    scale = data.get("scale", [1.0, 1.0])
+    offset = data.get("offset", [0.0, 0.0])
+    if data.get("mapping", "UV") == "WORLD_PLANAR_XZ":
+        geometry = g.new("ShaderNodeNewGeometry", "Control Map Position")
+        position = g.separate(geometry.outputs["Position"])
+        origin = data.get("origin", [0.0, 0.0])
+        uv = g.combine((g.math("SUBTRACT", position[0], origin[0]),
+                        g.math("SUBTRACT", position[2], origin[1]), 0.0))
+    else:
+        uv = g.uv(texture.get("texCoord", 0))
+    uv = g.vmath("MULTIPLY_ADD", uv, (scale[0], scale[1], 1.0),
+                 (offset[0], offset[1], 0.0))
+    tex_node = g.new("ShaderNodeTexImage", "Control Map")
+    tex_node.image = image
+    tex_node.interpolation = "Linear"
+    try:
+        sampler = json.loads(g.mat.get(MATERIAL_CONTROL_MAP_SAMPLER, "null")) or {}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"material '{g.mat.name}' has invalid Control Map sampler metadata") from exc
+    wrap_s = sampler.get("wrapS", "REPEAT")
+    wrap_t = sampler.get("wrapT", "REPEAT")
+    if wrap_s != wrap_t:
+        return vertex
+    if wrap_s == wrap_t:
+        tex_node.extension = {"CLAMP_TO_EDGE": "EXTEND", "MIRRORED_REPEAT": "MIRROR"}.get(wrap_s, "REPEAT")
+    g.link(uv, tex_node.inputs["Vector"])
+    separate = g.new("ShaderNodeSeparateColor", "Control Map Channels")
+    g.link(tex_node.outputs["Color"], separate.inputs[0])
+    rgba = [separate.outputs["Red"], separate.outputs["Green"], separate.outputs["Blue"],
+            tex_node.outputs["Alpha"]]
+    if mode == "TEXTURE_RGB_IMPLICIT":
+        implicit = g.math("SUBTRACT", 1.0,
+                          g.math("ADD", rgba[0], g.math("ADD", rgba[1], rgba[2])))
+        sampled = [g.math("MAXIMUM", implicit, 0.0), rgba[0], rgba[1], rgba[2]]
+    else:
+        sampled = rgba
+    channel_order = data.get("channelOrder", [0, 1, 2, 3])
+    control = normalize([sampled[index] for index in channel_order])
+    strength = float(data.get("strength", 1.0))
+    if mode in ("TEXTURE_RGBA", "TEXTURE_RGB_IMPLICIT"):
+        weights = [g.mix("FLOAT", vertex[i], control[i], strength) for i in range(4)]
+    elif mode == "VERTEX_MULTIPLY":
+        multiplied = normalize([g.math("MULTIPLY", vertex[i], control[i]) for i in range(4)])
+        weights = [g.mix("FLOAT", vertex[i], multiplied[i], strength) for i in range(4)]
+    elif mode == "VERTEX_OVERRIDE":
+        override_mask = data.get("overrideMask", [1.0, 1.0, 1.0, 1.0])
+        weights = []
+        for i in range(4):
+            factor = strength * override_mask[i]
+            weights.append(g.mix("FLOAT", vertex[i], control[i], factor))
+    elif mode == "VERTEX_MODULATE":
+        weights = [
+            g.math("MULTIPLY", vertex[i],
+                   g.math("ADD", 1.0 - strength, g.math("MULTIPLY", 4.0 * strength, control[i])))
+            for i in range(4)
+        ]
+    else:
+        raise ValueError(f"material '{g.mat.name}' has unsupported Control Map mode {mode!r}")
+    return normalize(weights)
 
 
 def _thin_fresnel(g, b, tint_a, tint_b, transparency, ior, base_alpha):

@@ -1,0 +1,111 @@
+{
+  "extension": "ADM_terrain_control_map_v1@1.0.0",
+  "vectors": [
+    {
+      "name": "texture-rgba-strength-half",
+      "mode": "TEXTURE_RGBA",
+      "base": [0.4, 0.3, 0.2, 0.1],
+      "sample": [0.1, 0.2, 0.3, 0.4],
+      "strength": 0.5,
+      "expected": [0.25, 0.25, 0.25, 0.25]
+    },
+    {
+      "name": "texture-zero-strength",
+      "mode": "TEXTURE_RGBA",
+      "base": [0.4, 0.3, 0.2, 0.1],
+      "sample": [0.1, 0.2, 0.3, 0.4],
+      "strength": 0.0,
+      "expected": [0.4, 0.3, 0.2, 0.1]
+    },
+    {
+      "name": "missing-texture-uses-normalized-vertex-weights",
+      "mode": "TEXTURE_RGBA",
+      "base": [0.2, 0.3, 0.4, 0.1],
+      "sample": null,
+      "expected": [0.2, 0.3, 0.4, 0.1]
+    },
+    {
+      "name": "rgb-implicit-channel-remap",
+      "mode": "TEXTURE_RGB_IMPLICIT",
+      "base": [0.4, 0.3, 0.2, 0.1],
+      "sample": [0.2, 0.3, 0.1],
+      "channelOrder": [1, 0, 3, 2],
+      "expected": [0.2, 0.4, 0.1, 0.3]
+    },
+    {
+      "name": "vertex-multiply",
+      "mode": "VERTEX_MULTIPLY",
+      "base": [0.5, 0.3, 0.2, 0.0],
+      "sample": [0.1, 0.2, 0.3, 0.4],
+      "strength": 0.5,
+      "expected": [0.3970588235294118, 0.3264705882352941, 0.27647058823529413, 0.0]
+    },
+    {
+      "name": "masked-vertex-override",
+      "mode": "VERTEX_OVERRIDE",
+      "base": [0.4, 0.3, 0.2, 0.1],
+      "sample": [0.1, 0.2, 0.3, 0.4],
+      "strength": 0.5,
+      "overrideMask": [1.0, 0.0, 0.5, 1.0],
+      "expected": [0.24390243902439024, 0.2926829268292683, 0.21951219512195122, 0.24390243902439024]
+    },
+    {
+      "name": "vertex-modulate",
+      "mode": "VERTEX_MODULATE",
+      "base": [0.4, 0.3, 0.2, 0.1],
+      "sample": [0.1, 0.2, 0.3, 0.4],
+      "strength": 0.5,
+      "expected": [0.3111111111111111, 0.3, 0.24444444444444444, 0.14444444444444443]
+    },
+    {
+      "name": "modulate-neutral",
+      "mode": "VERTEX_MODULATE",
+      "base": [0.4, 0.3, 0.2, 0.1],
+      "sample": [0.25, 0.25, 0.25, 0.25],
+      "strength": 0.7,
+      "expected": [0.4, 0.3, 0.2, 0.1]
+    },
+    {
+      "name": "zero-map-fallback",
+      "mode": "TEXTURE_RGBA",
+      "base": [0.2, 0.3, 0.4, 0.1],
+      "sample": [0.0, 0.0, 0.0, 0.0],
+      "expected": [1.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "name": "zero-vertex-fallback",
+      "mode": "VERTEX_ONLY",
+      "base": [0.0, 0.0, 0.0, 0.0],
+      "sample": null,
+      "expected": [1.0, 0.0, 0.0, 0.0]
+    }
+  ],
+  "coordinates": [
+    {
+      "name": "world-planar",
+      "mapping": "WORLD_PLANAR_XZ",
+      "position": [1000003.0, 0.0, -2000002.0],
+      "origin": [1000000.0, -2000000.0],
+      "scale": [0.25, -0.5],
+      "offset": [0.1, 0.2],
+      "expected": [0.85, 1.2]
+    },
+    {
+      "name": "world-planar-after-floating-origin",
+      "mapping": "WORLD_PLANAR_XZ",
+      "position": [3.0, 0.0, -2.0],
+      "origin": [0.0, 0.0],
+      "scale": [0.25, -0.5],
+      "offset": [0.1, 0.2],
+      "expected": [0.85, 1.2]
+    },
+    {
+      "name": "uv-transform",
+      "mapping": "UV",
+      "uv": [0.25, 0.5],
+      "scale": [2.0, 4.0],
+      "offset": [0.1, -0.2],
+      "expected": [0.6, 1.8]
+    }
+  ]
+}

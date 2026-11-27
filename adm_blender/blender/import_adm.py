@@ -163,6 +163,12 @@ class ModelImporter:
         if K.MATERIAL_HEIGHT_EXT in self.doc.get("extensionsRequired", []):
             raise ImportError_(f"{K.MATERIAL_HEIGHT_EXT} is required but its effect is not supported by Blender",
                                report)
+        if K.TERRAIN_MACRO_COLOR_EXT in self.doc.get("extensionsRequired", []):
+            raise ImportError_(f"{K.TERRAIN_MACRO_COLOR_EXT} is required but its renderer is not supported by "
+                               "Blender yet", report)
+        if K.TERRAIN_MACRO_NORMAL_EXT in self.doc.get("extensionsRequired", []):
+            raise ImportError_(f"{K.TERRAIN_MACRO_NORMAL_EXT} is required but its renderer is not supported by "
+                               "Blender yet", report)
         unknown = sorted(set(self.doc.get("extensionsUsed", [])) - set(K.SUPPORTED_EXTENSIONS))
         if unknown:
             self.warn("OPTIONAL_EXTENSIONS_UNSUPPORTED: " + ", ".join(unknown) +
@@ -238,6 +244,14 @@ class ModelImporter:
         for m in d.get("materials", []):
             mat = build_material(m, self.resolve_texture, self.resolve_normal_texture)
             missing_image_uris = []
+            control_map_data = (m.get("extensions") or {}).get(K.TERRAIN_CONTROL_MAP_EXT)
+            if control_map_data is not None and "texture" in control_map_data \
+                    and mat.adm.control_map_image is None:
+                self.warn(f"CONTROL_MAP_IMAGE_MISSING: material '{mat.name}' retains the required Control Map "
+                          "reference but previews normalized vertex weights")
+            if "_adm_control_map_preview_fallback" in mat:
+                self.warn(f"CONTROL_MAP_PREVIEW_FALLBACK: material '{mat.name}': "
+                          f"{mat['_adm_control_map_preview_fallback']}; vertex weights remain in preview")
             if "adm_incomplete_textures" in mat:
                 for image_index in mat["adm_incomplete_textures"]:
                     try:

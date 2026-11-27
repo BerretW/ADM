@@ -26,6 +26,23 @@ The terms **MUST**, **MUST NOT**, **SHOULD**, **MAY** express requirements. Fiel
 [`ADM_layered_height_profiles_v1.md`](shaders/ADM_layered_height_profiles_v1.md). It covers the
 exact layered AO and height profiles in that contract; it is not implied by `ADM-SHADER-LAYERED-1`.
 
+`ADM-TERRAIN-CONTROL-MAP-1` is an optional renderer capability defined by
+[`ADM_terrain_control_map_v1`](extensions/ADM_terrain_control_map_v1.md). It evaluates
+four-layer Control Map weights before per-layer projection and height blending.
+Readers MUST advertise this capability only when they implement the registered
+extension version and modes; unknown required Control Map data is rejected.
+
+`ADM-TERRAIN-MACRO-COLOR-1` is an optional renderer capability defined by
+[`ADM_terrain_macro_color_v1`](extensions/ADM_terrain_macro_color_v1.md). It
+applies a shared-world or local-UV color map to registered four-layer terrain
+albedo. It does not change weights or physical collider assignments.
+
+`ADM-TERRAIN-MACRO-NORMAL-1` is an optional renderer capability defined by
+[`ADM_terrain_macro_normal_v1`](extensions/ADM_terrain_macro_normal_v1.md). It
+applies a shared-world or local-UV BC5 normal overlay to registered four-layer
+terrain using tangent-frame conversion and reoriented normal mapping. It does
+not change weights or physical collider assignments.
+
 **Optional interactive display capability:** `ADM-INTERACTIVE-SURFACES-1` implements the exact
 `adm.surface.interactive@1.0.0` visual contract and the versioned surface binding extension
 [`ADM_interactive_surfaces_v1`](extensions/ADM_interactive_surfaces_v1.md). A core reader need not
@@ -257,6 +274,18 @@ the mandatory portable PBR fallback. They do not encode UI, camera, engine resou
 The optional [`ADM_terrain_surface_v1`](extensions/ADM_terrain_surface_v1.md) extension maps
 material-local terrain layer indices to stable source-surface IDs. It adds identity metadata only;
 readers may ignore it without changing rendering or physical-material assignments.
+
+The required [`ADM_terrain_control_map_v1`](extensions/ADM_terrain_control_map_v1.md) extension
+defines linear four-channel terrain weight textures and their interaction with `COLOR_1`. It does
+not modify historical `ADM_vertex_control_v1` semantics or alter physical collider assignments.
+
+The required [`ADM_terrain_macro_color_v1`](extensions/ADM_terrain_macro_color_v1.md) extension
+defines sRGB macro color sampling, shared-world and local-UV projections, per-layer influence, and
+the `MULTIPLY`, `TINT`, and `LERP` blend equations. It does not alter physical collider assignments.
+
+The required [`ADM_terrain_macro_normal_v1`](extensions/ADM_terrain_macro_normal_v1.md) extension
+defines BC5 UNORM normal sampling, shared-world and local-UV projections, tangent-frame conversion,
+per-layer influence, and reoriented normal mapping. It does not alter physical collider assignments.
 
 ### 8.4 Standard optional layered shader (`ADM-SHADER-LAYERED-1`)
 

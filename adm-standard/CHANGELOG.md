@@ -49,6 +49,17 @@
 
 ### Added
 
+- Added normative `ADM_terrain_macro_color_v1@1.0.0` shared/local projection,
+  sRGB sampling, per-layer influence, blend equations, and independent
+  reference vectors. World Tile and Blender renderer support remains
+  unimplemented.
+- Added normative `ADM_terrain_macro_normal_v1@1.0.0` BC5 reconstruction,
+  deterministic tangent frames, per-layer influence, RNM composition, validator
+  checks, and independent golden vectors. World Tile and Blender renderer
+  support remains unimplemented.
+- Added normative `ADM_terrain_control_map_v1@1.0.0` weight modes, linear
+  sampling, stable layer identity, world-planar coordinates, and deterministic
+  reference vectors. Renderer and authoring support remains partial.
 - Added `ADM_physical_surface_types_v1` with a machine-readable type, subtype and tag registry.
   Blender preserves custom IDs and unknown types while keeping the existing friction,
   restitution and per-face assignment contracts unchanged. Documented reference lookup precedence

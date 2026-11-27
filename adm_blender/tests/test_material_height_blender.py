@@ -22,6 +22,7 @@ from adm_blender.blender.import_adm import ImportError_, ImportOptions, ModelImp
 from adm_blender.core import constants as K
 from adm_blender.core.buffers import read_accessor_np, read_view
 from adm_blender.core.container import read_container, write_container
+from adm_blender.core.png import encode_png
 from adm_blender.core.validate import validate_adm
 
 
@@ -526,6 +527,157 @@ def main():
             assert "required" in str(exc) and K.MATERIAL_HEIGHT_EXT in str(exc)
         else:
             raise AssertionError("Required unsupported material height was accepted")
+        assert before == (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))
+        print("PHASE import and export required terrain Control Map", flush=True)
+        control_doc = copy.deepcopy(doc)
+        control_material = control_doc["materials"][0]
+        control_material["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] = [
+            "surface.0", "surface.1", "surface.2", "surface.3",
+        ]
+        control_material["extensions"][K.TERRAIN_CONTROL_MAP_EXT] = {
+            "version": "1.0.0", "mode": "TEXTURE_RGBA",
+            "texture": {"index": ref["index"], "texCoord": 1}, "mapping": "UV",
+        }
+        control_material["shader"] = {
+            "id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1],
+        }
+        control_material["emissiveFactor"] = [0.0, 0.0, 0.0]
+        control_material["alphaMode"] = "OPAQUE"
+        control_doc["textures"][ref["index"]].pop("sampler", None)
+        control_doc["extensionsRequired"].remove(K.MATERIAL_HEIGHT_EXT)
+        control_doc.setdefault("extensionsUsed", []).append(K.TERRAIN_CONTROL_MAP_EXT)
+        control_doc.setdefault("extensionsRequired", []).append(K.TERRAIN_CONTROL_MAP_EXT)
+        control_fixture = write_container(K.ADM_MAGIC, control_doc, chunks)
+        control_report = validate_adm(control_fixture)
+        assert control_report.ok, control_report.format()
+        control_path = os.path.join(folder, "required_control_map.adm")
+        with open(control_path, "wb") as stream:
+            stream.write(control_fixture)
+        control_importer = ModelImporter(bpy.context, control_path, ImportOptions())
+        control_root = control_importer.run()
+        control_blender_material = next(
+            material for material in bpy.data.materials
+            if material.get(M.MATERIAL_CONTROL_MAP_DATA)
+        )
+        assert control_blender_material.adm.control_map_enabled
+        assert control_blender_material.adm.control_map_mode == "TEXTURE_RGBA"
+        assert control_blender_material.adm.control_map_image is not None
+        assert control_blender_material.adm.control_map_preview_image is not None
+        assert control_blender_material.adm.control_map_preview_image.colorspace_settings.name == "Non-Color"
+        control_exporter = ModelExporter(bpy.context, control_root, ExportOptions())
+        control_encoded, control_export_report = control_exporter.export()
+        assert control_export_report.ok, control_export_report.errors
+        control_exported, _ = read_container(control_encoded, K.ADM_MAGIC)
+        exported_control = control_exported["materials"][0]["extensions"][K.TERRAIN_CONTROL_MAP_EXT]
+        assert K.TERRAIN_CONTROL_MAP_EXT in control_exported["extensionsRequired"]
+        assert exported_control["mode"] == "TEXTURE_RGBA"
+        assert exported_control["texture"]["texCoord"] == 1
+        assert exported_control["texture"]["index"] < len(control_exported["textures"])
+        assert control_exported["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] == \
+            control_doc["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"]
+        control_preview_nodes = [
+            node for node in control_blender_material.node_tree.nodes
+            if node.name.startswith("ADM Preview")
+        ]
+        assert any(node.bl_idname == "ShaderNodeTexImage" and node.image ==
+                   control_blender_material.adm.control_map_preview_image for node in control_preview_nodes)
+        control_blender_material.adm.control_map_surface_0 = "surface.blender-roundtrip-layer0"
+        control_blender_material.adm.control_map_mode = "VERTEX_MODULATE"
+        control_blender_material.adm.control_map_strength = 0.5
+        edited_control_exporter = ModelExporter(bpy.context, control_root, ExportOptions())
+        edited_control_encoded, edited_control_report = edited_control_exporter.export()
+        assert edited_control_report.ok, edited_control_report.errors
+        edited_control, _ = read_container(edited_control_encoded, K.ADM_MAGIC)
+        edited_control_ext = edited_control["materials"][0]["extensions"][K.TERRAIN_CONTROL_MAP_EXT]
+        assert edited_control_ext["mode"] == "VERTEX_MODULATE"
+        assert edited_control_ext["strength"] == 0.5
+        edited_surface_ids = edited_control["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"]
+        assert edited_surface_ids[0] == "surface.blender-roundtrip-layer0"
+        control_blend_path = os.path.join(folder, "control_map.blend")
+        control_root_name = control_root.name
+        control_material_name = control_blender_material.name
+        bpy.ops.wm.save_as_mainfile(filepath=control_blend_path)
+        bpy.ops.wm.open_mainfile(filepath=control_blend_path)
+        control_root = bpy.data.objects[control_root_name]
+        control_blender_material = bpy.data.materials[control_material_name]
+        assert control_blender_material.adm.control_map_mode == "VERTEX_MODULATE"
+        assert control_blender_material.adm.control_map_strength == 0.5
+        assert control_blender_material.adm.control_map_image is not None
+        assert control_blender_material.adm.control_map_preview_image is not None
+        assert control_blender_material.adm.control_map_preview_image.colorspace_settings.name == "Non-Color"
+        reloaded_control_exporter = ModelExporter(bpy.context, control_root, ExportOptions())
+        reloaded_control_encoded, reloaded_control_report = reloaded_control_exporter.export()
+        assert reloaded_control_report.ok, reloaded_control_report.errors
+        reloaded_control, _ = read_container(reloaded_control_encoded, K.ADM_MAGIC)
+        reloaded_control_ext = reloaded_control["materials"][0]["extensions"][K.TERRAIN_CONTROL_MAP_EXT]
+        assert reloaded_control_ext["mode"] == "VERTEX_MODULATE"
+        assert reloaded_control_ext["strength"] == 0.5
+        assert control_doc["materials"][0]["extensions"][K.TERRAIN_CONTROL_MAP_EXT]["texture"]["index"] == \
+            ref["index"]
+
+        print("PHASE reject required terrain Macro Color", flush=True)
+        macro_doc = copy.deepcopy(control_doc)
+        macro_material = macro_doc["materials"][0]
+        macro_material["extensions"].pop(K.TERRAIN_CONTROL_MAP_EXT)
+        macro_image_index = len(macro_doc["images"])
+        macro_doc["images"].append({
+            "uri": "textures/macro.png", "mimeType": "image/png",
+        })
+        macro_texture_index = len(macro_doc["textures"])
+        macro_doc["textures"].append({"source": macro_image_index})
+        macro_material["extensions"][K.TERRAIN_MACRO_COLOR_EXT] = {
+            "version": "1.0.0", "texture": {"index": macro_texture_index, "texCoord": 0},
+            "projection": "LOCAL_UV", "blendMode": "MULTIPLY",
+        }
+        macro_doc["extensionsUsed"].remove(K.TERRAIN_CONTROL_MAP_EXT)
+        macro_doc["extensionsUsed"].append(K.TERRAIN_MACRO_COLOR_EXT)
+        macro_doc["extensionsUsed"].append(K.EXTERNAL_IMAGES_EXT)
+        macro_doc["extensionsRequired"].remove(K.TERRAIN_CONTROL_MAP_EXT)
+        macro_doc["extensionsRequired"].append(K.TERRAIN_MACRO_COLOR_EXT)
+        macro_doc["extensionsRequired"].append(K.EXTERNAL_IMAGES_EXT)
+        macro_fixture = write_container(K.ADM_MAGIC, macro_doc, chunks)
+        macro_report = validate_adm(macro_fixture)
+        assert macro_report.ok, macro_report.format()
+        os.makedirs(os.path.join(folder, "textures"), exist_ok=True)
+        with open(os.path.join(folder, "textures", "macro.png"), "wb") as stream:
+            stream.write(encode_png(1, 1, bytes((255, 0, 0, 255))))
+        macro_path = os.path.join(folder, "required_macro_color.adm")
+        with open(macro_path, "wb") as stream:
+            stream.write(macro_fixture)
+        before = (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))
+        try:
+            ModelImporter(bpy.context, macro_path, ImportOptions()).run()
+        except ImportError_ as exc:
+            assert K.TERRAIN_MACRO_COLOR_EXT in str(exc) and "required" in str(exc)
+        else:
+            raise AssertionError("Required unsupported terrain Macro Color was accepted")
+        assert before == (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))
+
+        print("PHASE reject required terrain Macro Normal", flush=True)
+        normal_doc = copy.deepcopy(macro_doc)
+        normal_material = normal_doc["materials"][0]
+        normal_material["extensions"].pop(K.TERRAIN_MACRO_COLOR_EXT)
+        normal_material["extensions"][K.TERRAIN_MACRO_NORMAL_EXT] = {
+            "version": "1.0.0", "texture": {"index": macro_texture_index, "texCoord": 0},
+            "projection": "LOCAL_UV",
+        }
+        normal_doc["extensionsUsed"].remove(K.TERRAIN_MACRO_COLOR_EXT)
+        normal_doc["extensionsUsed"].append(K.TERRAIN_MACRO_NORMAL_EXT)
+        normal_doc["extensionsRequired"].remove(K.TERRAIN_MACRO_COLOR_EXT)
+        normal_doc["extensionsRequired"].append(K.TERRAIN_MACRO_NORMAL_EXT)
+        normal_fixture = write_container(K.ADM_MAGIC, normal_doc, chunks)
+        normal_report = validate_adm(normal_fixture)
+        assert normal_report.ok, normal_report.format()
+        normal_path = os.path.join(folder, "required_macro_normal.adm")
+        with open(normal_path, "wb") as stream:
+            stream.write(normal_fixture)
+        before = (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))
+        try:
+            ModelImporter(bpy.context, normal_path, ImportOptions()).run()
+        except ImportError_ as exc:
+            assert K.TERRAIN_MACRO_NORMAL_EXT in str(exc) and "required" in str(exc)
+        else:
+            raise AssertionError("Required unsupported terrain Macro Normal was accepted")
         assert before == (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))
         print("PHASE layered shader parallax without a normal map", flush=True)
         doc["extensionsRequired"].remove(K.MATERIAL_HEIGHT_EXT)

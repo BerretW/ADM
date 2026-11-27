@@ -1,7 +1,10 @@
 """ADM-TEX-KTX2-1 / ADM-TEX-DDS-1 container subset, BC1/BC3 codec and validator rules (spec §8.6)."""
 
 import struct
+from pathlib import Path
+import tempfile
 import unittest
+import zlib
 
 try:
     import numpy as np
@@ -13,7 +16,7 @@ from adm_blender.core import gputex as G
 from adm_blender.core.buffers import BinBuilder
 from adm_blender.core.container import write_container
 from adm_blender.core.png import encode_png
-from adm_blender.core.validate import validate_adm
+from adm_blender.core.validate import validate_adm, validate_adm_resolved
 
 
 def gradient(h=37, w=53, alpha=True):
@@ -65,6 +68,17 @@ def advanced_gpu_fixture(mime, kind, srgb=False, width=5, height=3):
     header += struct.pack("<4I2Q", 104, len(dfd), 0, 0, 0, 0)
     header += struct.pack("<3Q", offset, size, size)
     return header + dfd + bytes(offset - (104 + len(dfd))) + payload
+
+
+def grayscale_png(width, height, samples):
+    def chunk(name, data):
+        body = name + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    scanlines = b"".join(b"\0" + samples[row * width:(row + 1) * width] for row in range(height))
+    header = struct.pack(">2I5B", width, height, 8, 0, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) +
+            chunk(b"IDAT", zlib.compress(scanlines)) + chunk(b"IEND", b""))
 
 
 @unittest.skipIf(np is None, "numpy required")
@@ -365,14 +379,15 @@ class CodecTests(unittest.TestCase):
 @unittest.skipIf(np is None, "numpy required")
 class ValidatorTests(unittest.TestCase):
     def model(self, mime, kind="BC1", srgb=True, fallback_size=(8, 8), role="baseColorTexture", fallback=True,
-              height_extension=None, declare_height_extension=True, shader=None, shader_parameters=None):
+              height_extension=None, declare_height_extension=True, shader=None, shader_parameters=None,
+              control_map=False, macro_color=False, macro_normal=False):
         img = gradient(8, 8, alpha=kind == "BC3")
         b = BinBuilder()
         primary = b.add_view(G.encode(img, mime, kind, srgb)[0], chunk_type="IMAG")
         fw, fh = fallback_size
         alt = b.add_view(encode_png(fw, fh, bytes(4 * fw * fh)), chunk_type="IMAG")
         tex = {"source": 0, "fallbackSource": 1} if fallback else {"source": 0}
-        material = {role: {"index": 0}}
+        material = {} if role is None else {role: {"index": 0}}
         if shader is not None:
             material.update({
                 "shader": {"id": shader[0], "version": shader[1]},
@@ -386,12 +401,73 @@ class ValidatorTests(unittest.TestCase):
             material["shaderParameters"] = shader_parameters
         if height_extension is not None:
             material["extensions"] = {K.MATERIAL_HEIGHT_EXT: height_extension}
+        if control_map:
+            material.update({
+                "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+                "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                "metallicFactor": 0.0, "roughnessFactor": 1.0,
+                "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+            })
+            material["extensions"] = {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_CONTROL_MAP_EXT: {
+                    "version": "1.0.0", "mode": "TEXTURE_RGBA", "texture": {"index": 0},
+                },
+            }
+        if macro_color:
+            material.update({
+                "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+                "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                "metallicFactor": 0.0, "roughnessFactor": 1.0,
+                "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+            })
+            material["extensions"] = {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_MACRO_COLOR_EXT: {
+                    "version": "1.0.0", "texture": {"index": 0},
+                    "projection": "LOCAL_UV", "blendMode": "MULTIPLY",
+                },
+            }
+        if macro_normal:
+            material.update({
+                "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+                "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                "metallicFactor": 0.0, "roughnessFactor": 1.0,
+                "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+            })
+            material["extensions"] = {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_MACRO_NORMAL_EXT: {
+                    "version": "1.0.0", "texture": {"index": 0}, "projection": "LOCAL_UV",
+                },
+            }
         doc = {"asset": {}, "nodes": [{}], "scenes": [{"nodes": [0]}], "scene": 0, "meshes": [],
                "accessors": [], "bufferViews": b.buffer_views,
                "images": [{"bufferView": primary, "mimeType": mime}, {"bufferView": alt, "mimeType": "image/png"}],
                "textures": [tex], "materials": [material]}
         if height_extension is not None and declare_height_extension:
             doc["extensionsUsed"] = [K.MATERIAL_HEIGHT_EXT]
+        if control_map:
+            doc["extensionsUsed"] = [
+                K.TERRAIN_SURFACE_EXT, K.TERRAIN_CONTROL_MAP_EXT,
+            ]
+            doc["extensionsRequired"] = [K.TERRAIN_CONTROL_MAP_EXT]
+        if macro_color:
+            doc["extensionsUsed"] = [
+                K.TERRAIN_SURFACE_EXT, K.TERRAIN_MACRO_COLOR_EXT,
+            ]
+            doc["extensionsRequired"] = [K.TERRAIN_MACRO_COLOR_EXT]
+        if macro_normal:
+            doc["extensionsUsed"] = [
+                K.TERRAIN_SURFACE_EXT, K.TERRAIN_MACRO_NORMAL_EXT,
+            ]
+            doc["extensionsRequired"] = [K.TERRAIN_MACRO_NORMAL_EXT]
         return validate_adm(write_container(K.ADM_MAGIC, doc, b.bytes()))
 
     def test_valid_ktx2_and_dds_with_fallback(self):
@@ -410,6 +486,203 @@ class ValidatorTests(unittest.TestCase):
         for kwargs, code in cases:
             with self.subTest(code=code, **{k: v for k, v in kwargs.items() if k != "mime"}):
                 self.assertIn(code, {e.code for e in self.model(**kwargs).errors})
+
+    def test_control_map_requires_linear_gpu_data_and_four_channels(self):
+        linear = self.model(
+            G.MIME_KTX2, kind="BC3", srgb=False, role=None, control_map=True,
+        )
+        self.assertTrue(linear.ok, linear.format())
+        srgb = self.model(
+            G.MIME_KTX2, kind="BC3", srgb=True, role=None, control_map=True,
+        )
+        self.assertIn("IMAGE_COLORSPACE", {issue.code for issue in srgb.errors})
+        rgb_only = self.model(
+            G.MIME_KTX2, kind="BC1", srgb=False, role=None, control_map=True,
+        )
+        self.assertIn("TERRAIN_CONTROL_MAP_CHANNELS", {issue.code for issue in rgb_only.errors})
+
+    def test_macro_color_requires_srgb_gpu_data_and_three_channels(self):
+        srgb = self.model(
+            G.MIME_KTX2, kind="BC3", srgb=True, role=None, macro_color=True,
+        )
+        self.assertTrue(srgb.ok, srgb.format())
+        linear = self.model(
+            G.MIME_KTX2, kind="BC3", srgb=False, role=None, macro_color=True,
+        )
+        self.assertIn("IMAGE_COLORSPACE", {issue.code for issue in linear.errors})
+        scalar = self.model(
+            G.MIME_KTX2, kind="BC4", srgb=False, role=None, macro_color=True,
+        )
+        self.assertIn("TERRAIN_MACRO_COLOR_CHANNELS", {issue.code for issue in scalar.errors})
+
+    def test_macro_normal_requires_bc5_unorm_and_rgb_fallback(self):
+        linear_bc5 = self.model(
+            G.MIME_KTX2, kind="BC5", srgb=False, role=None, macro_normal=True,
+        )
+        self.assertTrue(linear_bc5.ok, linear_bc5.format())
+        wrong_gpu_format = self.model(
+            G.MIME_KTX2, kind="BC3", srgb=False, role=None, macro_normal=True,
+        )
+        self.assertIn("TERRAIN_MACRO_NORMAL_FORMAT",
+                      {issue.code for issue in wrong_gpu_format.errors})
+        wrong_channel_count = self.model(
+            G.MIME_KTX2, kind="BC4", srgb=False, role=None, macro_normal=True,
+        )
+        self.assertIn("TERRAIN_MACRO_NORMAL_CHANNELS",
+                      {issue.code for issue in wrong_channel_count.errors})
+
+    def test_resolved_external_control_map_rejects_srgb_gpu_source(self):
+        if np is None:
+            self.skipTest("numpy required")
+        primary = G.encode(np.full((1, 1, 4), 255, dtype=np.uint8),
+                           G.MIME_KTX2, "RGBA8", srgb=True, mipmaps=False)[0]
+        fallback = encode_png(1, 1, b"\xff\xff\xff\xff")
+        material = {
+            "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "metallicFactor": 0.0,
+            "roughnessFactor": 1.0,
+            "emissiveFactor": [0.0, 0.0, 0.0],
+            "alphaMode": "OPAQUE",
+            "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+            "extensions": {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_CONTROL_MAP_EXT: {
+                    "version": "1.0.0", "mode": "TEXTURE_RGBA", "texture": {"index": 0},
+                },
+            },
+        }
+        doc = {
+            "asset": {}, "nodes": [{}], "scenes": [{"nodes": [0]}], "scene": 0,
+            "meshes": [], "accessors": [], "bufferViews": [],
+            "images": [
+                {"uri": "textures/control.ktx2", "mimeType": G.MIME_KTX2},
+                {"uri": "textures/control.png", "mimeType": "image/png"},
+            ],
+            "textures": [{"source": 0, "fallbackSource": 1}], "materials": [material],
+            "extensionsUsed": [
+                K.EXTERNAL_IMAGES_EXT, K.TERRAIN_SURFACE_EXT, K.TERRAIN_CONTROL_MAP_EXT,
+            ],
+            "extensionsRequired": [K.EXTERNAL_IMAGES_EXT, K.TERRAIN_CONTROL_MAP_EXT],
+        }
+        data = write_container(K.ADM_MAGIC, doc, {})
+        self.assertTrue(validate_adm(data).ok, validate_adm(data).format())
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "textures").mkdir()
+            (root / "textures" / "control.ktx2").write_bytes(primary)
+            (root / "textures" / "control.png").write_bytes(fallback)
+            model_path = root / "model.adm"
+            model_path.write_bytes(data)
+            report = validate_adm_resolved(data, model_path)
+        self.assertIn("IMAGE_COLORSPACE", {issue.code for issue in report.errors})
+
+    def test_resolved_external_macro_color_rejects_linear_gpu_source(self):
+        if np is None:
+            self.skipTest("numpy required")
+        primary = G.encode(np.full((1, 1, 4), 255, dtype=np.uint8),
+                           G.MIME_KTX2, "BC3", srgb=False, mipmaps=False)[0]
+        fallback = encode_png(1, 1, b"\xff\xff\xff\xff")
+        material = {
+            "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "metallicFactor": 0.0, "roughnessFactor": 1.0,
+            "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+            "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+            "extensions": {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_MACRO_COLOR_EXT: {
+                    "version": "1.0.0", "texture": {"index": 0},
+                    "projection": "LOCAL_UV", "blendMode": "MULTIPLY",
+                },
+            },
+        }
+        doc = {
+            "asset": {}, "nodes": [{}], "scenes": [{"nodes": [0]}], "scene": 0,
+            "meshes": [], "accessors": [], "bufferViews": [],
+            "images": [
+                {"uri": "textures/macro.ktx2", "mimeType": G.MIME_KTX2},
+                {"uri": "textures/macro.png", "mimeType": "image/png"},
+            ],
+            "textures": [{"source": 0, "fallbackSource": 1}], "materials": [material],
+            "extensionsUsed": [
+                K.EXTERNAL_IMAGES_EXT, K.TERRAIN_SURFACE_EXT, K.TERRAIN_MACRO_COLOR_EXT,
+            ],
+            "extensionsRequired": [K.EXTERNAL_IMAGES_EXT, K.TERRAIN_MACRO_COLOR_EXT],
+        }
+        data = write_container(K.ADM_MAGIC, doc, {})
+        self.assertTrue(validate_adm(data).ok, validate_adm(data).format())
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "textures").mkdir()
+            (root / "textures" / "macro.ktx2").write_bytes(primary)
+            (root / "textures" / "macro.png").write_bytes(fallback)
+            model_path = root / "model.adm"
+            model_path.write_bytes(data)
+            report = validate_adm_resolved(data, model_path)
+        self.assertIn("IMAGE_COLORSPACE", {issue.code for issue in report.errors})
+
+    def test_resolved_external_macro_normal_requires_bc5_and_rgb_fallback(self):
+        primary = G.encode(np.full((4, 4, 4), 128, dtype=np.uint8),
+                           G.MIME_KTX2, "BC5", srgb=False, mipmaps=False)[0]
+        fallback = encode_png(4, 4, bytes((128, 128, 255, 255)) * 16)
+        material = {
+            "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "metallicFactor": 0.0, "roughnessFactor": 1.0,
+            "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+            "shader": {"id": K.SHADER_TERRAIN_4[0], "version": K.SHADER_TERRAIN_4[1]},
+            "extensions": {
+                K.TERRAIN_SURFACE_EXT: {
+                    "version": "1.0.0", "surfaceIds": ["a", "b", "c", "d"],
+                },
+                K.TERRAIN_MACRO_NORMAL_EXT: {
+                    "version": "1.0.0", "texture": {"index": 0},
+                    "projection": "LOCAL_UV",
+                },
+            },
+        }
+        doc = {
+            "asset": {}, "nodes": [{}], "scenes": [{"nodes": [0]}], "scene": 0,
+            "meshes": [], "accessors": [], "bufferViews": [],
+            "images": [
+                {"uri": "textures/normal.ktx2", "mimeType": G.MIME_KTX2},
+                {"uri": "textures/normal.png", "mimeType": "image/png"},
+            ],
+            "textures": [{"source": 0, "fallbackSource": 1}], "materials": [material],
+            "extensionsUsed": [
+                K.EXTERNAL_IMAGES_EXT, K.TERRAIN_SURFACE_EXT, K.TERRAIN_MACRO_NORMAL_EXT,
+            ],
+            "extensionsRequired": [K.EXTERNAL_IMAGES_EXT, K.TERRAIN_MACRO_NORMAL_EXT],
+        }
+        data = write_container(K.ADM_MAGIC, doc, {})
+        self.assertTrue(validate_adm(data).ok, validate_adm(data).format())
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "textures").mkdir()
+            (root / "textures" / "normal.ktx2").write_bytes(primary)
+            (root / "textures" / "normal.png").write_bytes(fallback)
+            model_path = root / "model.adm"
+            model_path.write_bytes(data)
+            report = validate_adm_resolved(data, model_path)
+            self.assertTrue(report.ok, report.format())
+
+            (root / "textures" / "normal.ktx2").write_bytes(
+                G.encode(np.full((4, 4, 4), 128, dtype=np.uint8),
+                         G.MIME_KTX2, "BC3", srgb=False, mipmaps=False)[0]
+            )
+            wrong_format = validate_adm_resolved(data, model_path)
+            self.assertIn("TERRAIN_MACRO_NORMAL_FORMAT",
+                          {issue.code for issue in wrong_format.errors})
+
+            (root / "textures" / "normal.ktx2").write_bytes(primary)
+            (root / "textures" / "normal.png").write_bytes(
+                grayscale_png(4, 4, bytes((128,)) * 16)
+            )
+            wrong_fallback = validate_adm_resolved(data, model_path)
+            self.assertIn("TERRAIN_MACRO_NORMAL_CHANNELS",
+                          {issue.code for issue in wrong_fallback.errors})
 
     def test_layered_height_profiles_validate_enum_steps_uv_sets_and_texture_roles(self):
         profile = (K.SHADER_TERRAIN_4[0], K.SHADER_PROFILE_LAYERED_HEIGHT_V2)

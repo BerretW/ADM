@@ -19,18 +19,64 @@ the shared ones, which keeps primitive splitting in the exporter cheap.
 
 from __future__ import annotations
 
+import io
 import math
+import os
+import stat
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 from numba import njit, prange
+from PIL import Image
 
 from .kernels import _side, decode
-from .material import PAINT_AUTO, PAINT_MAX_SIDE, SURFACES_PER_BIOME, Band, TerrainMaterial
+from .material import (MAX_TEXTURE_BYTES, MAX_TEXTURE_PIXELS, PAINT_AUTO, PAINT_MAX_SIDE,
+                       SURFACES_PER_BIOME, Band, TerrainMaterial)
 from .roads import rasterize
 
 OPEN = 1.0e30
 _CFG_SCALE, _CFG_OFFSET, _CFG_SPACING, _CFG_RADIUS, _CFG_CELL, _CFG_NCH, _CFG_MAP = range(7)
+MAX_CONTROL_MAP_BYTES = 64 * 1024 * 1024
+MAX_CONTROL_MAP_DIMENSION = 4096
+_CONTROL_MAP_FORMATS = frozenset({"PNG", "TIFF", "TGA"})
+
+
+def load_external_control_map(path: str) -> np.ndarray:
+    """Load a bounded, four-channel external mask as raw RGBA weight bytes.
+
+    Alpha is a weight channel, not transparency. The caller maps the four
+    channels to stable surface IDs and remains responsible for normalization.
+    """
+    try:
+        info = os.stat(path)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Control Map source must be a regular file")
+        if info.st_size > min(MAX_TEXTURE_BYTES, MAX_CONTROL_MAP_BYTES):
+            raise ValueError(f"Control Map file exceeds the {MAX_CONTROL_MAP_BYTES // (1024 * 1024)} MiB limit")
+        with open(path, "rb") as stream:
+            raw = stream.read(min(MAX_TEXTURE_BYTES, MAX_CONTROL_MAP_BYTES) + 1)
+        if len(raw) > min(MAX_TEXTURE_BYTES, MAX_CONTROL_MAP_BYTES):
+            raise ValueError(f"Control Map file exceeds the {MAX_CONTROL_MAP_BYTES // (1024 * 1024)} MiB limit")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw)) as image:
+                if image.format not in _CONTROL_MAP_FORMATS:
+                    raise ValueError(f"Unsupported Control Map image format: {image.format!r}")
+                width, height = image.size
+                if (width < 2 or height < 2 or width > MAX_CONTROL_MAP_DIMENSION
+                        or height > MAX_CONTROL_MAP_DIMENSION or width * height > MAX_TEXTURE_PIXELS):
+                    raise ValueError(
+                        f"Control Map dimensions must be 2-{MAX_CONTROL_MAP_DIMENSION} per side "
+                        f"and at most {MAX_TEXTURE_PIXELS:,} pixels")
+                if image.mode != "RGBA":
+                    raise ValueError("External Control Maps must use RGBA mode; alpha is the fourth weight channel")
+                image.verify()
+            with Image.open(io.BytesIO(raw)) as image:
+                image.load()
+                return np.array(image, dtype=np.uint8, copy=True)
+    except (OSError, Image.DecompressionBombWarning, Image.DecompressionBombError) as error:
+        raise ValueError(f"Cannot read external Control Map {path}: {error}") from error
 
 
 @dataclass
@@ -527,6 +573,121 @@ def surface_weights(rules: Rules, h: np.ndarray, scale: float, offset: float, sp
     return weights_at_points(h, rules.cfg(scale, offset, spacing), rules.brule, rules.bsurf, rules.srule,
                              rules.paint, rules.nsurf, np.ascontiguousarray(gx, np.float64),
                              np.ascontiguousarray(gy, np.float64))
+
+
+def rasterize_control_map(
+    rules: Rules,
+    h: np.ndarray,
+    scale: float,
+    offset: float,
+    spacing: float,
+    bounds: tuple[float, float, float, float],
+    size: tuple[int, int],
+    surface_slots: tuple[int, int, int, int],
+) -> np.ndarray:
+    """Sample authored surface rules into a bounded RGBA weight map, independent of mesh density.
+
+    ``bounds`` are inclusive source-grid coordinates ``(x0, y0, x1, y1)``.
+    Output row zero corresponds to ``y0`` (the north edge of the heightmap).
+    A slot of ``-1`` is an unused channel and remains zero.
+    """
+    if not isinstance(h, np.ndarray) or h.ndim != 2 or min(h.shape) < 2:
+        raise ValueError("Control Map source height data must be a two-dimensional array at least 2x2")
+    if len(size) != 2 or any(type(value) is not int or not 2 <= value <= 4096 for value in size):
+        raise ValueError("Control Map dimensions must be integers from 2 to 4096")
+    width, height = size
+    if width * height > 16_777_216:
+        raise ValueError("Control Map exceeds the 16,777,216-pixel limit")
+    if len(bounds) != 4 or not np.isfinite(bounds).all():
+        raise ValueError("Control Map bounds must contain four finite source-grid coordinates")
+    x0, y0, x1, y1 = (float(value) for value in bounds)
+    if (x0 < 0 or y0 < 0 or x1 < x0 or y1 < y0
+            or x1 > h.shape[1] - 1 or y1 > h.shape[0] - 1):
+        raise ValueError("Control Map bounds must be ordered within the source heightmap")
+    if (not np.isfinite((scale, offset, spacing)).all() or spacing <= 0):
+        raise ValueError("Control Map height scale, offset, and spacing must be finite; spacing must be positive")
+    if len(surface_slots) != 4 or any(type(slot) is not int for slot in surface_slots):
+        raise ValueError("Control Map surface slots must contain four integer indices")
+    active = [slot for slot in surface_slots if slot != -1]
+    if (not active or len(set(active)) != len(active)
+            or any(slot < 0 or slot >= rules.nsurf for slot in active)):
+        raise ValueError("Control Map slots must be unique valid surfaces or -1 for unused channels")
+
+    x = np.linspace(x0, x1, width, dtype=np.float64)
+    y = np.linspace(y0, y1, height, dtype=np.float64)
+    output = np.zeros((height, width, 4), dtype=np.uint8)
+    chunk_rows = max(1, min(16, 1_048_576 // width))
+    for row_start in range(0, height, chunk_rows):
+        row_end = min(height, row_start + chunk_rows)
+        row_count = row_end - row_start
+        gx = np.tile(x, row_count)
+        gy = np.repeat(y[row_start:row_end], width)
+        source = surface_weights(rules, h, scale, offset, spacing, gx, gy)
+        local = np.zeros((len(gx), 4), dtype=np.float32)
+        for channel, slot in enumerate(surface_slots):
+            if slot >= 0:
+                local[:, channel] = source[:, slot]
+        output[row_start:row_end] = quantize(local).reshape(row_count, width, 4)
+    return output
+
+
+def rasterize_external_control_map(
+    mask: np.ndarray,
+    source_shape: tuple[int, int],
+    bounds: tuple[float, float, float, float],
+    size: tuple[int, int],
+    source_surface_ids: tuple[str, str, str, str],
+    target_surface_ids: tuple[str, str, str, str],
+) -> np.ndarray:
+    """Resample an external mask over a source-grid tile and normalize its four stable-ID channels."""
+    if (not isinstance(mask, np.ndarray) or mask.ndim != 3 or mask.shape[2] != 4
+            or mask.dtype != np.uint8 or min(mask.shape[:2]) < 2):
+        raise ValueError("External Control Map data must be an RGBA uint8 image at least 2x2")
+    if (len(source_shape) != 2 or any(type(value) is not int or value < 2 for value in source_shape)
+            or len(size) != 2 or any(type(value) is not int or not 2 <= value <= 4096 for value in size)):
+        raise ValueError("External Control Map source and output dimensions are invalid")
+    width, height = size
+    if width * height > 16_777_216:
+        raise ValueError("External Control Map exceeds the 16,777,216-pixel limit")
+    if (len(source_surface_ids) != 4 or len(target_surface_ids) != 4
+            or any(not isinstance(ident, str) or not ident for ident in source_surface_ids + target_surface_ids)
+            or len(set(source_surface_ids)) != 4 or set(source_surface_ids) != set(target_surface_ids)):
+        raise ValueError("External Control Map channels must map one-to-one to the four target surface IDs "
+                         f"(source={source_surface_ids!r}, target={target_surface_ids!r})")
+    if len(bounds) != 4 or not np.isfinite(bounds).all():
+        raise ValueError("External Control Map bounds must contain four finite source-grid coordinates")
+    x0, y0, x1, y1 = (float(value) for value in bounds)
+    source_height, source_width = source_shape
+    if (x0 < 0 or y0 < 0 or x1 < x0 or y1 < y0
+            or x1 > source_width - 1 or y1 > source_height - 1):
+        raise ValueError("External Control Map bounds must be ordered within the source grid")
+
+    channel_order = [source_surface_ids.index(ident) for ident in target_surface_ids]
+    sample_x = np.linspace(x0, x1, width, dtype=np.float64) * ((mask.shape[1] - 1) / (source_width - 1))
+    x_floor = np.floor(sample_x).astype(np.intp)
+    x_ceil = np.minimum(x_floor + 1, mask.shape[1] - 1)
+    x_fraction = (sample_x - x_floor).astype(np.float32)[None, :, None]
+    output = np.empty((height, width, 4), dtype=np.uint8)
+    sample_y_all = np.linspace(y0, y1, height, dtype=np.float64)
+    sample_y_all *= (mask.shape[0] - 1) / (source_height - 1)
+    chunk_rows = max(1, min(16, 1_048_576 // width))
+    for row_start in range(0, height, chunk_rows):
+        row_end = min(height, row_start + chunk_rows)
+        sample_y = sample_y_all[row_start:row_end]
+        y_floor = np.floor(sample_y).astype(np.intp)
+        y_ceil = np.minimum(y_floor + 1, mask.shape[0] - 1)
+        y_fraction = (sample_y - y_floor).astype(np.float32)[:, None, None]
+        top = (mask[y_floor[:, None], x_floor[None, :]][:, :, channel_order].astype(np.float32)
+               * (1.0 - x_fraction)
+               + mask[y_floor[:, None], x_ceil[None, :]][:, :, channel_order].astype(np.float32)
+               * x_fraction)
+        bottom = (mask[y_ceil[:, None], x_floor[None, :]][:, :, channel_order].astype(np.float32)
+                  * (1.0 - x_fraction)
+                  + mask[y_ceil[:, None], x_ceil[None, :]][:, :, channel_order].astype(np.float32)
+                  * x_fraction)
+        weights = top * (1.0 - y_fraction) + bottom * y_fraction
+        output[row_start:row_end] = quantize(weights.reshape(-1, 4)).reshape(row_end - row_start, width, 4)
+    return output
 
 
 def quantize(weights: np.ndarray) -> np.ndarray:

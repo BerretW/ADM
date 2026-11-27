@@ -18,7 +18,7 @@ from typing import Callable
 import numpy as np
 
 from . import __version__
-from .heightmap import Heightmap, load_heightmap, preview
+from .heightmap import Heightmap, load_heightmap, preview, sample_digest
 from .material import TerrainMaterial
 from .ply import vertex_dtype, write_ply
 from .roads import rasterize
@@ -591,6 +591,7 @@ def build(
             "height_offset": source_offset,
             "height_range_m": [float(source_hm.data.min()) * source_scale + source_offset,
                                float(source_hm.data.max()) * source_scale + source_offset],
+            "sample_digest": sample_digest(source_hm.data),
         },
         "params": source_params,
         "spacing_m": params.spacing_m,

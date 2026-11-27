@@ -131,6 +131,7 @@ def main():
     from adm_blender.blender import shader_preview as SP
     from adm_blender.blender.export_adm import ExportOptions, ModelExporter
     from adm_blender.blender.import_adm import ImportOptions, import_model
+    from adm_blender.core.container import read_container
 
     bpy.ops.wm.read_homefile(use_empty=True)
     scene = bpy.context.scene
@@ -176,6 +177,116 @@ def main():
     bsdf = preview_bsdf(mat, M)
     pixel = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
     check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: copied texture uses named UV1 ({pixel})")
+
+    # Control Map weights replace COLOR_1 before layer color composition.
+    control_mat = bpy.data.materials.new("terrain_control_map")
+    plane.data.materials.clear()
+    plane.data.materials.append(control_mat)
+    control_mat.adm.shader = "TERRAIN_4"
+    control_mat.adm.shader_version = "2.1.0"
+    set_param(control_mat, "layer0_base_color", (1.0, 0.0, 0.0, 1.0))
+    set_param(control_mat, "layer1_base_color", (0.0, 1.0, 0.0, 1.0))
+    set_param(control_mat, "layer2_base_color", (0.0, 0.0, 1.0, 1.0))
+    set_param(control_mat, "layer3_base_color", (1.0, 1.0, 0.0, 1.0))
+    for channel in ("r", "g", "b", "a"):
+        set_param(control_mat, f"color1_{channel}_strength", 1.0)
+    control_mat.adm.control_map_enabled = True
+    surface_ids = [
+        getattr(control_mat.adm, f"control_map_surface_{index}") for index in range(4)
+    ]
+    check(all(surface_ids) and len(set(surface_ids)) == 4,
+          "TERRAIN_4: enabling Control Map creates four stable layer identities")
+    control_maps = {
+        "green": image("control_map_green", lambda x, y: (0.0, 1.0, 0.0, 0.0)),
+        "implicit_blue": image("control_map_implicit_blue", lambda x, y: (0.0, 0.0, 1.0, 0.0)),
+    }
+    control_cases = (
+        ("TEXTURE_RGBA", (1.0, 0.0, 0.0, 0.0), "green", (0.0, 1.0, 0.0), (1.0, 1.0, 1.0, 1.0)),
+        ("TEXTURE_RGB_IMPLICIT", (1.0, 0.0, 0.0, 0.0), "implicit_blue",
+         (1.0, 1.0, 0.0), (1.0, 1.0, 1.0, 1.0)),
+        ("VERTEX_MULTIPLY", (0.5, 0.5, 0.0, 0.0), "green",
+         (0.0, 1.0, 0.0), (1.0, 1.0, 1.0, 1.0)),
+        ("VERTEX_OVERRIDE", (1.0, 0.0, 0.0, 0.0), "green",
+         (0.0, 1.0, 0.0), (1.0, 1.0, 1.0, 1.0)),
+        ("VERTEX_MODULATE", (0.5, 0.5, 0.0, 0.0), "green",
+         (0.0, 1.0, 0.0), (1.0, 1.0, 1.0, 1.0)),
+        ("VERTEX_ONLY", (1.0, 0.0, 0.0, 0.0), "green",
+         (1.0, 0.0, 0.0), (1.0, 1.0, 1.0, 1.0)),
+    )
+    for mode, weights, image_name, expected, override_mask in control_cases:
+        set_color1(plane, weights)
+        plane.data.update()
+        bpy.context.view_layer.update()
+        control_mat.adm.control_map_mode = mode
+        control_mat.adm.control_map_override_mask = override_mask
+        control_mat.adm.control_map_image = control_maps[image_name]
+        M.refresh_shader_preview(control_mat)
+        bsdf = preview_bsdf(control_mat, M)
+        pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+        check(close(pixel, expected), f"TERRAIN_4: {mode} Control Map pixel ({pixel})")
+    set_color1(plane, (1.0, 0.0, 0.0, 0.0))
+    plane.data.update()
+    control_mat.adm.control_map_mode = "TEXTURE_RGBA"
+    control_mat.adm.control_map_mapping = "UV"
+    control_mat.adm.control_map_scale = (1.0, 1.0)
+    control_mat.adm.control_map_offset = (0.0, 0.0)
+    control_mat.adm.control_map_image = image(
+        "control_map_uv_split",
+        lambda x, y: (1.0, 0.0, 0.0, 0.0) if x < RES * 0.6 else (0.0, 1.0, 0.0, 0.0))
+    control_mat.adm.control_map_tex_coord = 1
+    M.refresh_shader_preview(control_mat)
+    bsdf = preview_bsdf(control_mat, M)
+    pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: Control Map samples UV1 ({pixel})")
+    control_mat.adm.control_map_tex_coord = 0
+    M.refresh_shader_preview(control_mat)
+    bsdf = preview_bsdf(control_mat, M)
+    pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (1.0, 0.0, 0.0)), f"TERRAIN_4: Control Map samples UV0 ({pixel})")
+    control_mat.adm.control_map_offset = (0.3, 0.0)
+    M.refresh_shader_preview(control_mat)
+    bsdf = preview_bsdf(control_mat, M)
+    pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: Control Map UV offset affects sampling ({pixel})")
+    control_mat.adm.control_map_mapping = "WORLD_PLANAR_XZ"
+    control_mat.adm.control_map_origin = (-0.75, 0.0)
+    control_mat.adm.control_map_offset = (0.0, 0.0)
+    M.refresh_shader_preview(control_mat)
+    bsdf = preview_bsdf(control_mat, M)
+    pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: world-planar XZ and origin affect sampling ({pixel})")
+    control_mat.adm.control_map_origin = (-0.25, 0.0)
+    M.refresh_shader_preview(control_mat)
+    bsdf = preview_bsdf(control_mat, M)
+    pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (1.0, 0.0, 0.0)), f"TERRAIN_4: world-planar uses object world position ({pixel})")
+    plane.location.x = 0.5
+    bpy.context.view_layer.update()
+    bsdf = preview_bsdf(control_mat, M)
+    pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: translated object changes world-planar sample ({pixel})")
+    plane.location.x = 100.5
+    control_mat.adm.control_map_origin = (99.75, 0.0)
+    bpy.context.view_layer.update()
+    M.refresh_shader_preview(control_mat)
+    bsdf = preview_bsdf(control_mat, M)
+    pixel = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+    check(close(pixel, (0.0, 1.0, 0.0)), f"TERRAIN_4: world-planar remains stable after floating-origin shift ({pixel})")
+    plane.location.x = 0.0
+    control_mat.adm.control_map_origin = (-0.75, 0.0)
+    bpy.context.view_layer.update()
+    M.refresh_shader_preview(control_mat)
+    control_encoded, control_report = ModelExporter(
+        bpy.context, root, ExportOptions(vertex_controls=True)).export()
+    check(control_report.ok, f"TERRAIN_4: authoring-generated Control Map validates ({control_report.errors})")
+    if control_report.ok:
+        control_doc, _ = read_container(control_encoded, K.ADM_MAGIC)
+        exported_control_mat = next(material for material in control_doc["materials"]
+                                    if material["name"] == control_mat.name)
+        check(exported_control_mat["extensions"][K.TERRAIN_CONTROL_MAP_EXT]["mode"] == "TEXTURE_RGBA"
+              and exported_control_mat["extensions"][K.TERRAIN_CONTROL_MAP_EXT]["mapping"] == "WORLD_PLANAR_XZ"
+              and exported_control_mat["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] == surface_ids,
+              "TERRAIN_4: generated Control Map and stable layer IDs export")
 
     # 1. every builder with every parameter overridden ------------------------------------------
     profile_cases = sorted(

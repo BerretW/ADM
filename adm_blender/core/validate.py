@@ -122,6 +122,32 @@ def _is_vec(v, n):
     return isinstance(v, list) and len(v) == n and all(_is_num(x) for x in v)
 
 
+def _image_component_count(mime, blob, gpu_kind=None):
+    if mime in K.GPU_IMAGE_MIMES:
+        return {"RGBA8": 4, "BC1": 3, "BC3": 4, "BC4": 1, "BC5": 2, "BC7": 4}.get(gpu_kind)
+    if mime == "image/jpeg":
+        return 3
+    if mime != "image/png" or len(blob) < 33 or blob[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+
+    color_type = blob[25]
+    components = {0: 1, 2: 3, 3: 3, 4: 2, 6: 4}.get(color_type)
+    if components not in (1, 2, 3):
+        return components
+    offset = 8
+    while offset + 12 <= len(blob):
+        length = struct.unpack_from(">I", blob, offset)[0]
+        chunk_type = blob[offset + 4:offset + 8]
+        if length > len(blob) - offset - 12:
+            return components
+        if chunk_type == b"tRNS":
+            return components + 1
+        offset += length + 12
+        if chunk_type == b"IEND":
+            break
+    return components
+
+
 def _is_str(v):
     return isinstance(v, str)
 
@@ -469,7 +495,7 @@ class AdmValidator(_Base):
     def check_textures(self):
         images = self.array("images")
         views = self.array("bufferViews")
-        gpu_info, portable_dims = {}, {}
+        gpu_info, portable_dims, image_components = {}, {}, {}
         for i, im in enumerate(images):
             p = f"images[{i}]"
             if not self.keys(im, p, ("mimeType",), ("bufferView", "uri", "name", "sha256")):
@@ -494,6 +520,8 @@ class AdmValidator(_Base):
                                  "must be a lowercase 64-character SHA-256 hex digest")
                 if not _is_str(im["mimeType"]) or im["mimeType"] not in K.IMAGE_MIMES:
                     self.r.error("IMAGE_MIME", p, f"mimeType {im['mimeType']!r} not allowed")
+                elif im["mimeType"] == "image/jpeg":
+                    image_components[i] = 3
                 continue
             if "sha256" in im:
                 self.r.error("IMAGE_SHA256", p + ".sha256", "sha256 is only valid for external images")
@@ -514,6 +542,9 @@ class AdmValidator(_Base):
                 blob = read_view(self.doc, self.bin, im["bufferView"])
                 try:
                     gpu_info[i] = gputex.parse(blob, im["mimeType"], strict=True)
+                    image_components[i] = _image_component_count(
+                        im["mimeType"], blob, gpu_info[i]["kind"]
+                    )
                 except gputex.GpuTextureError as exc:
                     self.r.error("IMAGE_DECODE", p, f"not a valid ADM-subset {im['mimeType']} image: {exc}")
                 continue
@@ -525,11 +556,13 @@ class AdmValidator(_Base):
                     self.r.error("IMAGE_ANIMATED", p, "animated PNG (APNG) is not allowed")
                 else:
                     portable_dims[i] = gputex.portable_dims(blob, "image/png")
+                    image_components[i] = _image_component_count(im["mimeType"], blob)
             elif im["mimeType"] == "image/jpeg":
                 if not (blob.startswith(b"\xff\xd8\xff") and blob.rstrip(b"\x00").endswith(b"\xff\xd9")):
                     self.r.error("IMAGE_DECODE", p, "bufferView does not contain exactly one JPEG image")
                 else:
                     portable_dims[i] = gputex.portable_dims(blob, "image/jpeg")
+                    image_components[i] = _image_component_count(im["mimeType"], blob)
         samplers = self.array("samplers")
         for i, s in enumerate(samplers):
             p = f"samplers[{i}]"
@@ -570,6 +603,8 @@ class AdmValidator(_Base):
         self._check_gpu_colorspace(textures, gpu_info)
         self.image_dimensions = dict(portable_dims)
         self.image_dimensions.update({i: (info["width"], info["height"]) for i, info in gpu_info.items()})
+        self.image_components = image_components
+        self.r.image_components = image_components
 
     def _check_gpu_colorspace(self, textures, gpu_info):
         """GPU texture sRGB/UNORM variant must match how the material decodes the texture (§8.6)."""
@@ -590,6 +625,41 @@ class AdmValidator(_Base):
                     want = "sRGB" if srgb else "UNORM (linear)"
                     self.r.error("IMAGE_COLORSPACE", f"materials[{mi}].{key}",
                                  f"texture {ti} must use the {want} variant of its GPU format")
+            extensions = mat.get("extensions", {})
+            control_map = extensions.get(K.TERRAIN_CONTROL_MAP_EXT) if isinstance(extensions, dict) else None
+            ref = control_map.get("texture") if isinstance(control_map, dict) else None
+            ti = ref.get("index") if isinstance(ref, dict) else None
+            if isinstance(ti, int) and not isinstance(ti, bool) and 0 <= ti < len(textures):
+                texture = textures[ti]
+                info = gpu_info.get(texture.get("source")) if isinstance(texture, dict) else None
+                if info and info["srgb"]:
+                    self.r.error("IMAGE_COLORSPACE",
+                                 f"materials[{mi}].extensions.{K.TERRAIN_CONTROL_MAP_EXT}.texture",
+                                 f"texture {ti} must use the UNORM (linear) variant of its GPU format")
+            macro_color = extensions.get(K.TERRAIN_MACRO_COLOR_EXT) if isinstance(extensions, dict) else None
+            ref = macro_color.get("texture") if isinstance(macro_color, dict) else None
+            ti = ref.get("index") if isinstance(ref, dict) else None
+            if isinstance(ti, int) and not isinstance(ti, bool) and 0 <= ti < len(textures):
+                texture = textures[ti]
+                info = gpu_info.get(texture.get("source")) if isinstance(texture, dict) else None
+                if info and not info["srgb"]:
+                    self.r.error("IMAGE_COLORSPACE",
+                                 f"materials[{mi}].extensions.{K.TERRAIN_MACRO_COLOR_EXT}.texture",
+                                 f"texture {ti} must use the sRGB variant of its GPU format")
+            macro_normal = extensions.get(K.TERRAIN_MACRO_NORMAL_EXT) if isinstance(extensions, dict) else None
+            ref = macro_normal.get("texture") if isinstance(macro_normal, dict) else None
+            ti = ref.get("index") if isinstance(ref, dict) else None
+            if isinstance(ti, int) and not isinstance(ti, bool) and 0 <= ti < len(textures):
+                texture = textures[ti]
+                info = gpu_info.get(texture.get("source")) if isinstance(texture, dict) else None
+                if info and info["kind"] != "BC5":
+                    self.r.error("TERRAIN_MACRO_NORMAL_FORMAT",
+                                 f"materials[{mi}].extensions.{K.TERRAIN_MACRO_NORMAL_EXT}.texture",
+                                 f"GPU source for texture {ti} must use BC5 UNORM")
+                elif info and info["srgb"]:
+                    self.r.error("IMAGE_COLORSPACE",
+                                 f"materials[{mi}].extensions.{K.TERRAIN_MACRO_NORMAL_EXT}.texture",
+                                 f"texture {ti} must use the UNORM (linear) variant of BC5")
             shader = mat.get("shader")
             if isinstance(shader, dict):
                 shader_key = (shader.get("id"), shader.get("version"))
@@ -943,6 +1013,9 @@ class AdmValidator(_Base):
             self.check_material_shader(m, p, ntex)
             self.check_material_height(m, p, ntex)
             self.check_terrain_surface(m, p)
+            self.check_terrain_control_map(m, p, ntex)
+            self.check_terrain_macro_color(m, p, ntex)
+            self.check_terrain_macro_normal(m, p, ntex)
 
     def check_terrain_surface(self, material, path):
         extensions = material.get("extensions", {})
@@ -978,6 +1051,339 @@ class AdmValidator(_Base):
         if isinstance(required, list) and K.TERRAIN_SURFACE_EXT in required:
             self.r.error("TERRAIN_SURFACE_REQUIRED", p,
                          "must not be listed in extensionsRequired because it does not change rendering")
+
+    def check_terrain_control_map(self, material, path, texture_count):
+        extensions = material.get("extensions", {})
+        if not isinstance(extensions, dict) or K.TERRAIN_CONTROL_MAP_EXT not in extensions:
+            return
+        key = K.TERRAIN_CONTROL_MAP_EXT
+        p = f"{path}.extensions.{key}"
+        data = extensions[key]
+        optional = ("texture", "mapping", "origin", "scale", "offset", "strength",
+                    "channelOrder", "overrideMask")
+        if not self.keys(data, p, ("version", "mode"), optional):
+            return
+        if data["version"] != "1.0.0":
+            self.r.error("TERRAIN_CONTROL_MAP_VERSION", p + ".version", "must be '1.0.0'")
+        mode = data["mode"]
+        if mode not in K.TERRAIN_CONTROL_MAP_MODES:
+            self.r.error("TERRAIN_CONTROL_MAP_MODE", p + ".mode",
+                         "must be one of the registered Control Map modes")
+            return
+        used = self.doc.get("extensionsUsed", [])
+        required = self.doc.get("extensionsRequired", [])
+        if not isinstance(used, list) or key not in used:
+            self.r.error("TERRAIN_CONTROL_MAP_USED", p, f"'{key}' must be listed in extensionsUsed")
+        if not isinstance(required, list) or key not in required:
+            self.r.error("TERRAIN_CONTROL_MAP_REQUIRED", p,
+                         f"'{key}' must be listed in extensionsRequired")
+        if material_shader(self.materials[self._mi]) not in K.TERRAIN_CONTROL_MAP_PROFILES:
+            self.r.error("TERRAIN_CONTROL_MAP_PROFILE", p,
+                         "requires a registered four-layer terrain shader profile")
+        terrain = extensions.get(K.TERRAIN_SURFACE_EXT)
+        surface_ids = terrain.get("surfaceIds") if isinstance(terrain, dict) else None
+        if not isinstance(surface_ids, list) or len(surface_ids) != 4:
+            self.r.error("TERRAIN_CONTROL_MAP_SURFACES", p,
+                         f"requires four stable IDs in {K.TERRAIN_SURFACE_EXT}.surfaceIds")
+        texture = data.get("texture")
+        if mode == "VERTEX_ONLY":
+            if texture is not None:
+                self.r.error("TERRAIN_CONTROL_MAP_TEXTURE", p + ".texture",
+                             "must be omitted for VERTEX_ONLY")
+            for field in ("mapping", "origin", "scale", "offset", "strength", "channelOrder", "overrideMask"):
+                if field in data:
+                    self.r.error("TERRAIN_CONTROL_MAP_UNUSED", p + "." + field,
+                                 f"is not valid for {mode}")
+        elif not self.keys(texture, p + ".texture", ("index",), ("texCoord",)):
+            self.r.error("TERRAIN_CONTROL_MAP_TEXTURE", p + ".texture",
+                         "is required for this mode and must reference a texture")
+        elif self.index(texture["index"], texture_count, p + ".texture.index", "textures"):
+            mapping = data.get("mapping", "UV")
+            if mapping not in ("UV", "WORLD_PLANAR_XZ"):
+                self.r.error("TERRAIN_CONTROL_MAP_MAPPING", p + ".mapping",
+                             "must be UV or WORLD_PLANAR_XZ")
+            if mapping == "UV":
+                tex_coord = texture.get("texCoord", 0)
+                if type(tex_coord) is not int or tex_coord not in (0, 1):
+                    self.r.error("MATERIAL_TEXCOORD", p + ".texture.texCoord", "must be 0 or 1")
+                else:
+                    self.material_uv_needs.setdefault(self._mi, set()).add(f"TEXCOORD_{tex_coord}")
+                if "origin" in data:
+                    self.r.error("TERRAIN_CONTROL_MAP_ORIGIN", p + ".origin",
+                                 "is only valid with WORLD_PLANAR_XZ")
+            elif "texCoord" in texture:
+                self.r.error("TERRAIN_CONTROL_MAP_TEXCOORD", p + ".texture.texCoord",
+                             "must be omitted with WORLD_PLANAR_XZ")
+            elif "origin" in data and (
+                    not _is_vec(data["origin"], 2) or any(abs(value) > 1e9 for value in data["origin"])):
+                self.r.error("TERRAIN_CONTROL_MAP_ORIGIN", p + ".origin",
+                             "must be a finite two-component vector bounded by 1e9 meters")
+            texture_record = self.array("textures")[texture["index"]]
+            if isinstance(texture_record, dict) and "sampler" in texture_record:
+                sampler_index = texture_record["sampler"]
+                samplers = self.array("samplers")
+                if _is_int(sampler_index) and sampler_index < len(samplers):
+                    sampler = samplers[sampler_index]
+                    if isinstance(sampler, dict) and (
+                            sampler.get("magFilter", "LINEAR") != "LINEAR" or
+                            sampler.get("minFilter", "LINEAR") != "LINEAR"):
+                        self.r.error("TERRAIN_CONTROL_MAP_FILTER", p + ".texture",
+                                     "Control Maps require LINEAR minification and magnification")
+            if isinstance(texture_record, dict):
+                required_components = 3 if mode == "TEXTURE_RGB_IMPLICIT" else 4
+                images = self.array("images")
+                checked_images = set()
+                for image_field in ("source", "fallbackSource"):
+                    image_index = texture_record.get(image_field)
+                    if not _is_int(image_index) or image_index in checked_images:
+                        continue
+                    checked_images.add(image_index)
+                    if image_index >= len(images):
+                        continue
+                    image = images[image_index]
+                    if not isinstance(image, dict) or image.get("mimeType") not in K.IMAGE_MIMES:
+                        continue
+                    component_count = self.image_components.get(image_index)
+                    if component_count is None:
+                        continue
+                    if component_count < required_components:
+                        self.r.error(
+                            "TERRAIN_CONTROL_MAP_CHANNELS", p + ".texture",
+                            f"mode {mode} requires at least {required_components} decoded image channels; "
+                            f"image {image_index} provides {component_count!r}"
+                        )
+        for field, default, limit in (("scale", (1.0, 1.0), 1e6),
+                                      ("offset", (0.0, 0.0), 1e9)):
+            if field in data and (
+                    not _is_vec(data[field], 2) or any(abs(value) > limit for value in data[field])):
+                self.r.error("TERRAIN_CONTROL_MAP_RANGE", p + "." + field,
+                             f"must be a finite two-component vector bounded by {limit:g}")
+        scale = data.get("scale", [1.0, 1.0])
+        if _is_vec(scale, 2) and scale[0] == 0.0 and scale[1] == 0.0:
+            self.r.error("TERRAIN_CONTROL_MAP_SCALE", p + ".scale", "must not be [0,0]")
+        if "strength" in data and not (_is_num(data["strength"]) and 0.0 <= data["strength"] <= 1.0):
+            self.r.error("TERRAIN_CONTROL_MAP_STRENGTH", p + ".strength", "must be in [0,1]")
+        order = data.get("channelOrder", [0, 1, 2, 3])
+        if not isinstance(order, list) or len(order) != 4 or \
+                any(type(value) is not int for value in order) or sorted(order) != [0, 1, 2, 3]:
+            self.r.error("TERRAIN_CONTROL_MAP_CHANNEL_ORDER", p + ".channelOrder",
+                         "must be a permutation of [0,1,2,3]")
+        if "overrideMask" in data:
+            if mode != "VERTEX_OVERRIDE":
+                self.r.error("TERRAIN_CONTROL_MAP_OVERRIDE_MASK", p + ".overrideMask",
+                             "is valid only for VERTEX_OVERRIDE")
+            if not _is_vec(data["overrideMask"], 4) or any(
+                    value < 0.0 or value > 1.0 for value in data["overrideMask"]):
+                self.r.error("TERRAIN_CONTROL_MAP_OVERRIDE_MASK", p + ".overrideMask",
+                             "must contain four values in [0,1]")
+
+    def check_terrain_macro_color(self, material, path, texture_count):
+        extensions = material.get("extensions", {})
+        if not isinstance(extensions, dict) or K.TERRAIN_MACRO_COLOR_EXT not in extensions:
+            return
+        key = K.TERRAIN_MACRO_COLOR_EXT
+        p = f"{path}.extensions.{key}"
+        data = extensions[key]
+        optional = ("origin", "scale", "offset", "strength", "layerInfluence")
+        if not self.keys(data, p, ("version", "texture", "projection", "blendMode"), optional):
+            return
+        if data["version"] != "1.0.0":
+            self.r.error("TERRAIN_MACRO_COLOR_VERSION", p + ".version", "must be '1.0.0'")
+        if data["blendMode"] not in K.TERRAIN_MACRO_COLOR_MODES:
+            self.r.error("TERRAIN_MACRO_COLOR_MODE", p + ".blendMode",
+                         "must be MULTIPLY, TINT, or LERP")
+        used = self.doc.get("extensionsUsed", [])
+        required = self.doc.get("extensionsRequired", [])
+        if not isinstance(used, list) or key not in used:
+            self.r.error("TERRAIN_MACRO_COLOR_USED", p, f"'{key}' must be listed in extensionsUsed")
+        if not isinstance(required, list) or key not in required:
+            self.r.error("TERRAIN_MACRO_COLOR_REQUIRED", p,
+                         f"'{key}' must be listed in extensionsRequired")
+        if material_shader(self.materials[self._mi]) not in K.TERRAIN_MACRO_COLOR_PROFILES:
+            self.r.error("TERRAIN_MACRO_COLOR_PROFILE", p,
+                         "requires a registered four-layer terrain shader profile")
+        terrain = extensions.get(K.TERRAIN_SURFACE_EXT)
+        surface_ids = terrain.get("surfaceIds") if isinstance(terrain, dict) else None
+        if not isinstance(surface_ids, list) or len(surface_ids) != 4:
+            self.r.error("TERRAIN_MACRO_COLOR_SURFACES", p,
+                         f"requires four stable IDs in {K.TERRAIN_SURFACE_EXT}.surfaceIds")
+
+        texture = data["texture"]
+        if not self.keys(texture, p + ".texture", ("index",), ("texCoord",)):
+            texture = None
+        elif not self.index(texture["index"], texture_count, p + ".texture.index", "textures"):
+            texture = None
+        projection = data["projection"]
+        if projection not in ("LOCAL_UV", "SHARED_WORLD_XZ"):
+            self.r.error("TERRAIN_MACRO_COLOR_PROJECTION", p + ".projection",
+                         "must be LOCAL_UV or SHARED_WORLD_XZ")
+        elif texture is not None and projection == "LOCAL_UV":
+            tex_coord = texture.get("texCoord", 0)
+            if type(tex_coord) is not int or tex_coord not in (0, 1):
+                self.r.error("MATERIAL_TEXCOORD", p + ".texture.texCoord", "must be 0 or 1")
+            else:
+                self.material_uv_needs.setdefault(self._mi, set()).add(f"TEXCOORD_{tex_coord}")
+            if "origin" in data:
+                self.r.error("TERRAIN_MACRO_COLOR_ORIGIN", p + ".origin",
+                             "is valid only with SHARED_WORLD_XZ")
+        elif texture is not None:
+            if "texCoord" in texture:
+                self.r.error("TERRAIN_MACRO_COLOR_TEXCOORD", p + ".texture.texCoord",
+                             "must be omitted with SHARED_WORLD_XZ")
+            if "origin" in data and (
+                    not _is_vec(data["origin"], 2) or any(abs(value) > 1e9 for value in data["origin"])):
+                self.r.error("TERRAIN_MACRO_COLOR_ORIGIN", p + ".origin",
+                             "must be a finite two-component vector bounded by 1e9 meters")
+
+        if texture is not None:
+            texture_record = self.array("textures")[texture["index"]]
+            if isinstance(texture_record, dict):
+                if "sampler" in texture_record:
+                    sampler_index = texture_record["sampler"]
+                    samplers = self.array("samplers")
+                    if _is_int(sampler_index) and sampler_index < len(samplers):
+                        sampler = samplers[sampler_index]
+                        if isinstance(sampler, dict) and (
+                                sampler.get("magFilter", "LINEAR") != "LINEAR" or
+                                sampler.get("minFilter", "LINEAR") != "LINEAR"):
+                            self.r.error("TERRAIN_MACRO_COLOR_FILTER", p + ".texture",
+                                         "Macro Color requires LINEAR minification and magnification")
+                images = self.array("images")
+                checked_images = set()
+                for image_field in ("source", "fallbackSource"):
+                    image_index = texture_record.get(image_field)
+                    if not _is_int(image_index) or image_index in checked_images or image_index >= len(images):
+                        continue
+                    checked_images.add(image_index)
+                    image = images[image_index]
+                    if not isinstance(image, dict) or image.get("mimeType") not in K.IMAGE_MIMES:
+                        continue
+                    component_count = self.image_components.get(image_index)
+                    if component_count is not None and component_count < 3:
+                        self.r.error(
+                            "TERRAIN_MACRO_COLOR_CHANNELS", p + ".texture",
+                            f"requires at least three decoded image channels; image {image_index} "
+                            f"provides {component_count!r}"
+                        )
+
+        for field, limit in (("scale", 1e6), ("offset", 1e9)):
+            if field in data and (
+                    not _is_vec(data[field], 2) or any(abs(value) > limit for value in data[field])):
+                self.r.error("TERRAIN_MACRO_COLOR_RANGE", p + "." + field,
+                             f"must be a finite two-component vector bounded by {limit:g}")
+        scale = data.get("scale", [1.0, 1.0])
+        if _is_vec(scale, 2) and scale[0] == 0.0 and scale[1] == 0.0:
+            self.r.error("TERRAIN_MACRO_COLOR_SCALE", p + ".scale", "must not be [0,0]")
+        if "strength" in data and not (_is_num(data["strength"]) and 0.0 <= data["strength"] <= 1.0):
+            self.r.error("TERRAIN_MACRO_COLOR_STRENGTH", p + ".strength", "must be in [0,1]")
+        influence = data.get("layerInfluence", [1.0, 1.0, 1.0, 1.0])
+        if not _is_vec(influence, 4) or any(value < 0.0 or value > 1.0 for value in influence):
+            self.r.error("TERRAIN_MACRO_COLOR_INFLUENCE", p + ".layerInfluence",
+                         "must contain four values in [0,1]")
+
+    def check_terrain_macro_normal(self, material, path, texture_count):
+        extensions = material.get("extensions", {})
+        if not isinstance(extensions, dict) or K.TERRAIN_MACRO_NORMAL_EXT not in extensions:
+            return
+        key = K.TERRAIN_MACRO_NORMAL_EXT
+        p = f"{path}.extensions.{key}"
+        data = extensions[key]
+        optional = ("origin", "scale", "offset", "strength", "layerInfluence")
+        if not self.keys(data, p, ("version", "texture", "projection"), optional):
+            return
+        if data["version"] != "1.0.0":
+            self.r.error("TERRAIN_MACRO_NORMAL_VERSION", p + ".version", "must be '1.0.0'")
+        used = self.doc.get("extensionsUsed", [])
+        required = self.doc.get("extensionsRequired", [])
+        if not isinstance(used, list) or key not in used:
+            self.r.error("TERRAIN_MACRO_NORMAL_USED", p, f"'{key}' must be listed in extensionsUsed")
+        if not isinstance(required, list) or key not in required:
+            self.r.error("TERRAIN_MACRO_NORMAL_REQUIRED", p,
+                         f"'{key}' must be listed in extensionsRequired")
+        if material_shader(self.materials[self._mi]) not in K.TERRAIN_MACRO_NORMAL_PROFILES:
+            self.r.error("TERRAIN_MACRO_NORMAL_PROFILE", p,
+                         "requires a registered four-layer terrain shader profile")
+        terrain = extensions.get(K.TERRAIN_SURFACE_EXT)
+        surface_ids = terrain.get("surfaceIds") if isinstance(terrain, dict) else None
+        if not isinstance(surface_ids, list) or len(surface_ids) != 4:
+            self.r.error("TERRAIN_MACRO_NORMAL_SURFACES", p,
+                         f"requires four stable IDs in {K.TERRAIN_SURFACE_EXT}.surfaceIds")
+
+        texture = data["texture"]
+        if not self.keys(texture, p + ".texture", ("index",), ("texCoord",)):
+            texture = None
+        elif not self.index(texture["index"], texture_count, p + ".texture.index", "textures"):
+            texture = None
+        projection = data["projection"]
+        if projection not in ("LOCAL_UV", "SHARED_WORLD_XZ"):
+            self.r.error("TERRAIN_MACRO_NORMAL_PROJECTION", p + ".projection",
+                         "must be LOCAL_UV or SHARED_WORLD_XZ")
+        elif texture is not None and projection == "LOCAL_UV":
+            tex_coord = texture.get("texCoord", 0)
+            if type(tex_coord) is not int or tex_coord not in (0, 1):
+                self.r.error("MATERIAL_TEXCOORD", p + ".texture.texCoord", "must be 0 or 1")
+            else:
+                self.material_uv_needs.setdefault(self._mi, set()).add(f"TEXCOORD_{tex_coord}")
+            if "origin" in data:
+                self.r.error("TERRAIN_MACRO_NORMAL_ORIGIN", p + ".origin",
+                             "is valid only with SHARED_WORLD_XZ")
+        elif texture is not None:
+            if "texCoord" in texture:
+                self.r.error("TERRAIN_MACRO_NORMAL_TEXCOORD", p + ".texture.texCoord",
+                             "must be omitted with SHARED_WORLD_XZ")
+            if "origin" in data and (
+                    not _is_vec(data["origin"], 2) or any(abs(value) > 1e9 for value in data["origin"])):
+                self.r.error("TERRAIN_MACRO_NORMAL_ORIGIN", p + ".origin",
+                             "must be a finite two-component vector bounded by 1e9 meters")
+
+        if texture is not None:
+            texture_record = self.array("textures")[texture["index"]]
+            if isinstance(texture_record, dict):
+                sampler_index = texture_record.get("sampler")
+                samplers = self.array("samplers")
+                if _is_int(sampler_index) and sampler_index < len(samplers):
+                    sampler = samplers[sampler_index]
+                    if isinstance(sampler, dict) and (
+                            sampler.get("magFilter", "LINEAR") != "LINEAR" or
+                            sampler.get("minFilter", "LINEAR") != "LINEAR"):
+                        self.r.error("TERRAIN_MACRO_NORMAL_FILTER", p + ".texture",
+                                     "Macro Normal requires LINEAR minification and magnification")
+                images = self.array("images")
+                checked_images = set()
+                for image_field in ("source", "fallbackSource"):
+                    image_index = texture_record.get(image_field)
+                    if not _is_int(image_index) or image_index in checked_images or image_index >= len(images):
+                        continue
+                    checked_images.add(image_index)
+                    image = images[image_index]
+                    if not isinstance(image, dict) or image.get("mimeType") not in K.IMAGE_MIMES:
+                        continue
+                    if image.get("mimeType") == "image/jpeg":
+                        self.r.error("TERRAIN_MACRO_NORMAL_IMAGE_FORMAT", p + ".texture",
+                                     "Macro Normal images and fallbacks must use lossless PNG")
+                    component_count = self.image_components.get(image_index)
+                    minimum = 3 if image_field == "fallbackSource" else 2
+                    if component_count is not None and component_count < minimum:
+                        self.r.error(
+                            "TERRAIN_MACRO_NORMAL_CHANNELS", p + ".texture",
+                            f"{image_field} requires at least {minimum} decoded image channels; "
+                            f"image {image_index} provides {component_count!r}"
+                        )
+
+        for field, limit in (("scale", 1e6), ("offset", 1e9)):
+            if field in data and (
+                    not _is_vec(data[field], 2) or any(abs(value) > limit for value in data[field])):
+                self.r.error("TERRAIN_MACRO_NORMAL_RANGE", p + "." + field,
+                             f"must be a finite two-component vector bounded by {limit:g}")
+        scale = data.get("scale", [1.0, 1.0])
+        if _is_vec(scale, 2) and scale[0] == 0.0 and scale[1] == 0.0:
+            self.r.error("TERRAIN_MACRO_NORMAL_SCALE", p + ".scale", "must not be [0,0]")
+        if "strength" in data and not (_is_num(data["strength"]) and 0.0 <= data["strength"] <= 1.0):
+            self.r.error("TERRAIN_MACRO_NORMAL_STRENGTH", p + ".strength", "must be in [0,1]")
+        influence = data.get("layerInfluence", [1.0, 1.0, 1.0, 1.0])
+        if not _is_vec(influence, 4) or any(value < 0.0 or value > 1.0 for value in influence):
+            self.r.error("TERRAIN_MACRO_NORMAL_INFLUENCE", p + ".layerInfluence",
+                         "must contain four values in [0,1]")
 
     def check_material_height(self, material, path, texture_count):
         extensions = material.get("extensions", {})
@@ -3115,13 +3521,16 @@ def validate_adm_resolved(data, asset_path, limits=DEFAULT_LIMITS):
     doc = report.doc
     from .external_images import resolve_image_uri, sha256_hex
 
-    image_dims = {}
+    image_dims, gpu_info = {}, {}
+    image_components = dict(getattr(report, "image_components", {}))
+    external_image_indices = set()
     root = Path(asset_path).absolute().parent.resolve(strict=True)
     for i, image in enumerate(doc.get("images", []) or []):
         if not isinstance(image, dict):
             continue
         image_path = f"images[{i}]"
         if "uri" in image:
+            external_image_indices.add(i)
             try:
                 resolved = resolve_image_uri(root, image["uri"], must_exist=True)
                 size = resolved.stat().st_size
@@ -3157,12 +3566,15 @@ def validate_adm_resolved(data, asset_path, limits=DEFAULT_LIMITS):
         try:
             if mime in K.GPU_IMAGE_MIMES:
                 info = gputex.parse(blob, mime, strict=True)
+                gpu_info[i] = info
                 image_dims[i] = (info["width"], info["height"])
+                image_components[i] = _image_component_count(mime, blob, info["kind"])
             elif mime in K.PORTABLE_IMAGE_MIMES:
                 dims = gputex.portable_dims(blob, mime)
                 if dims is None:
                     raise ValueError("could not read image dimensions")
                 image_dims[i] = dims
+                image_components[i] = _image_component_count(mime, blob)
             else:
                 report.error("IMAGE_MIME", image_path + ".mimeType", f"unsupported mimeType {mime!r}")
         except (gputex.GpuTextureError, ValueError, TypeError) as exc:
@@ -3193,6 +3605,107 @@ def validate_adm_resolved(data, asset_path, limits=DEFAULT_LIMITS):
         if dims and not 1 <= dims[1] <= K.TINT_PALETTE_MAX_HEIGHT:
             report.error("VERTEX_CONTROL_PALETTE_SIZE", f"materials[{mi}].extensions.{K.VERTEX_CONTROL_EXT}.tintPalette",
                          f"tint palette image height must be 1-{K.TINT_PALETTE_MAX_HEIGHT}, got {dims[1]}")
+    for mi, material in enumerate(doc.get("materials", []) or []):
+        extensions = material.get("extensions") if isinstance(material, dict) else None
+        control = extensions.get(K.TERRAIN_CONTROL_MAP_EXT) if isinstance(extensions, dict) else None
+        if not isinstance(control, dict) or control.get("mode") == "VERTEX_ONLY":
+            continue
+        texture_ref = control.get("texture")
+        texture_index = texture_ref.get("index") if isinstance(texture_ref, dict) else None
+        if not _is_int(texture_index) or texture_index >= len(textures):
+            continue
+        texture = textures[texture_index]
+        if not isinstance(texture, dict):
+            continue
+        required_components = 3 if control.get("mode") == "TEXTURE_RGB_IMPLICIT" else 4
+        for image_field in ("source", "fallbackSource"):
+            image_index = texture.get(image_field)
+            if not _is_int(image_index) or image_index not in external_image_indices:
+                continue
+            component_count = image_components.get(image_index)
+            if component_count is not None and component_count < required_components:
+                report.error(
+                    "TERRAIN_CONTROL_MAP_CHANNELS",
+                    f"materials[{mi}].extensions.{K.TERRAIN_CONTROL_MAP_EXT}.texture",
+                    f"mode {control['mode']} requires at least {required_components} decoded image channels; "
+                    f"image {image_index} provides {component_count}"
+                )
+        source_index = texture.get("source")
+        info = gpu_info.get(source_index) if _is_int(source_index) else None
+        if info and info["srgb"]:
+            report.error(
+                "IMAGE_COLORSPACE",
+                f"materials[{mi}].extensions.{K.TERRAIN_CONTROL_MAP_EXT}.texture",
+                f"texture {texture_index} must use the UNORM (linear) variant of its GPU format"
+            )
+    for mi, material in enumerate(doc.get("materials", []) or []):
+        extensions = material.get("extensions") if isinstance(material, dict) else None
+        macro = extensions.get(K.TERRAIN_MACRO_COLOR_EXT) if isinstance(extensions, dict) else None
+        texture_ref = macro.get("texture") if isinstance(macro, dict) else None
+        texture_index = texture_ref.get("index") if isinstance(texture_ref, dict) else None
+        if not _is_int(texture_index) or texture_index >= len(textures):
+            continue
+        texture = textures[texture_index]
+        if not isinstance(texture, dict):
+            continue
+        for image_field in ("source", "fallbackSource"):
+            image_index = texture.get(image_field)
+            if not _is_int(image_index) or image_index not in external_image_indices:
+                continue
+            component_count = image_components.get(image_index)
+            if component_count is not None and component_count < 3:
+                report.error(
+                    "TERRAIN_MACRO_COLOR_CHANNELS",
+                    f"materials[{mi}].extensions.{K.TERRAIN_MACRO_COLOR_EXT}.texture",
+                    f"requires at least three decoded image channels; image {image_index} "
+                    f"provides {component_count}"
+                )
+        source_index = texture.get("source")
+        info = gpu_info.get(source_index) if _is_int(source_index) else None
+        if info and not info["srgb"]:
+            report.error(
+                "IMAGE_COLORSPACE",
+                f"materials[{mi}].extensions.{K.TERRAIN_MACRO_COLOR_EXT}.texture",
+                f"texture {texture_index} must use the sRGB variant of its GPU format"
+            )
+    for mi, material in enumerate(doc.get("materials", []) or []):
+        extensions = material.get("extensions") if isinstance(material, dict) else None
+        macro = extensions.get(K.TERRAIN_MACRO_NORMAL_EXT) if isinstance(extensions, dict) else None
+        texture_ref = macro.get("texture") if isinstance(macro, dict) else None
+        texture_index = texture_ref.get("index") if isinstance(texture_ref, dict) else None
+        if not _is_int(texture_index) or texture_index >= len(textures):
+            continue
+        texture = textures[texture_index]
+        if not isinstance(texture, dict):
+            continue
+        for image_field in ("source", "fallbackSource"):
+            image_index = texture.get(image_field)
+            if not _is_int(image_index) or image_index not in external_image_indices:
+                continue
+            component_count = image_components.get(image_index)
+            minimum = 3 if image_field == "fallbackSource" else 2
+            if component_count is not None and component_count < minimum:
+                report.error(
+                    "TERRAIN_MACRO_NORMAL_CHANNELS",
+                    f"materials[{mi}].extensions.{K.TERRAIN_MACRO_NORMAL_EXT}.texture",
+                    f"{image_field} requires at least {minimum} decoded image channels; "
+                    f"image {image_index} provides {component_count}"
+                )
+        source_index = texture.get("source")
+        info = gpu_info.get(source_index) if _is_int(source_index) else None
+        if info and info["kind"] != "BC5":
+            report.error(
+                "TERRAIN_MACRO_NORMAL_FORMAT",
+                f"materials[{mi}].extensions.{K.TERRAIN_MACRO_NORMAL_EXT}.texture",
+                f"GPU source for texture {texture_index} must use BC5 UNORM"
+            )
+        elif info and info["srgb"]:
+            report.error(
+                "IMAGE_COLORSPACE",
+                f"materials[{mi}].extensions.{K.TERRAIN_MACRO_NORMAL_EXT}.texture",
+                f"texture {texture_index} must use the UNORM (linear) variant of BC5"
+            )
+    report.image_components = image_components
     return report
 
 

@@ -28,10 +28,14 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from . import __version__
+from .heightmap import Heightmap, load_heightmap, sample_digest
 from .material import (GPU_ENCODINGS, SCALAR_GPU_ENCODINGS, SHADER_ID, SHADER_VERSION, SURFACES_PER_BIOME,
                        MapSlot, PreparedImage, Surface, TerrainMaterial,
                        MAX_TEXTURE_BYTES, MAX_TEXTURE_PIXELS, prepare_texture, srgb_to_linear)
 from .ply import read_ply, weight_fields
+from .roads import rasterize as rasterize_road
+from .texturing import (compile_rules, load_external_control_map, rasterize_control_map,
+                        rasterize_external_control_map)
 
 INDEX_NAME = "world.json"
 INDEX_FORMAT = "apparatus-world-tile-export"
@@ -63,13 +67,15 @@ class ExportSettings:
     gpu_encoding: str = "AUTO"
     palette_conflict_policy: str = "STRICT"
     convert_gpu_sources: bool = False
+    control_map_resolution: int = 0  # 0 = disabled
 
     def key(self) -> dict:
         """Settings that change the written files."""
         return {"lod_distance_m": self.lod_distance_m, "embed_textures": self.embed_textures,
                 "gpu_container": self.gpu_container, "gpu_encoding": self.gpu_encoding,
                 "palette_conflict_policy": self.palette_conflict_policy,
-                "convert_gpu_sources": self.convert_gpu_sources}
+                "convert_gpu_sources": self.convert_gpu_sources,
+                "control_map_resolution": self.control_map_resolution}
 
     def validate_values(self) -> None:
         if not self.out_dir:
@@ -82,6 +88,9 @@ class ExportSettings:
             raise ValueError("Unsupported palette conflict policy; choose Strict or Approximate")
         if not isinstance(self.convert_gpu_sources, bool):
             raise ValueError("GPU source conversion setting must be true or false")
+        if (type(self.control_map_resolution) is not int
+                or self.control_map_resolution != 0 and not 2 <= self.control_map_resolution <= 4096):
+            raise ValueError("Control Map resolution must be 0 (disabled) or an integer from 2 to 4096")
 
 
 @dataclass(frozen=True)
@@ -102,6 +111,92 @@ def _png_image(rgba: np.ndarray, name: str) -> PreparedImage:
     Image.fromarray(np.ascontiguousarray(rgba, dtype=np.uint8)).save(stream, "PNG", optimize=True)
     data = stream.getvalue()
     return PreparedImage(data, "image/png", hashlib.sha256(data).hexdigest(), w, h, name)
+
+
+def _control_map_source(manifest: dict, material: TerrainMaterial) -> dict:
+    source = manifest.get("source")
+    if not isinstance(source, dict) or not isinstance(source.get("path"), str):
+        raise ValueError("Control Map export requires the original heightmap recorded in the build manifest")
+    params = manifest.get("params", {})
+    raw_size = params.get("raw_size") if isinstance(params, dict) else None
+    raw_size = tuple(raw_size) if isinstance(raw_size, list) and len(raw_size) == 2 else None
+    path = source["path"]
+    if not os.path.isfile(path):
+        raise ValueError(f"Control Map export cannot read the source heightmap: {path}")
+    heightmap = load_heightmap(path, raw_size)
+    if (heightmap.width != source.get("width") or heightmap.height != source.get("height")):
+        raise ValueError("Control Map source dimensions differ from the build manifest; rebuild the terrain")
+    expected_digest = source.get("sample_digest")
+    if not isinstance(expected_digest, str):
+        raise ValueError("Control Map export requires a build manifest with a source sample fingerprint; rebuild")
+    if sample_digest(heightmap.data) != expected_digest:
+        raise ValueError("The source heightmap changed since the terrain build; rebuild before Control Map export")
+    spacing = float(manifest["spacing_m"])
+    if material.external_control_map_path:
+        material.validate_rules()
+        surface_ids = tuple(material.external_control_map_surface_ids)
+        known_ids = {surface.id for surface in material.surfaces}
+        if (len(surface_ids) != 4 or len(set(surface_ids)) != 4
+                or any(not surface_id or surface_id not in known_ids for surface_id in surface_ids)):
+            raise ValueError("External Control Map requires four unique, existing stable surface IDs")
+        return {
+            "heightmap": heightmap.data,
+            "external_mask": load_external_control_map(material.external_control_map_path),
+            "surface_ids": surface_ids,
+            "spacing": spacing,
+        }
+    scale = float(source["height_scale"])
+    offset = float(source["height_offset"])
+    if material.roads:
+        heights = heightmap.data.astype(np.float32, copy=True)
+        heights *= np.float32(scale)
+        heights += np.float32(offset)
+        for road in material.roads:
+            road.validate(heightmap.width, heightmap.height)
+            for window, distance, elevation in rasterize_road(
+                    road, spacing, heightmap.height, heightmap.width):
+                if road.shoulder_m:
+                    alpha = np.clip((road.width_m / 2 + road.shoulder_m - distance) / road.shoulder_m, 0, 1)
+                    alpha = alpha * alpha * (3 - 2 * alpha)
+                else:
+                    alpha = (distance <= road.width_m / 2).astype(np.float32)
+                patch = heights[window]
+                patch += (elevation - patch) * alpha
+        heightmap = Heightmap(heights, heightmap.path, 0.0)
+        scale, offset = 1.0, 0.0
+    return {
+        "heightmap": heightmap.data,
+        "rules": compile_rules(material, spacing, heightmap.width, heightmap.height),
+        "scale": scale,
+        "offset": offset,
+        "spacing": spacing,
+    }
+
+
+def _tile_source_bounds(manifest: dict, tile: dict, shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    height, width = shape
+    tile_cells = int(manifest["tile_cells"])
+    x0 = int(tile["ix"]) * tile_cells
+    y0 = (int(manifest["tiles_y"]) - 1 - int(tile["iy"])) * tile_cells
+    return x0, y0, min(width - 1, x0 + tile_cells), min(height - 1, y0 + tile_cells)
+
+
+def _control_map_source_fingerprint(source: dict) -> str:
+    values = [sample_digest(source["heightmap"])]
+    if "external_mask" in source:
+        values.extend((sample_digest(source["external_mask"]), list(source["surface_ids"])))
+    return hashlib.blake2b(json.dumps(values, sort_keys=True).encode(), digest_size=16).hexdigest()
+
+
+def _control_map_material_fingerprint(material_fp: str, source_fp: str) -> str:
+    return hashlib.blake2b(json.dumps([material_fp, source_fp]).encode(), digest_size=16).hexdigest()
+
+
+def _include_control_map_source(keys: dict[str, str], source_fp: str) -> dict[str, str]:
+    return {
+        tile_id: hashlib.blake2b(json.dumps([key, source_fp]).encode(), digest_size=16).hexdigest()
+        for tile_id, key in keys.items()
+    }
 
 
 def _png_scalar_image(values: np.ndarray, name: str) -> PreparedImage:
@@ -644,15 +739,26 @@ def load_index(out_dir: str) -> dict:
 
 
 def changed_tiles(manifest: dict, material: TerrainMaterial, settings: ExportSettings,
-                  material_fp: str | None = None, tile_material_keys: dict[str, str] | None = None) -> list[str]:
+                  material_fp: str | None = None, tile_material_keys: dict[str, str] | None = None,
+                  control_map_source_digest: str | None = None) -> list[str]:
     """IDs of tiles whose exported file is missing or out of date."""
     out_dir = os.path.abspath(settings.out_dir)
     known = load_index(out_dir).get("tiles", {})
     tile_size = float(manifest["tile_size_m"])
     texture_hashes: dict[str, str] = {}
     material_fp = material_fp or material_key(manifest, material, texture_hashes)
-    tile_material_keys = tile_material_keys if tile_material_keys is not None else _tile_material_keys(
-        manifest, material, material_fp, texture_hashes)
+    if settings.control_map_resolution:
+        if control_map_source_digest is None:
+            control_map_source_digest = _control_map_source_fingerprint(_control_map_source(manifest, material))
+            material_fp = _control_map_material_fingerprint(material_fp, control_map_source_digest)
+            tile_material_keys = None
+        if tile_material_keys is None:
+            tile_material_keys = _include_control_map_source(
+                _tile_material_keys(manifest, material, material_fp, texture_hashes),
+                control_map_source_digest)
+    else:
+        tile_material_keys = tile_material_keys if tile_material_keys is not None else _tile_material_keys(
+            manifest, material, material_fp, texture_hashes)
     texture_flags = _tile_texture_settings(manifest, material)
     changed = []
     for tile in manifest["tiles"]:
@@ -951,7 +1057,8 @@ def _material_params(surfaces: list[Surface], uv_scale: list[float],
 # ---------------------------------------------------------------------------------- tile
 def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, settings: ExportSettings,
                         texture_assets: dict[tuple[str, str, str, int | None], PreparedTexture],
-                        texture_uris: dict[tuple[str, str, str, int | None], tuple[str, str | None]]) -> tuple[dict, object, dict]:
+                        texture_uris: dict[tuple[str, str, str, int | None], tuple[str, str | None]],
+                        control_map_source: dict | None = None) -> tuple[dict, object, dict]:
     """Return ``(doc, chunks, stats)``; ``doc`` and ``chunks`` are ready for ``write_container``.
 
     ``stats`` reports per-LOD primitive counts, palette conflicts, and the
@@ -960,6 +1067,8 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     buffers, constants, _container, _validate = _core()
     if material.terrain_shader_version == SHADER_VERSION and material.has_advanced_shader_features():
         raise ValueError("Advanced terrain settings require the explicit terrain shader version 2.1.0.")
+    if settings.control_map_resolution and control_map_source is None:
+        raise ValueError("Control Map export requires a prepared source heightmap and surface rules")
     build_dir = manifest["_dir"]
     b = buffers.BinBuilder()
     tile_size = float(manifest["tile_size_m"])
@@ -983,6 +1092,17 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
                 MAX_PALETTE_CONFLICT_DETAILS - len(conflict_details)))
         lods.append((vertices, faces, masks, conflicts, weights))
     sets, assign = group_masks(np.concatenate([lod[2] for lod in lods]))
+    if control_map_source is not None and "external_mask" in control_map_source:
+        surface_index = {surface.id: index for index, surface in enumerate(surfaces)}
+        external_slots = [surface_index[ident] for ident in control_map_source["surface_ids"]]
+        external_mask = sum(1 << index for index in external_slots)
+        sets = [external_mask]
+        assign = {int(mask): 0 for mask in assign}
+    if control_map_source is not None:
+        palette_pixels = len(sets) * settings.control_map_resolution ** 2
+        if palette_pixels > 16_777_216:
+            raise ValueError(f"{tile['id']}: Control Maps for {len(sets)} palettes at "
+                             f"{settings.control_map_resolution}px exceed the per-tile pixel limit")
     resolved_lods = []
     for vertices, faces, masks, conflicts, weights in lods:
         face_palettes = np.fromiter(
@@ -991,7 +1111,8 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         resolved_lods.append((vertices, faces, masks, conflicts, effective_weights, reduction_errors))
     lods = resolved_lods
     total_conflicts = sum(lod[3] for lod in lods)
-    if total_conflicts and settings.palette_conflict_policy == "STRICT":
+    if (total_conflicts and settings.palette_conflict_policy == "STRICT"
+            and not (control_map_source is not None and "external_mask" in control_map_source)):
         raise ValueError(f"Strict export rejected {total_conflicts:,} triangles that need more than four "
                          "surfaces. Choose the explicit Approximate palette policy to export with "
                          "measurable weight reduction.")
@@ -1006,6 +1127,8 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
 
     images: list[dict] = []
     textures: list[dict] = []
+    samplers = ([{"wrapS": "CLAMP_TO_EDGE", "wrapT": "CLAMP_TO_EDGE"}]
+                if control_map_source is not None else [])
     by_slot: dict[tuple[str, str, str, int | None], int] = {}
 
     def texture_index(surface: Surface, name: str) -> int:
@@ -1055,14 +1178,47 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
             by_slot[key] = len(textures) - 1
         return by_slot[key]
 
+    def control_map_texture_index(palette_index: int, slots: list[int]) -> int:
+        if control_map_source is None:
+            raise ValueError("Control Map source was not prepared")
+        bounds = _tile_source_bounds(manifest, tile, control_map_source["heightmap"].shape)
+        output_size = (settings.control_map_resolution, settings.control_map_resolution)
+        if "external_mask" in control_map_source:
+            target_ids = tuple(surfaces[slot].id for slot in slots)
+            pixels = rasterize_external_control_map(
+                control_map_source["external_mask"], control_map_source["heightmap"].shape,
+                bounds, output_size, tuple(control_map_source["surface_ids"]), target_ids,
+            )
+        else:
+            map_slots = tuple(slots + [-1] * (4 - len(slots)))
+            pixels = rasterize_control_map(
+                control_map_source["rules"], control_map_source["heightmap"],
+                control_map_source["scale"], control_map_source["offset"],
+                control_map_source["spacing"], bounds, output_size, map_slots,
+            )
+        image = _png_image(pixels, f"{tile['id']}_control_{palette_index}")
+        if settings.embed_textures:
+            view = b.add_view(image.data, chunk_type="IMAG")
+            images.append({"bufferView": view, "mimeType": image.mime, "name": image.name})
+        else:
+            uri = _texture_uri(image)
+            _write_sidecar(os.path.abspath(settings.out_dir), uri, image.data)
+            images.append({"uri": uri, "mimeType": image.mime, "sha256": image.sha256, "name": image.name})
+        textures.append({"source": len(images) - 1, "sampler": 0})
+        return len(textures) - 1
+
     for i in used:  # stable texture order: surface by surface
         for name in ("albedo", "metallic", "roughness", "normal", "ao", "height", "emission"):
             if _texture_key(surfaces[i], name, settings.gpu_encoding)[0]:
                 texture_index(surfaces[i], name)
 
     materials = []
+    palette_slots: list[list[int]] = []
     for k, set_mask in enumerate(sets):
         slots = _slots(set_mask)
+        if control_map_source is not None:
+            slots = slots + [i for i in range(len(surfaces)) if i not in slots][:4 - len(slots)]
+        palette_slots.append(slots)
         chosen = [surfaces[i] for i in slots]
         base = chosen[0]
         exported_material = {
@@ -1085,6 +1241,13 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
                 chosen, [uv_all[i] for i in slots], texture_index, material, advanced, texture_assets,
                 settings.gpu_encoding),
         }
+        if control_map_source is not None:
+            exported_material["extensions"][constants.TERRAIN_CONTROL_MAP_EXT] = {
+                "version": "1.0.0",
+                "mode": "TEXTURE_RGBA",
+                "texture": {"index": control_map_texture_index(k, _slots(set_mask)), "texCoord": 0},
+                "mapping": "UV",
+            }
         if base.albedo:
             exported_material["baseColorTexture"] = {"index": texture_index(base, "albedo")}
         if base.normal:
@@ -1115,7 +1278,7 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
             attributes = {name: b.add_accessor(geom[name][keep], "F32", acc_type) for name, acc_type in
                           (("POSITION", "VEC3"), ("NORMAL", "VEC3"), ("TANGENT", "VEC4"), ("TEXCOORD_0", "VEC2"))
                           if name in geom}
-            attributes["COLOR_1"] = b.add_accessor(color1(geom["weights"][keep], _slots(sets[int(k)])), "U8", "VEC4",
+            attributes["COLOR_1"] = b.add_accessor(color1(geom["weights"][keep], palette_slots[int(k)]), "U8", "VEC4",
                                                    normalized=True)
             index_type = "U16" if len(keep) <= 65535 else "U32"
             indices = b.add_accessor(local.astype(np.uint32), index_type, "SCALAR")
@@ -1208,8 +1371,13 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     if textures:
         doc["textures"] = textures
         doc["images"] = images
+    if samplers:
+        doc["samplers"] = samplers
     extensions = [constants.VERTEX_CONTROL_EXT, constants.TERRAIN_SURFACE_EXT]
     required_extensions = [constants.VERTEX_CONTROL_EXT]
+    if control_map_source is not None:
+        extensions.append(constants.TERRAIN_CONTROL_MAP_EXT)
+        required_extensions.append(constants.TERRAIN_CONTROL_MAP_EXT)
     if physical_material_records:
         extensions.append(constants.PHYSICAL_SURFACES_EXT)
         required_extensions.append(constants.PHYSICAL_SURFACES_EXT)
@@ -1268,7 +1436,21 @@ def export_tiles(
     surfaces = build_surfaces(manifest, material)
     texture_hashes: dict[str, str] = {}
     material_fp = material_key(manifest, material, texture_hashes)
+    control_map_data = None
+    control_map_digest = None
+    if settings.control_map_resolution:
+        if len(surfaces) < 4:
+            raise ValueError("Control Map export requires at least four defined terrain surfaces")
+        _buffers, constants, _container, _validate = _core()
+        if (SHADER_ID, material.terrain_shader_version) not in constants.TERRAIN_CONTROL_MAP_PROFILES:
+            raise ValueError(f"Control Map export is unsupported by terrain shader profile "
+                             f"{SHADER_ID}@{material.terrain_shader_version}")
+        control_map_data = _control_map_source(manifest, material)
+        control_map_digest = _control_map_source_fingerprint(control_map_data)
+        material_fp = _control_map_material_fingerprint(material_fp, control_map_digest)
     tile_material_keys = _tile_material_keys(manifest, material, material_fp, texture_hashes)
+    if control_map_digest is not None:
+        tile_material_keys = _include_control_map_source(tile_material_keys, control_map_digest)
     texture_flags = _tile_texture_settings(manifest, material)
     warnings = []
     if rules_outdated(manifest, material):
@@ -1283,7 +1465,8 @@ def export_tiles(
     elif mode == "selected":
         todo = [tile_id for tile_id in (selected or []) if tile_id in tiles]
     else:
-        todo = changed_tiles(manifest, material, settings, material_fp, tile_material_keys)
+        todo = changed_tiles(manifest, material, settings, material_fp, tile_material_keys,
+                             control_map_digest)
 
     if settings.palette_conflict_policy == "STRICT" and todo:
         conflicts = sum(_tile_palette_conflicts(manifest, tiles[tile_id]) for tile_id in todo)
@@ -1356,7 +1539,8 @@ def export_tiles(
         if is_cancelled():
             raise Cancelled()
         tile = tiles[tile_id]
-        doc, chunks, stats = build_tile_document(manifest, tile, material, settings, texture_assets, texture_uris)
+        doc, chunks, stats = build_tile_document(
+            manifest, tile, material, settings, texture_assets, texture_uris, control_map_data)
         data = container.write_container(_constants.ADM_MAGIC, doc, chunks)
         path = os.path.join(out_dir, f"{tile_id}.adm")
         if settings.validate:
@@ -1379,8 +1563,9 @@ def export_tiles(
     physical_triangles = 0
     physical_tiles_without_assignments = 0
     threads = settings.threads or os.cpu_count() or 1
+    worker_limit = min(threads, 2) if settings.control_map_resolution else threads
     try:
-        with ThreadPoolExecutor(max_workers=max(1, min(threads, len(todo) or 1))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, min(worker_limit, len(todo) or 1))) as pool:
             futures = [pool.submit(run, tile_id) for tile_id in todo]
             try:
                 for done, future in enumerate(as_completed(futures), 1):

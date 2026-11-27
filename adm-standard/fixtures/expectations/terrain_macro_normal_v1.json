@@ -1,0 +1,100 @@
+{
+  "extension": "ADM_terrain_macro_normal_v1@1.0.0",
+  "vectors": [
+    {
+      "name": "bc5-strength",
+      "sample": [0.8, 0.5],
+      "strength": 0.5,
+      "expected": [0.3, 0.0, 0.9539392014169457]
+    },
+    {
+      "name": "bc5-over-disk-clamp",
+      "sample": [1.0, 1.0],
+      "strength": 1.0,
+      "expected": [0.7071067811865475, 0.7071067811865475, 1.4901161193847656e-08]
+    },
+    {
+      "name": "rnm-composition",
+      "base": [0.0, 0.6, 0.8],
+      "sample": [0.8, 0.5],
+      "strength": 1.0,
+      "expected": [0.6, 0.48, 0.64]
+    },
+    {
+      "name": "layer-influence-and-final-weighting",
+      "layerNormals": [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
+                       [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+      "weights": [0.25, 0.25, 0.25, 0.25],
+      "sample": [1.0, 0.5],
+      "strength": 1.0,
+      "layerInfluence": [1.0, 0.0, 0.0, 0.0],
+      "expected": [0.31622776601683794, 0.0, 0.9486832980505138]
+    },
+    {
+      "name": "missing-map-preserves-weighted-base",
+      "layerNormals": [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0],
+                       [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+      "weights": [0.5, 0.5, 0.0, 0.0],
+      "sample": null,
+      "expected": [0.7071067811865475, 0.0, 0.7071067811865475]
+    },
+    {
+      "name": "rnm-opposite-base-degeneracy",
+      "base": [0.0, 0.0, -1.0],
+      "sample": [0.8, 0.5],
+      "strength": 1.0,
+      "expected": [0.0, 0.0, -1.0]
+    }
+  ],
+  "coordinates": [
+    {
+      "name": "local-uv",
+      "projection": "LOCAL_UV",
+      "uv": [0.25, 0.75],
+      "scale": [2.0, 0.5],
+      "offset": [0.1, -0.2],
+      "expected": [0.6, 0.175]
+    },
+    {
+      "name": "shared-world",
+      "projection": "SHARED_WORLD_XZ",
+      "position": [12.0, 4.0, 18.0],
+      "origin": [2.0, 8.0],
+      "scale": [0.5, 2.0],
+      "offset": [0.1, -0.2],
+      "expected": [5.1, 19.8]
+    },
+    {
+      "name": "floating-origin-shift",
+      "projection": "SHARED_WORLD_XZ",
+      "position": [-988.0, 4.0, 518.0],
+      "origin": [-998.0, 508.0],
+      "scale": [0.5, 2.0],
+      "offset": [0.1, -0.2],
+      "expected": [5.1, 19.8]
+    }
+  ],
+  "frames": [
+    {
+      "name": "world-xz-on-horizontal-surface",
+      "geometricNormal": [0.0, 1.0, 0.0],
+      "positionDu": [1.0, 0.0, 0.0],
+      "positionDv": [0.0, 0.0, 1.0],
+      "expected": [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]
+    },
+    {
+      "name": "degenerate-derivatives-use-world-axis",
+      "geometricNormal": [0.0, 1.0, 0.0],
+      "positionDu": [0.0, 1.0, 0.0],
+      "positionDv": [0.0, 0.0, 0.0],
+      "expected": [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
+    },
+    {
+      "name": "degenerate-u-forces-positive-handedness",
+      "geometricNormal": [0.0, 1.0, 0.0],
+      "positionDu": [0.0, 1.0, 0.0],
+      "positionDv": [0.0, 0.0, 1.0],
+      "expected": [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
+    }
+  ]
+}

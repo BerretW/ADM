@@ -19,9 +19,11 @@ confirmed.
 
 ## Pending audit and design decisions
 - Compare boundary refinement, Control Maps, wider profiles and texture arrays
-  against actual seam/render fixtures. A reference-only spatial region palette
-  experiment now provides a preliminary comparison; choose only after measuring
-  representability, compatibility, cost and error.
+  against actual seam/render fixtures. The Control Map boundary is accepted as
+  an architectural constraint, not as proof that Control Maps are the best
+  general palette strategy. A reference-only spatial-region experiment is
+  preliminary; compare representability, compatibility, cost and error before
+  changing the four-slot export policy.
 - Audit existing physical material/collider schemas before adding fields or
   registries; avoid duplicate friction/restitution semantics.
 - Compare versioned BC5 fallback designs and prove primary-byte preservation,
@@ -158,3 +160,116 @@ confirmed.
   mixed assignments until the configured RTIN split-edge size is met. The
   existing per-tile triangle cap and RTIN depth provide hard resource limits;
   deterministic tests cover automatic/manual boundaries and shared tile seams.
+
+### Control Map boundary and contract (M2 decision confirmed; M4 started)
+- Keep four local layer slots mapped in stable order to global surface IDs.
+  Texture-driven Control Maps remove dependence on mesh vertex density, but
+  they do not increase the representable layer count or exactly encode five or
+  more simultaneously active surfaces.
+- Define Control Map weights before per-layer projection, parallax, and height
+  blending. The extension requires stable four-ID mappings in every mode,
+  accepts only registered four-layer terrain shader profiles, and requires
+  linear sampled data, bounded coordinate transforms, normalized weights,
+  deterministic fallbacks, and shared border/mip behavior.
+- Control Map v1 accepts only registered `adm.terrain.four_layer` 1.0.0,
+  2.0.0, 1.1.0, and 2.1.0 profiles and `adm.pbr.layered@2.1.0`.
+  Every mode, including `VERTEX_ONLY`, requires all four stable IDs.
+- Keep collision classification separate. Any future Control Map-based
+  authoring classifier must consume raw camera-independent weights and bake
+  stable collision assignments; it must not read final color or view-dependent
+  shader output.
+- Evidence: `adm-standard/extensions/ADM_terrain_control_map_v1.md`,
+  `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`, and
+  `adm-standard/fixtures/expectations/terrain_control_maps_v1.json`.
+- Consequences: unsupported readers must reject required extension data.
+  Blender preserves and previews this extension for supported settings, while
+  unsupported axis-specific wrap modes fall back to vertex weights with a
+  warning. World Tile exports opt-in maps from the
+  original height samples, road-graded height field, and current surface rules.
+  The build manifest fingerprints source samples; changing them requires a
+  rebuild before map export, while changing map resolution does not rebuild
+  geometry. Exported maps use local four-slot ordering with unused IDs padded
+  deterministically and zero-weight channels; each tile is bounded to
+  16,777,216 aggregate palette texels.
+- Keep collider classification unchanged by visual Control Maps. Collision
+  assignments continue to use stable surface links and manual physical paint;
+  they do not consume generated texture weights, rendered colors, camera data,
+  or view-dependent shader effects.
+- Consequences: World Tile now has source-rule export and an opt-in Detailed
+  material preview that samples maps before per-layer parallax and height
+  blending. External-mask import, manual map painting, diagnostic modes,
+  filtering/mip/border conformance, and rendered seam evidence remain open.
+  Blender imports/exports required Control Maps, exposes authoring settings and
+  stable layer IDs, and has Cycles pixel tests for all six modes with UV
+  sampling, UV0/UV1 selection, coordinate offsets, and a world-planar
+  XZ/origin sample. Transformed model coordinates, mip/filter, border/seam, and
+  floating-origin conformance remain open.
+  The wider M2 comparison of palette reduction, boundary refinement, Control
+  Maps, wider profiles, and arrays remains open.
+
+### Terrain Macro Color contract (M4 contract adopted; consumers pending)
+- Apply the map after per-layer linear albedo sampling and final Control Map/
+  height weights, before weighted layer combination. Support local UV and
+  shared world-XZ projection; parallax must not shift macro coordinates.
+- Decode RGB from sRGB to linear. `MULTIPLY` ignores alpha; `TINT` uses alpha
+  as multiply coverage; `LERP` interpolates base albedo toward macro color using
+  alpha coverage. `strength * layerInfluence[i]` gates each layer.
+- A missing map, zero strength, or zero layer influence leaves albedo unchanged.
+  White is neutral for `MULTIPLY` and `TINT`; zero alpha is neutral for `TINT`
+  and `LERP`.
+- Only registered four-layer terrain profiles and four stable surface IDs are
+  valid. Macro Color changes rendered albedo only and never participates in
+  collision classification or collider generation.
+- Evidence: `adm-standard/extensions/ADM_terrain_macro_color_v1.md`,
+  `adm_blender/core/material_math.py`, the validator, and independent vectors
+  in `adm-standard/fixtures/expectations/terrain_macro_color_v1.json`.
+- Consequences: Blender rejects required Macro Color data; World Tile and
+  Blender render/authoring support remain incomplete. Filtering, mip/border
+  continuity, and actual renderer output remain unverified.
+
+### M2 palette policy with future Control Maps (architectural decision confirmed)
+- Preserve four local visual slots and their stable global surface-ID mapping
+  for existing profiles. Keep strict/approximate face-mask reduction as the
+  export strategy when more than four surfaces compete for a primitive; report
+  measured loss rather than claiming exact representation.
+- Use Control Maps to remove dependence on vertex density and improve
+  within-palette interpolation only. Their four channels map to the same four
+  stable IDs; Control Maps do not solve five-plus simultaneous surface weights.
+- Keep boundary refinement for independent physical collider assignments and
+  geometry. It cannot replace visual material blending or increase the
+  representable visual palette.
+- Treat texture arrays as resource packing, not a semantic expansion of
+  surface slots. Do not select wider profiles until compatibility and runtime
+  costs are measured against the actual multi-tile fixtures.
+- Maintain physical classification from stable authored, camera-independent
+  weights and explicit physical references. Macro color/normal, lighting,
+  parallax, and other view-dependent shader outputs never participate.
+- Evidence: the rebuilt reference measures 9 palettes, 1.243% mean and 3.922%
+  maximum affected-vertex total-variation error for the current face-mask
+  strategy; preliminary spatial bins require 22–27 palettes and about 2.21%
+  mean / 9.80% maximum error. Control Map v1, boundary-refinement behavior,
+  and existing physical-classification tests establish their distinct roles.
+- Consequence: the architecture is selected, but the M2 comparative benchmark
+  remains open until palette count, visual error, identity preservation, and
+  export cost are recorded across shared edges, tiles/LODs, irregular edges,
+  noise, and biome transitions. Do not expand the four-slot profile based on
+  one reference asset.
+
+### Terrain Macro Normal contract (M4 contract adopted; consumers pending)
+- Sample local UV or shared world-XZ, always in linear data. GPU sources are
+  BC5 UNORM; portable normal images are lossless PNG.
+- Reconstruct tangent-space Z from clamped BC5 XY, apply bounded strength and
+  four stable per-layer influences, transform each layer normal into the
+  common projection frame, compose with RNM, then combine with final terrain
+  weights after Control Map and height blending.
+- Define deterministic derivative frame fallback, handedness, RNM singularity,
+  zero-result, and unavailable-map behavior. Macro Normal affects rendered
+  normals only.
+- Physical classification and collision generation remain independent of
+  Macro Normal, final color, lighting, camera, parallax, and other view effects.
+- Evidence: `adm-standard/extensions/ADM_terrain_macro_normal_v1.md`,
+  `adm_blender/core/material_math.py`, validator tests, and independent
+  vectors in `adm-standard/fixtures/expectations/terrain_macro_normal_v1.json`.
+- Consequences: Blender rejects required Macro Normal data before scene
+  mutation. World Tile and Blender authoring/render integration, filtered
+  border/mip behavior, and portable fallback equivalence remain open.

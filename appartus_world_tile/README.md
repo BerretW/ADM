@@ -24,7 +24,23 @@ py -3 -m venv .venv
 .venv\Scripts\python -m awt export world.awtp                   :: only changed tiles
 .venv\Scripts\python -m awt export world.awtp --tiles x003_y001 x004_y001
 .venv\Scripts\python -m awt export world.awtp --all --build     :: rebuild, then write everything
+.venv\Scripts\python -m awt export world.awtp --control-map-resolution 512
 ```
+
+Control Maps are opt-in. The GUI's **ADM tiles** tab and
+`--control-map-resolution` generate four-channel RGBA weights from the source
+heightmap and current surface rules; valid resolutions range from 2 to 4096
+pixels per side. The source heightmap must match the build manifest, so rebuild
+after changing its samples. Resolution changes do not rebuild terrain geometry.
+Control Map exports require a four-layer shader profile and mark the extension
+as required. Blender imports and preserves Control Map references, exposes
+four-layer authoring settings, and previews supported modes before per-layer
+height blending. Its filtering, tiled seams, and full mode conformance remain
+unverified. The **Detailed material** preview samples the same source-rule
+weights before per-layer parallax and height blending. Collision assignments
+continue to use authored physical surface data, not Control Map or shader
+output. Select **Control Map channel** in the 3D viewer to inspect a local
+palette channel; set a nonzero resolution first.
 
 For an existing `.venv`, rerun `.venv\Scripts\python -m pip install -e ".[gui]"`
 to update dependencies. The launcher installs them only when it creates `.venv`.

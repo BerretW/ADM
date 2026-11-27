@@ -3,6 +3,8 @@
 This matrix distinguishes reference implementation support from independent certification.
 `Partial` and `Fallback` entries retain the exact ADM data when possible and must not be
 represented as complete renderer conformance.
+For extension-by-extension status across the advanced terrain material mission, see the
+[material feature compatibility matrix](MATERIAL_FEATURE_COMPATIBILITY.md).
 
 | Consumer | AO | Height | Height Blend | Parallax | POM | GPU Formats | Round-trip |
 |---|---|---|---|---|---|---|---|

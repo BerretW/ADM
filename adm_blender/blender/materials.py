@@ -21,6 +21,8 @@ PREVIEW_PREFIX = "ADM Preview"
 MATERIAL_HEIGHT_DATA = "_adm_material_height_json"
 MATERIAL_HEIGHT_IMAGE = "_adm_material_height_image"
 MATERIAL_HEIGHT_SAMPLER = "_adm_material_height_sampler_json"
+MATERIAL_CONTROL_MAP_DATA = "_adm_terrain_control_map_json"
+MATERIAL_CONTROL_MAP_SAMPLER = "_adm_terrain_control_map_sampler_json"
 MATERIAL_UNKNOWN_EXTENSIONS = "_adm_unknown_material_extensions_json"
 MATERIAL_TERRAIN_SURFACE = "_adm_terrain_surface_json"
 MATERIAL_UNKNOWN_SHADER = "_adm_unknown_shader_json"
@@ -718,11 +720,18 @@ class MaterialExporter:
                 self.extensions_used.update(unknown)
                 self.warn(f"material '{mat.name}': unknown material extensions are preserved, "
                           "but their internal references cannot be remapped")
-        if MATERIAL_TERRAIN_SURFACE in mat:
+        if MATERIAL_TERRAIN_SURFACE in mat or mat.adm.control_map_enabled:
             try:
-                terrain_surface = json.loads(mat[MATERIAL_TERRAIN_SURFACE])
+                terrain_surface = json.loads(mat.get(MATERIAL_TERRAIN_SURFACE, '{"version":"1.0.0"}'))
                 if not isinstance(terrain_surface, dict):
                     raise ValueError("invalid terrain surface identity data")
+                if mat.adm.control_map_enabled:
+                    terrain_surface = {
+                        "version": "1.0.0",
+                        "surfaceIds": [
+                            getattr(mat.adm, f"control_map_surface_{index}") for index in range(4)
+                        ],
+                    }
             except (TypeError, ValueError) as exc:
                 raise ShaderExportError(
                     f"material '{mat.name}': cannot preserve terrain surface identities: {exc}") from exc
@@ -762,6 +771,57 @@ class MaterialExporter:
                     self.extensions_used.update(preserved["extensions"])
                     self.warn(f"material '{mat.name}': nested material-height extension data is preserved, "
                               "but its internal references cannot be remapped")
+        if MATERIAL_CONTROL_MAP_DATA in mat or mat.adm.control_map_enabled:
+            try:
+                control_map = json.loads(mat.get(MATERIAL_CONTROL_MAP_DATA, '{"version":"1.0.0"}'))
+                props = mat.adm
+                control_map = {"version": "1.0.0", "mode": props.control_map_mode}
+                if props.control_map_mode != "VERTEX_ONLY":
+                    control_map.update({
+                        "mapping": props.control_map_mapping,
+                        "scale": list(props.control_map_scale),
+                        "offset": list(props.control_map_offset),
+                        "strength": float(props.control_map_strength),
+                        "channelOrder": list(props.control_map_channel_order),
+                    })
+                    if props.control_map_mapping == "WORLD_PLANAR_XZ":
+                        control_map["origin"] = list(props.control_map_origin)
+                    if props.control_map_mode == "VERTEX_OVERRIDE":
+                        control_map["overrideMask"] = list(props.control_map_override_mask)
+                    texture_ref = {"index": 0}
+                    if props.control_map_mapping == "UV" and props.control_map_tex_coord:
+                        texture_ref["texCoord"] = int(props.control_map_tex_coord)
+                    control_map["texture"] = texture_ref
+                sampler = json.loads(mat.get(MATERIAL_CONTROL_MAP_SAMPLER, "null"))
+                if not isinstance(control_map, dict):
+                    raise ValueError("invalid Control Map metadata")
+                texture_ref = control_map.get("texture")
+                if texture_ref is not None \
+                        and not isinstance(props.control_map_image, bpy.types.Image):
+                    raise ValueError("invalid Control Map metadata or missing texture image")
+                image = props.control_map_image
+                if sampler is not None and not isinstance(sampler, dict):
+                    raise ValueError("invalid Control Map texture sampler")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ShaderExportError(f"material '{mat.name}': cannot preserve terrain Control Map: {exc}") from exc
+            if texture_ref is not None:
+                sampler_index = None
+                if sampler is not None:
+                    sampler_key = ("preserved", json.dumps(sampler, sort_keys=True, ensure_ascii=False))
+                    if sampler_key not in self._sampler_cache:
+                        self.samplers.append(sampler)
+                        self._sampler_cache[sampler_key] = len(self.samplers) - 1
+                    sampler_index = self._sampler_cache[sampler_key]
+                    if isinstance(sampler.get("extensions"), dict):
+                        self.extensions_used.update(sampler["extensions"])
+                image_entry = self._add_image(self._image_key(image, False), image.name, image, False)
+                texture_ref["index"] = self._texture(image_entry, sampler_index)
+            out.setdefault("extensions", {})[K.TERRAIN_CONTROL_MAP_EXT] = control_map
+            self.extensions_used.add(K.TERRAIN_CONTROL_MAP_EXT)
+            self.extensions_required.add(K.TERRAIN_CONTROL_MAP_EXT)
+            for preserved in (control_map, texture_ref, sampler):
+                if preserved and preserved.get("extensions"):
+                    self.extensions_used.update(preserved["extensions"])
         if self.vertex_controls:
             p = mat.adm
             vc = {"parameters": {
@@ -1623,11 +1683,40 @@ def build_material(m, resolve_texture, resolve_normal_texture):
                if name not in K.SUPPORTED_EXTENSIONS}
     if unknown:
         mat[MATERIAL_UNKNOWN_EXTENSIONS] = json.dumps(unknown, ensure_ascii=False)
+    missing_textures = []
     terrain_surface = (m.get("extensions") or {}).get(K.TERRAIN_SURFACE_EXT)
     if terrain_surface is not None:
         mat[MATERIAL_TERRAIN_SURFACE] = json.dumps(terrain_surface, ensure_ascii=False, allow_nan=False)
-    missing_textures = []
-
+    control_map = (m.get("extensions") or {}).get(K.TERRAIN_CONTROL_MAP_EXT)
+    if control_map is not None:
+        sampler = None
+        image = None
+        props = mat.adm
+        props.control_map_mode = control_map["mode"]
+        props.control_map_mapping = control_map.get("mapping", "UV")
+        props.control_map_strength = control_map.get("strength", 1.0)
+        props.control_map_scale = control_map.get("scale", [1.0, 1.0])
+        props.control_map_offset = control_map.get("offset", [0.0, 0.0])
+        props.control_map_origin = control_map.get("origin", [0.0, 0.0])
+        props.control_map_channel_order = control_map.get("channelOrder", [0, 1, 2, 3])
+        props.control_map_override_mask = control_map.get("overrideMask", [1.0, 1.0, 1.0, 1.0])
+        surface_ids = terrain_surface.get("surfaceIds", []) if isinstance(terrain_surface, dict) else []
+        for index in range(4):
+            setattr(props, f"control_map_surface_{index}",
+                    surface_ids[index] if index < len(surface_ids) else "")
+        props.control_map_enabled = True
+        if "texture" in control_map:
+            image, sampler = resolve_texture(control_map["texture"])
+            if image is None:
+                missing_textures.append(control_map["texture"])
+            props.control_map_tex_coord = control_map["texture"].get("texCoord", 0)
+            props.control_map_image = image
+        props.control_map_sampler_json = json.dumps(sampler, ensure_ascii=False, allow_nan=False)
+        if sampler is not None and sampler.get("wrapS", "REPEAT") != sampler.get("wrapT", "REPEAT"):
+            mat["_adm_control_map_preview_fallback"] = "Blender uses one wrap mode for both texture axes"
+        mat[MATERIAL_CONTROL_MAP_DATA] = json.dumps(
+            control_map, ensure_ascii=False, allow_nan=False)
+        mat[MATERIAL_CONTROL_MAP_SAMPLER] = json.dumps(sampler, ensure_ascii=False, allow_nan=False)
     def _resolve_texture(ref):
         image, sampler = resolve_texture(ref)
         if image is None:

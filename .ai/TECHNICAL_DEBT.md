@@ -6,6 +6,39 @@ severity, cause, workaround, proposed fix, and source/test evidence.
 
 ## Open issues
 
+### Terrain Control Map consumer support
+- **Severity:** High for assets that require texture-driven terrain weights.
+- **Cause:** `ADM_terrain_control_map_v1@1.0.0` has a normative contract,
+  reference weight/coordinate math, and structural validation, including a
+  gate for registered four-layer profiles and four stable IDs in every mode,
+  and World Tile can export opt-in, source-sampled RGBA maps and sample them in
+  the Detailed material preview. Blender now imports and exports the extension,
+  exposes authoring properties, and previews supported modes. Neither consumer
+  has complete conformance evidence for derivative-based mip selection,
+  shared borders, or rendered seams. Blender falls back to vertex weights when
+  sampler wrap modes differ by axis, because its Image Texture node applies one
+  wrap mode to both axes.
+- **Workaround:** Blender emits an import warning for axis-specific wrap modes
+  and shows normalized vertex weights in that case. Do not label the available
+  preview paths as fully conformant.
+- **Next step:** Integrate the bounded World Tile RGBA decoder with project
+  persistence, stable-ID channel assignment, UI, export, and preview; then add
+  combined/final-weight diagnostics and verify rendered tile borders and
+  cross-reader filtering parity.
+  The decoder is a standalone utility and does not yet persist or apply masks.
+  Generated tile maps now use clamp-to-edge
+  samplers, and VTK tests exact source-grid edges and mip selection, but these
+  tests do not establish final cross-tile rendered seams. Blender now has
+  rendered evidence for translated object positions and a matching
+  floating-origin shift; sampler filtering, mip behavior, and pre-parallax
+  ordering remain unverified there. Keep physical classification based on
+  stable authored surface links and manual paint, never rendered Control Map
+  output.
+- **Evidence:** `adm-standard/extensions/ADM_terrain_control_map_v1.md`,
+  `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`,
+  `adm_blender/blender/import_adm.py`, and the focused tests recorded in
+  `.ai/TESTS.md`.
+
 ### Four-layer palette conflicts
 - **Severity:** High for exact representation; approximate mode has measured
   low weight error on the current reference but is not exact.
@@ -19,8 +52,9 @@ severity, cause, workaround, proposed fix, and source/test evidence.
   per-corner weights and stable surface IDs. Users can repair the source
   weights with the existing Map-tab Surface paint tool.
 - **Next step:** Compare palette reduction with boundary refinement, Control
-  Maps, wider profiles and texture arrays. A spatial-region candidate measured
-  worse on the current reference (more palettes and greater affected-vertex
+  Maps, wider profiles and texture arrays. The Control Map boundary is
+  architectural guidance, not a resolution of five-plus-surface representation.
+  A spatial-region candidate measured worse on the current reference (more palettes and greater affected-vertex
   error) but has not been rendered. Broaden the decoded-weight and rendered
   checks to additional source assets and independent tile/LOD boundaries. The current
   reference export passes a 1% decoded-weight total-variation bound across
@@ -34,6 +68,43 @@ severity, cause, workaround, proposed fix, and source/test evidence.
   measures 1.243% mean / 3.922% maximum error and passes duplicate-position
   comparisons within primitives and a <=1% total-variation comparison across
   tiles and LODs. See `.ai/TESTS.md`.
+
+### Terrain Macro Color consumer support
+- **Severity:** High for assets that require the macro effect.
+- **Cause:** `ADM_terrain_macro_color_v1@1.0.0` has a normative contract,
+  reference color/coordinate math, profile/image/color-space/sampler
+  validation, and independent vectors, but neither World Tile nor Blender
+  renders or authors it. Filtered mip/border continuity has no renderer
+  evidence.
+- **Workaround:** Blender rejects required Macro Color data before scene
+  mutation. Do not treat metadata or reference math as renderer support.
+- **Next step:** Implement World Tile authoring, import, persistence, shader
+  sampling, preview, and export; then implement and test Blender metadata and
+  rendering support. Verify local/shared projection, mip/border continuity,
+  parallax ordering, and unchanged physical classification.
+- **Evidence:** `adm-standard/extensions/ADM_terrain_macro_color_v1.md`,
+  `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`,
+  `adm_blender/blender/import_adm.py`, the focused tests, and the compatibility
+  matrix.
+
+### Terrain Macro Normal consumer support
+- **Severity:** High for assets that require the macro normal effect.
+- **Cause:** `ADM_terrain_macro_normal_v1@1.0.0` has a normative BC5/RNM/frame
+  contract, reference math, profile/image/format/sampler validation, and
+  independent vectors, but World Tile and Blender do not render or author it.
+  Filtered mip/border continuity, cross-frame rendered output, and portable
+  fallback equivalence are unverified.
+- **Workaround:** Blender rejects required Macro Normal data before scene
+  mutation. Do not label its contract, validator, or reference math as renderer
+  support.
+- **Next step:** Implement authoring, import/persistence, rendering, and
+  previews in World Tile and Blender; verify BC5/RGB fallback equivalence,
+  shared-tile seams, mip behavior, parallax independence, and unchanged
+  physical assignments.
+- **Evidence:** `adm-standard/extensions/ADM_terrain_macro_normal_v1.md`,
+  `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`,
+  `adm_blender/blender/import_adm.py`, the focused tests, and the compatibility
+  matrix.
 
 ### Blender standalone core-PBR BC5 fallback
 - **Severity:** High for portable normal-map use.

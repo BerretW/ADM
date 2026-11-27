@@ -88,6 +88,67 @@ raise SystemExit(app.exec())
                                 capture_output=True, text=True, timeout=45)
         self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
 
+    def test_external_control_map_channels_persist_through_project_widgets(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        ids = [surface.id for surface in window._material().surfaces[:4]]
+        with tempfile.TemporaryDirectory() as directory:
+            mask_path = os.path.join(directory, "external.png")
+            for combo, surface_id in zip(window.external_control_map_channels, ids):
+                combo.setCurrentIndex(combo.findData(surface_id))
+            window.external_control_map_path.setText(mask_path)
+            path = os.path.join(directory, "world.awtp")
+            self.assertTrue(window._write_project(path))
+            project = load_project(path)
+            self.assertEqual(project.material.external_control_map_path, mask_path)
+            self.assertEqual(project.material.external_control_map_surface_ids, ids)
+            window._apply_widgets(project)
+            self.assertEqual([combo.currentData() for combo in window.external_control_map_channels], ids)
+
+    def test_external_control_map_is_used_by_detailed_preview(self):
+        import pyvista as pv
+        from PIL import Image
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        from awt.gui.viewer3d import DETAILED_MATERIAL_MODE, Viewer3D, load_tiles
+        from awt.pipeline import BuildParams, build, load_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            height_path = os.path.join(directory, "height.npy")
+            mask_path = os.path.join(directory, "external.png")
+            np.save(height_path, np.zeros((33, 33), dtype=np.float32))
+            mask = np.zeros((33, 33, 4), dtype=np.uint8)
+            mask[..., 2] = 255
+            Image.fromarray(mask).save(mask_path)
+            material = TerrainMaterial()
+            material.external_control_map_path = mask_path
+            material.external_control_map_surface_ids = [
+                surface.id for surface in material.surfaces[:4]]
+            params = BuildParams(input_path=height_path, out_dir=os.path.join(directory, "build"),
+                                 tile_cells=32, max_errors_m=[0.1], spacing_m=1.0)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            viewer = Viewer3D()
+            self.addCleanup(viewer.shutdown)
+            viewer.resize(400, 400)
+            viewer.show()
+            self.app.processEvents()
+            viewer.set_manifest(manifest)
+            viewer._tiles = [(0, 0)]
+            viewer.color.blockSignals(True)
+            viewer.color.setCurrentIndex(DETAILED_MATERIAL_MODE)
+            viewer.color.blockSignals(False)
+            viewer._data = load_tiles(manifest, viewer._tiles, 0, detailed=True)
+            viewer.set_control_map_resolution(16)
+            viewer.set_material(material)
+
+            self.assertIn("Detailed material uses 16px external-mask Control Maps", viewer.status.text())
+            texture = viewer._actor.prop.GetTexture("admControlMap")
+            self.assertIsNotNone(texture)
+            pixels = vtk_to_numpy(texture.GetInput().GetPointData().GetScalars()).reshape(16, 16, 4)
+            self.assertTrue(np.all(pixels[..., 2] == 255))
+            self.assertTrue(np.all(pixels[..., (0, 1, 3)] == 0))
+
     def test_biome_noise_slider_updates_and_saves_project(self):
         window = MainWindow()
         self.addCleanup(window.close)
@@ -109,7 +170,7 @@ raise SystemExit(app.exec())
             path = os.path.join(directory, "world.awtp")
             self.assertTrue(window._write_project(path))
             loaded = load_project(path)
-            self.assertEqual(loaded.to_dict()["format_version"], 12)
+            self.assertEqual(loaded.to_dict()["format_version"], 14)
             self.assertEqual(loaded.material.biomes[0].noise, 0.65)
             window._open_project_file(path)
             window.material_panel.biome_list.setCurrentRow(0)
@@ -138,7 +199,7 @@ raise SystemExit(app.exec())
             path = os.path.join(directory, "world.awtp")
             self.assertTrue(window._write_project(path))
             project = load_project(path)
-            self.assertEqual(project.to_dict()["format_version"], 12)
+            self.assertEqual(project.to_dict()["format_version"], 14)
             self.assertEqual(project.params.collision_max_error_m, 0.75)
             self.assertEqual(project.params.collision_boundary_max_edge_m, 2.5)
             self.assertEqual(project.params.collision_max_triangles_per_tile, 4096)
@@ -902,6 +963,131 @@ raise SystemExit(app.exec())
                                             height_blend=True, transition=0.2, strength=1, texture_units=6,
                                             texture_cache={}, texture_budget_bytes=63)
                 samples.assert_not_called()
+
+    def test_control_map_preview_binds_linear_texture_weights(self):
+        import pyvista as pv
+        from vtkmodules.util.numpy_support import vtk_to_numpy
+        from awt.gui.preview_shader import install_layered_preview
+
+        control = np.array([[[255, 0, 0, 0], [0, 255, 0, 0]],
+                            [[0, 0, 255, 0], [0, 0, 0, 255]]], dtype=np.uint8)
+        texture_cache = {}
+        plotter = pv.Plotter(off_screen=True)
+        self.addCleanup(plotter.close)
+        actor = plotter.add_mesh(pv.Plane())
+        install_layered_preview(
+            actor, pv, [Surface("map")], [1], TerrainMaterial(),
+            height_blend=True, transition=0.2, strength=1, texture_units=8,
+            control_map_pixels=control, diagnostic=("control", 2), texture_cache=texture_cache,
+        )
+        texture = actor.prop.GetTexture("admControlMap")
+        self.assertIsNotNone(texture)
+        self.assertFalse(texture.GetUseSRGBColorSpace())
+        self.assertTrue(texture.interpolate)
+        self.assertTrue(texture.mipmap)
+        self.assertFalse(texture.repeat)
+        self.assertEqual(sum(size for _, size in texture_cache.values()), 20)
+        pixels = vtk_to_numpy(texture.GetInput().GetPointData().GetScalars()).reshape(2, 2, 4)
+        np.testing.assert_array_equal(pixels, control[::-1])
+
+    def test_control_map_minification_uses_mip_levels(self):
+        import pyvista as pv
+        from awt.gui.preview_shader import install_layered_preview
+
+        y, x = np.indices((256, 256))
+        red = (((x // 2 + y // 2) % 2) * 255).astype(np.uint8)
+        control = np.zeros((256, 256, 4), dtype=np.uint8)
+        control[..., 0] = red
+        control[..., 1] = 255 - red
+
+        plotter = pv.Plotter(off_screen=True, window_size=(128, 128))
+        self.addCleanup(plotter.close)
+        plotter.set_background("black")
+        white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+        white.SetUseSRGBColorSpace(True)
+        orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+        normal = pv.numpy_to_texture(np.full((2, 2, 3), (128, 128, 255), dtype=np.uint8))
+        actor = plotter.add_mesh(pv.Plane(i_size=2, j_size=2), texture=white, pbr=True,
+                                 metallic=1, roughness=1, render=False)
+        actor.prop.SetTexture("albedoTex", white)
+        actor.prop.SetORMTexture(orm)
+        actor.prop.SetNormalTexture(normal)
+        actor.prop.SetEmissiveTexture(white)
+        actor.prop.SetEmissiveFactor(1, 1, 1)
+        install_layered_preview(
+            actor, pv, [Surface("map")], [1], TerrainMaterial(),
+            height_blend=False, transition=0.2, strength=1, texture_units=8,
+            control_map_pixels=control, diagnostic=("control", 0),
+        )
+        plotter.camera_position = [(0, 0, 3), (0, 0, 0), (0, 1, 0)]
+        plotter.camera.parallel_projection = True
+        plotter.camera.parallel_scale = 4
+        plotter.show(auto_close=False)
+
+        minified = plotter.screenshot(return_img=True).astype(np.float32)
+        plotter.camera.parallel_scale = 1
+        plotter.render()
+        magnified = plotter.screenshot(return_img=True).astype(np.float32)
+        minified_std = float(np.std(minified[48:80, 48:80, 0]))
+        magnified_std = float(np.std(magnified[16:-16, 16:-16, 0]))
+        self.assertLess(minified_std, 5, f"minified output varied by {minified_std}")
+        self.assertGreater(magnified_std, 20, f"magnified output varied by {magnified_std}")
+
+    def test_control_map_weights_are_sampled_before_view_dependent_parallax(self):
+        import pyvista as pv
+        from PIL import Image
+        from awt.gui.material_panel import _mesh_with_tangents
+        from awt.gui.preview_shader import install_layered_preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            height_path = os.path.join(directory, "height.png")
+            height = np.broadcast_to(np.arange(128, dtype=np.uint8)[None, :], (128, 128)).copy()
+            Image.fromarray(height).save(height_path)
+            surfaces = [
+                Surface("red", height_map=MapSlot(height_path), parallax_scale=0.3),
+                Surface("green", height_map=MapSlot(height_path), parallax_scale=0.3),
+            ]
+            material = TerrainMaterial(
+                surfaces=surfaces, height_blend_enabled=True, height_blend_transition=0.2,
+                height_blend_strength=1.0, parallax_mode="PARALLAX_OCCLUSION",
+            )
+            gradient = np.broadcast_to(np.linspace(0, 255, 64, dtype=np.uint8)[None, :], (64, 64)).copy()
+            control = np.zeros((64, 64, 4), dtype=np.uint8)
+            control[..., 0] = gradient
+            control[..., 1] = 255 - gradient
+
+            def render(diagnostic, camera_x):
+                plotter = pv.Plotter(off_screen=True, window_size=(128, 128))
+                self.addCleanup(plotter.close)
+                plotter.set_background("black")
+                white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                white.SetUseSRGBColorSpace(True)
+                orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
+                normal = pv.numpy_to_texture(np.full((2, 2, 3), (128, 128, 255), dtype=np.uint8))
+                actor = plotter.add_mesh(
+                    _mesh_with_tangents(pv.Plane(i_size=2, j_size=2), pv),
+                    texture=white, pbr=True, metallic=1, roughness=1, render=False,
+                )
+                actor.prop.SetTexture("albedoTex", white)
+                actor.prop.SetORMTexture(orm)
+                actor.prop.SetNormalTexture(normal)
+                actor.prop.SetEmissiveTexture(white)
+                actor.prop.SetEmissiveFactor(1, 1, 1)
+                install_layered_preview(
+                    actor, pv, surfaces, [1, 1], material, height_blend=True,
+                    transition=0.2, strength=1, texture_units=16,
+                    control_map_pixels=control, diagnostic=(diagnostic, 0),
+                )
+                plotter.camera_position = [(camera_x, 0, 6), (0, 0, 0), (0, 1, 0)]
+                plotter.show(auto_close=False)
+                return plotter.screenshot(return_img=True)[64, 64, :3].astype(int)
+
+            base_a = render("base", 10)
+            base_b = render("base", -10)
+            offset_a = render("offset", 10)
+            offset_b = render("offset", -10)
+            self.assertLessEqual(int(np.max(np.abs(base_a - base_b))), 3)
+            self.assertGreater(int(np.sum(np.abs(offset_a[:2] - offset_b[:2]))), 5)
 
     def test_packed_scalar_maps_match_independent_maps_in_pom_render(self):
         import pyvista as pv

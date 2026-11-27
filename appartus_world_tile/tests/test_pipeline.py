@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 from collections import Counter
+from unittest.mock import patch
 
 import numpy as np
 
@@ -14,7 +15,8 @@ from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields
 from awt.project import load_project
 from awt.roads import Road, rasterize, segments
-from awt.texturing import compile_rules, surface_weights
+from awt.texturing import (compile_rules, load_external_control_map, quantize,
+                           rasterize_control_map, rasterize_external_control_map, surface_weights)
 
 
 def _terrain(rows, cols, seed=1):
@@ -49,6 +51,39 @@ class PipelineTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+
+    def test_external_control_map_loader_preserves_rgba_weights_and_rejects_bad_inputs(self):
+        from PIL import Image
+
+        source = os.path.join(self.tmp.name, "mask.png")
+        expected = np.array([[[0, 64, 128, 255], [255, 0, 0, 0]],
+                             [[10, 20, 30, 40], [200, 150, 100, 50]]], dtype=np.uint8)
+        Image.fromarray(expected).save(source)
+        np.testing.assert_array_equal(load_external_control_map(source), expected)
+        for extension, image_format in (("tiff", "TIFF"), ("tga", "TGA")):
+            alternate_source = os.path.join(self.tmp.name, f"mask.{extension}")
+            Image.fromarray(expected).save(alternate_source, format=image_format)
+            np.testing.assert_array_equal(load_external_control_map(alternate_source), expected)
+
+        rgb_source = os.path.join(self.tmp.name, "rgb.png")
+        Image.new("RGB", (2, 2)).save(rgb_source)
+        with self.assertRaisesRegex(ValueError, "must use RGBA mode"):
+            load_external_control_map(rgb_source)
+
+        oversized_dimensions = os.path.join(self.tmp.name, "large.png")
+        Image.new("RGBA", (4097, 2)).save(oversized_dimensions)
+        with self.assertRaisesRegex(ValueError, "dimensions must be"):
+            load_external_control_map(oversized_dimensions)
+
+        malformed = os.path.join(self.tmp.name, "malformed.png")
+        with open(malformed, "wb") as stream:
+            stream.write(b"not an image")
+        with self.assertRaisesRegex(ValueError, "Cannot read external Control Map"):
+            load_external_control_map(malformed)
+
+        with patch("awt.texturing.MAX_CONTROL_MAP_BYTES", 4):
+            with self.assertRaisesRegex(ValueError, "exceeds the"):
+                load_external_control_map(source)
 
     def test_standalone_distribution_contains_reference_and_runtime(self):
         import subprocess
@@ -238,6 +273,87 @@ class PipelineTest(unittest.TestCase):
         material.biomes[0].noise = 1
         material.biomes[1].noise = 0
         self.assertFalse(np.allclose(sample(), mixed))
+
+    def test_control_map_rasterizes_source_rules_independent_of_mesh_density(self):
+        data = np.add.outer(np.arange(9, dtype=np.float32), np.arange(13, dtype=np.float32))
+        material = TerrainMaterial()
+        material.biomes = [Biome("plain", surfaces=[BiomeSurface("grass"), BiomeSurface("soil")], noise=0.6)]
+        material.paint_softness_m = 0
+        material.ensure_surface_paint(data.shape[1], data.shape[0])
+        soil = material.surface_names().index("soil")
+        material.surface_paint[:, 7:] = soil
+        rules = compile_rules(material, 1.0, data.shape[1], data.shape[0])
+        bounds = (2.0, 1.0, 10.0, 7.0)
+        image = rasterize_control_map(
+            rules, data, 1.0, 0.0, 1.0, bounds, (9, 7),
+            (material.surface_names().index("grass"), soil, -1, -1),
+        )
+        gx, gy = np.meshgrid(np.linspace(2.0, 10.0, 9), np.linspace(1.0, 7.0, 7))
+        source = surface_weights(rules, data, 1.0, 0.0, 1.0, gx.ravel(), gy.ravel())
+        local = np.zeros((len(gx.ravel()), 4), dtype=np.float32)
+        local[:, :2] = source[:, (material.surface_names().index("grass"), soil)]
+        expected = quantize(local)
+        np.testing.assert_array_equal(image, expected.reshape(7, 9, 4))
+
+        coarse = rasterize_control_map(
+            rules, data, 1.0, 0.0, 1.0, bounds, (5, 5),
+            (material.surface_names().index("grass"), soil, -1, -1),
+        )
+        np.testing.assert_array_equal(image[0, 0], coarse[0, 0])
+        np.testing.assert_array_equal(image[-1, -1], coarse[-1, -1])
+        self.assertTrue(np.all(image[..., 2:] == 0))
+        self.assertTrue(np.all(image[..., :2].sum(axis=2) == 255))
+
+    def test_external_control_map_resamples_in_stable_id_order_and_keeps_shared_edges(self):
+        source_ids = ("surface.a", "surface.b", "surface.c", "surface.d")
+        target_ids = tuple(reversed(source_ids))
+        source = np.empty((3, 5, 4), dtype=np.uint8)
+        source[:] = (40, 80, 30, 105)
+        bounds = (1.0, 0.0, 4.0, 2.0)
+        image = rasterize_external_control_map(
+            source, (3, 5), bounds, (4, 3), source_ids, target_ids)
+        np.testing.assert_array_equal(image, source[:, 1:5, ::-1])
+        self.assertTrue(np.all(image.sum(axis=2) == 255))
+
+        left = rasterize_external_control_map(
+            source, (3, 5), (0.0, 0.0, 2.0, 2.0), (5, 3), source_ids, target_ids)
+        right = rasterize_external_control_map(
+            source, (3, 5), (2.0, 0.0, 4.0, 2.0), (5, 3), source_ids, target_ids)
+        np.testing.assert_array_equal(left[:, -1], right[:, 0])
+
+    def test_control_map_adjacent_tile_edges_match_across_palette_order(self):
+        data = np.add.outer(np.arange(9, dtype=np.float32), np.arange(13, dtype=np.float32))
+        material = TerrainMaterial()
+        material.biomes = [Biome("plain", surfaces=[BiomeSurface("grass"), BiomeSurface("soil")])]
+        material.paint_softness_m = 0
+        material.ensure_surface_paint(data.shape[1], data.shape[0])
+        soil = material.surface_names().index("soil")
+        material.surface_paint[:, 7:] = soil
+        rules = compile_rules(material, 1.0, data.shape[1], data.shape[0])
+
+        left = rasterize_control_map(
+            rules, data, 1.0, 0.0, 1.0, (0.0, 0.0, 6.0, 8.0), (9, 9),
+            (0, soil, -1, -1),
+        )
+        right = rasterize_control_map(
+            rules, data, 1.0, 0.0, 1.0, (6.0, 0.0, 12.0, 8.0), (9, 9),
+            (soil, 0, -1, -1),
+        )
+
+        np.testing.assert_array_equal(left[:, -1, 0], right[:, 0, 1])
+        np.testing.assert_array_equal(left[:, -1, 1], right[:, 0, 0])
+
+    def test_control_map_rasterizer_rejects_invalid_dimensions_bounds_and_slots(self):
+        data = np.zeros((5, 5), np.float32)
+        material = TerrainMaterial()
+        rules = compile_rules(material, 1.0, 5, 5)
+        base = (rules, data, 1.0, 0.0, 1.0, (0.0, 0.0, 4.0, 4.0), (5, 5), (0, 1, 2, 3))
+        for field, value in ((6, (0, 0)), (5, (-1.0, 0.0, 4.0, 4.0)),
+                             (7, (0, 1, 1, 3))):
+            args = list(base)
+            args[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                rasterize_control_map(*args)
 
     def test_noise_rejects_out_of_range_and_nonfinite_values(self):
         material = TerrainMaterial()

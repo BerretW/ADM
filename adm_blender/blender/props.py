@@ -1,10 +1,11 @@
 """ADM data model stored on Blender datablocks (objects, bones, armatures, materials, scene)."""
 
 from contextlib import ExitStack
+from uuid import uuid4
 
 import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty,
-                       IntProperty, PointerProperty, StringProperty)
+                       IntProperty, IntVectorProperty, PointerProperty, StringProperty)
 from bpy.types import PropertyGroup
 
 from ..core import constants as K
@@ -442,6 +443,26 @@ def _preview_update(self, context):
         refresh_shader_preview(mat)
 
 
+def _control_map_image_update(self, context):
+    source = self.control_map_image
+    self.control_map_preview_image = None
+    if source is not None:
+        preview = source.copy()
+        preview.name = f"{source.name} ADM Control Map"
+        preview.colorspace_settings.name = "Non-Color"
+        self.control_map_preview_image = preview
+    _preview_update(self, context)
+
+
+def _control_map_enabled_update(self, context):
+    if self.control_map_enabled:
+        for index in range(4):
+            name = f"control_map_surface_{index}"
+            if not getattr(self, name):
+                setattr(self, name, f"surface.{uuid4().hex}")
+    _preview_update(self, context)
+
+
 def _official_shader_versions(shader):
     shader_id = K.OFFICIAL_SHADER_IDS.get(shader)
     if shader_id is None:
@@ -679,6 +700,42 @@ class ADMMaterialProps(PropertyGroup):
     layer_mask: PointerProperty(name="Mask Texture", type=bpy.types.Image, update=_preview_update,
                                 description="Optional mask; the linear red channel scales layer_factor")
     layer_mask_uv: IntProperty(name="Mask UV", min=0, max=1, update=_preview_update)
+    control_map_enabled: BoolProperty(
+        name="Preview Control Map", default=False, update=_control_map_enabled_update,
+        description="Use Control Map data in Blender's preview; imported extension data remains preserved on export",
+    )
+    control_map_surface_0: StringProperty(name="Layer 1 Surface ID")
+    control_map_surface_1: StringProperty(name="Layer 2 Surface ID")
+    control_map_surface_2: StringProperty(name="Layer 3 Surface ID")
+    control_map_surface_3: StringProperty(name="Layer 4 Surface ID")
+    control_map_mode: EnumProperty(name="Weight Mode", default="VERTEX_MULTIPLY", items=[
+        (name, name.replace("_", " ").title(), "") for name in (
+            "VERTEX_ONLY", "TEXTURE_RGBA", "TEXTURE_RGB_IMPLICIT", "VERTEX_MULTIPLY",
+            "VERTEX_OVERRIDE", "VERTEX_MODULATE")
+    ], update=_preview_update)
+    control_map_mapping: EnumProperty(name="Mapping", default="UV", items=[
+        ("UV", "UV", "Use the selected UV map"),
+        ("WORLD_PLANAR_XZ", "World Planar XZ", "Project asset-space XZ coordinates"),
+    ], update=_preview_update)
+    control_map_strength: FloatProperty(name="Strength", default=1.0, min=0.0, max=1.0,
+                                         update=_preview_update)
+    control_map_tex_coord: IntProperty(name="UV Map", min=0, max=1, update=_preview_update)
+    control_map_scale: FloatVectorProperty(name="Scale", size=2, default=(1.0, 1.0),
+                                           update=_preview_update)
+    control_map_offset: FloatVectorProperty(name="Offset", size=2, default=(0.0, 0.0),
+                                            update=_preview_update)
+    control_map_origin: FloatVectorProperty(name="Origin", size=2, default=(0.0, 0.0),
+                                            update=_preview_update)
+    control_map_channel_order: IntVectorProperty(name="Channel Order", size=4, default=(0, 1, 2, 3),
+                                                 min=0, max=3, update=_preview_update)
+    control_map_override_mask: FloatVectorProperty(name="Override Mask", size=4,
+                                                   default=(1.0, 1.0, 1.0, 1.0), min=0.0, max=1.0,
+                                                   update=_preview_update)
+    control_map_image: PointerProperty(name="Control Map", type=bpy.types.Image,
+                                       update=_control_map_image_update,
+                                       description="Linear four-channel terrain weight texture")
+    control_map_preview_image: PointerProperty(type=bpy.types.Image, options={"HIDDEN"})
+    control_map_sampler_json: StringProperty(options={"HIDDEN"})
     layers_required: BoolProperty(name="Require Layered Rendering",
                                   description="List ADM_material_layers_v1 under extensionsRequired")
     vertex_tint_palette: PointerProperty(name="Tint Palette", type=bpy.types.Image, update=_vertex_palette_update)

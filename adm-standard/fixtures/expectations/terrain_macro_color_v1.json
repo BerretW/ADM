@@ -1,0 +1,63 @@
+{
+  "extension": "ADM_terrain_macro_color_v1@1.0.0",
+  "vectors": [
+    {
+      "name": "multiply-srgb-and-layer-influence",
+      "mode": "MULTIPLY",
+      "layerColors": [[0.8, 0.2, 0.1], [0.1, 0.5, 0.4], [0.2, 0.3, 0.4], [0.9, 0.9, 0.9]],
+      "weights": [0.25, 0.75, 0.0, 0.0],
+      "sampleSrgb": [1.0, 0.5, 0.25, 0.5],
+      "strength": 0.8,
+      "layerInfluence": [1.0, 0.5, 1.0, 1.0],
+      "expected": [0.275, 0.275667816691624, 0.192122652344018]
+    },
+    {
+      "name": "tint-alpha-coverage",
+      "mode": "TINT",
+      "layerColors": [[0.8, 0.2, 0.1], [0.1, 0.5, 0.4], [0.2, 0.3, 0.4], [0.9, 0.9, 0.9]],
+      "weights": [0.25, 0.75, 0.0, 0.0],
+      "sampleSrgb": [1.0, 0.5, 0.25, 0.5],
+      "strength": 0.8,
+      "layerInfluence": [1.0, 0.5, 1.0, 1.0],
+      "expected": [0.275, 0.350333908345812, 0.258561326172009]
+    },
+    {
+      "name": "lerp-alpha-coverage",
+      "mode": "LERP",
+      "layerColors": [[0.8, 0.2, 0.1], [0.1, 0.5, 0.4], [0.2, 0.3, 0.4], [0.9, 0.9, 0.9]],
+      "weights": [0.25, 0.75, 0.0, 0.0],
+      "sampleSrgb": [1.0, 0.5, 0.25, 0.5],
+      "strength": 0.8,
+      "layerInfluence": [1.0, 0.5, 1.0, 1.0],
+      "expected": [0.43, 0.383510285120558, 0.267719022042889]
+    }
+  ],
+  "coordinates": [
+    {
+      "name": "local-uv",
+      "projection": "LOCAL_UV",
+      "uv": [0.25, 0.75],
+      "scale": [2.0, 0.5],
+      "offset": [0.1, -0.2],
+      "expected": [0.6, 0.175]
+    },
+    {
+      "name": "shared-world",
+      "projection": "SHARED_WORLD_XZ",
+      "position": [12.0, 4.0, 18.0],
+      "origin": [2.0, 8.0],
+      "scale": [0.5, 2.0],
+      "offset": [0.1, -0.2],
+      "expected": [5.1, 19.8]
+    },
+    {
+      "name": "floating-origin-shift",
+      "projection": "SHARED_WORLD_XZ",
+      "position": [-988.0, 4.0, 518.0],
+      "origin": [-998.0, 508.0],
+      "scale": [0.5, 2.0],
+      "offset": [0.1, -0.2],
+      "expected": [5.1, 19.8]
+    }
+  ]
+}

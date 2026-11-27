@@ -22,11 +22,14 @@ remains in progress.
   Treat these as historical evidence, not proof of this mission's completion.
 
 ## Current milestone
-M1 and M3 are complete. M2 and M4–M9 remain in progress. Global terrain
+M1 and M3 are complete. M2 and M4–M13 remain in progress. Global terrain
 surface identity is separate from local material slots through persistent World Tile surface IDs
 and optional `ADM_terrain_surface_v1` mappings. Strict and approximate palette
 policies include bounded conflict details and repair suggestions. M2 remains
-open pending broader palette-strategy comparisons. M3 now has an additive,
+open pending broader palette-strategy comparisons. Its Control Map boundary is
+now recorded: texture weights remove dependence on vertex density, but retain
+four local layer slots and do not claim exact five-plus-surface representation.
+M3 now has an additive,
 machine-readable physical type/subtype/tag registry and Blender authoring,
 validation, fallback lookup, and import/export/save-reload support. Existing
 collider defaults, per-triangle references, friction and restitution retain
@@ -268,3 +271,143 @@ update them as implementation evidence becomes available.
 
 ## Blockers
 None established. Do not treat unavailable platforms or unrun tests as passes.
+
+## Continuation from the external audit
+- Working baseline: `531188310beb9d307e09cb43cd1380653debd583`, the user-
+  identified external audit commit. Preserve all implementation already
+  present at this revision.
+- Added the normative `ADM_terrain_control_map_v1@1.0.0` contract, reference
+  weight and coordinate math, golden vectors, and validator coverage.
+- Added the material feature compatibility matrix. World Tile Control Map
+  external-mask authoring, blended diagnostics and seam evidence remain open.
+  Blender now preserves, authors and previews Control Maps, but filtered
+  sampling, mip/border continuity and complete mode conformance remain open.
+- Control Map physical classification is not integrated. Existing collision
+  assignments remain based on authored camera-independent weights and stable
+  physical links, independent of final shader output.
+- No release build or package was created. Continue M2's broader strategy
+  comparisons and M4 onward; do not treat the initial Control Map contract as
+  mission completion.
+
+The Control Map validator now rejects materials outside the registered
+four-layer profile set and requires four stable surface IDs for every mode,
+including `VERTEX_ONLY`. Focused Python validation/math tests (79 passed, one
+Windows symlink-permission skip) and Blender 5.2.3's pre-mutation required-data
+rejection test pass.
+
+Macro Color now has a versioned shared/local projection and sRGB blending
+contract, reference math, independent vectors, profile/image/sampler
+validation, and a Blender pre-mutation rejection test for required data.
+Focused material tests (85 passed, one Windows symlink-permission skip),
+independent vectors (2 passed), and Blender 5.2.3 integration passed. Macro
+Color renderer/authoring integration and Control Map renderer conformance
+remain open. Macro Normal's contract/reference slice is now implemented, but
+its renderer/authoring integration remains open. M2's broader palette
+comparison and all later milestones remain open. No release build or package
+was created.
+
+The M2 architecture is now explicit: keep four stable slots; use face-mask
+reduction with disclosed error when over capacity; use future Control Maps to
+remove vertex-density dependence only within those slots; keep physical
+boundary refinement separate from visual blending; and treat texture arrays as
+resource packing rather than increased surface capacity. This decision does
+not close M2's comparative benchmark, which still needs shared-edge,
+tile/LOD, irregular-edge, noise, biome-transition, and export-cost evidence.
+
+Macro Normal v1 now has a normative BC5 UNORM/local-or-shared projection
+contract, deterministic tangent frames, RNM, profile/ID/image/sampler
+validation, independent vectors, and Blender's required-extension
+pre-mutation rejection. Focused Python suites passed 90 tests with one existing
+Windows symlink-permission skip; three independent vectors and the Blender
+5.2.3 integration passed. Renderers and authoring are still unsupported, and
+Macro Normal has not been used for physical classification.
+The contract requires Macro Normal in `extensionsRequired`, and the validator
+rejects an optional declaration; the importer therefore cannot silently
+discard a conforming optional Macro Normal payload.
+
+World Tile now integrates Control Maps with an opt-in export resolution, AWTP
+v13 persistence, CLI, export-change fingerprints, and its Detailed material
+preview. Export samples the original heightmap and current compiled rules
+(including road grades), writes bounded RGBA textures for four stable local
+slots, and rejects a source heightmap whose samples no longer match the build
+manifest. Resolution changes invalidate export files without rebuilding mesh
+geometry. The preview samples map weights before per-layer parallax and height
+blending. A regression test confirms physical collider assignments remain
+independent. World Tile tests pass (156); the two independent Control Map
+reference-vector groups pass. Five existing PyVista future warnings remain.
+External-mask import, manual map painting, channel/final-weight diagnostics,
+filtered mip/border conformance, rendered seam evidence, additional Blender
+mode/coordinate render vectors, and M2's wider comparative benchmark remain
+open. No release build or package was created.
+
+Blender now imports required Control Maps without mutating behavior into
+metadata-only support: it retains the image, sampler and extension fields,
+exposes mode/coordinate/channel/strength controls, exports the remapped image
+reference as required data, and builds a linear-image node preview before layer
+height blending. Blender 5.2.3 Cycles pixel tests verify all six weight modes
+with UV sampling, UV0/UV1 selection, coordinate offsets, and a world-planar
+XZ/origin sample. Import/export, authoring edits, `.blend` save/reload, and ADM
+re-export preserve the image, settings, and four stable surface IDs. A missing
+image falls back to vertex weights with a warning; differing S/T wrap modes
+also fall back with an explicit warning because Blender's image node cannot
+represent those modes independently. Transformed model coordinates,
+mip/filter conformance, seams, and floating-origin behavior still need direct
+tests.
+
+Verification after this integration: Blender pixel tests passed all six
+Control Map modes plus UV0/UV1, offset, and a world-planar XZ/origin sample;
+import/edit/export and `.blend` save/reload passed. `.\build.bat -CheckOnly`
+passed all 38 steps with 7 documented external-asset/target skips, left
+version 1.24.45 unchanged, and skipped packaging. The World Tile suite passed
+156 tests earlier in this work segment. No release package was built; the
+mission remains open.
+
+Added a source-raster seam invariant for adjacent Control Map tiles. Their
+shared edge is byte-identical after remapping channel weights across different
+local palette orders. The World Tile pipeline suite passes 27 tests with this
+regression included. This verifies exact unfiltered source samples only;
+external masks, renderer filtering/mips, and rendered border seams remain open.
+
+Blender Cycles now also verifies world-planar Control Map sampling against
+translated object world positions and confirms invariance when the object
+position and projection origin shift together by 100 units. The full
+`test_shader_preview.py` run passed, including all six weight modes and the new
+coordinate cases. Blender sampler filtering, mip behavior, tile seams, and
+pre-parallax-order conformance remain open.
+
+World Tile's layered preview now enables interpolated mipmapped textures for
+all bound material maps. Its decoded-texture budget accounts for the complete
+mip chain; the focused preview regression confirms linear mip-enabled Control
+Map data and exact cache accounting. Rendered minification and tile-seam
+conformance still need evidence.
+
+The complete World Tile suite passed 157 tests after the initial preview
+change, including the exact source-edge palette-order test and the mip-chain
+budget assertion. Five pre-existing PyVista future warnings remain.
+
+Added an offscreen VTK render regression with a high-frequency Control Map.
+At magnification its pattern remains visible; at minification the preview
+selects coarser mip levels and produces a stable averaged result. The full
+World Tile suite now passes 159 tests with five existing PyVista future
+warnings. Cross-reader filtering parity and rendered tile-border seams remain
+unverified.
+
+Generated per-tile Control Map textures now carry linear `CLAMP_TO_EDGE`
+samplers on both axes, and the VTK preview uses clamped addressing so it does
+not wrap one tile's edge to the opposite edge. Export, preview binding, and
+mip-selection tests pass; rendered shared-border continuity across separate
+tile mip chains is still unverified. The complete World Tile suite passed
+again: 158 tests, five existing PyVista future warnings.
+
+A VTK regression now renders Control Map weights with view-dependent
+per-layer parallax. The base-weight output stays stable across opposing camera
+views while the parallax-offset diagnostic changes, verifying that the map is
+sampled before the view-dependent offset. Blender ordering parity remains
+unverified. The World Tile suite passes 159 tests.
+
+External Control Map work has started with a standalone bounded RGBA decoder.
+It accepts PNG, TIFF, and TGA files up to 64 MiB and 4096 pixels per side,
+checks decoded pixel limits, and rejects non-RGBA, malformed, and oversized
+inputs. This is not yet a user-facing import path: source persistence,
+stable-ID channel assignment, export/preview integration, and selective
+invalidation remain open. The decoder does not feed physical classification.

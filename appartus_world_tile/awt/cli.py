@@ -110,6 +110,8 @@ def _export(args: argparse.Namespace) -> int:
         project.export.out_dir = args.out
     if args.no_validate:
         project.export.validate = False
+    if getattr(args, "control_map_resolution", None) is not None:
+        project.export.control_map_resolution = args.control_map_resolution
     if args.build:
         print(f"building {project.params.input_path} -> {project.params.out_dir}")
         build(project.params, project.material, _progress_printer())
@@ -195,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--build", action="store_true", help="rebuild the tiles from the heightmap first")
     e.add_argument("-o", "--out", help="export folder (default: the one stored in the project)")
     e.add_argument("--no-validate", action="store_true", help="skip ADM validation of written files")
+    e.add_argument("--control-map-resolution", type=int,
+                   help="generate an RGBA Control Map per palette (2-4096 pixels per side; 0 disables)")
     e.set_defaults(func=_export)
 
     g = sub.add_parser("gui", help="open the visual editor and 3D viewer")

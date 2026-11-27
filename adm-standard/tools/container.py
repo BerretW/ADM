@@ -99,6 +99,7 @@ def verify_interactive(manifest):
     if not isinstance(used, list) or not isinstance(required, list):
         raise AdmError("ADM_ERR_EXTENSIONS")
     supported = {"ADM_material_layers_v1", "ADM_vertex_control_v1", "ADM_external_images_v1",
+                 "ADM_terrain_control_map_v1",
                  "ADM_physical_surfaces_v1", joint_display, name}
     for extension in required:
         if not isinstance(extension, str) or extension not in used or extension not in supported:

@@ -20,6 +20,7 @@ from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields, write_ply
 from awt.project import Project, load_project
 from awt.roads import Road
+from awt.texturing import quantize
 from tests.test_pipeline import _terrain
 
 
@@ -123,9 +124,139 @@ class ExportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "present for every tile"):
             export_tiles(manifest, self.material, self.settings, "all")
 
+    def test_control_map_export_is_opt_in_and_emits_four_stable_channels(self):
+        self.settings.control_map_resolution = 16
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertEqual(len(result["written"]), len(self.manifest["tiles"]))
+        tile = self.manifest["tiles"][0]
+        doc, _chunks = _read_adm(os.path.join(self.settings.out_dir, tile["id"] + ".adm"))
+        extension = "ADM_terrain_control_map_v1"
+        self.assertIn(extension, doc["extensionsUsed"])
+        self.assertIn(extension, doc["extensionsRequired"])
+        for material in doc["materials"]:
+            self.assertEqual(len(material["extensions"]["ADM_terrain_surface_v1"]["surfaceIds"]), 4)
+            control = material["extensions"][extension]
+            self.assertEqual(control["mode"], "TEXTURE_RGBA")
+            texture = doc["textures"][control["texture"]["index"]]
+            sampler = doc["samplers"][texture["sampler"]]
+            self.assertEqual(sampler["wrapS"], "CLAMP_TO_EDGE")
+            self.assertEqual(sampler["wrapT"], "CLAMP_TO_EDGE")
+            image = doc["images"][texture["source"]]
+            image_path = os.path.join(self.settings.out_dir, *image["uri"].split("/"))
+            pixels = np.asarray(Image.open(image_path).convert("RGBA"))
+            self.assertEqual(pixels.shape, (16, 16, 4))
+            np.testing.assert_array_equal(pixels.sum(axis=2), np.full((16, 16), 255, dtype=np.uint16))
+        self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+        self.settings.control_map_resolution = 32
+        self.assertEqual(set(changed_tiles(self.manifest, self.material, self.settings)),
+                         {item["id"] for item in self.manifest["tiles"]})
+        self.settings.control_map_resolution = 16
+        self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+        np.save(self.src, _terrain(49, 65) + 1.0)
+        with self.assertRaisesRegex(ValueError, "changed since the terrain build"):
+            changed_tiles(self.manifest, self.material, self.settings)
+        build(self.params, self.material)
+        self.manifest = load_manifest(self.params.out_dir)
+        self.assertEqual(set(changed_tiles(self.manifest, self.material, self.settings)),
+                         {item["id"] for item in self.manifest["tiles"]})
+        embedded = ExportSettings(
+            out_dir=os.path.join(self.tmp.name, "adm_embedded"), embed_textures=True,
+            palette_conflict_policy="APPROXIMATE", control_map_resolution=16)
+        export_tiles(self.manifest, self.material, embedded, "all")
+        embedded_doc, _ = _read_adm(os.path.join(embedded.out_dir, self.manifest["tiles"][0]["id"] + ".adm"))
+        extension_data = embedded_doc["materials"][0]["extensions"]["ADM_terrain_control_map_v1"]
+        embedded_image = embedded_doc["images"][
+            embedded_doc["textures"][extension_data["texture"]["index"]]["source"]]
+        self.assertIn("bufferView", embedded_image)
+        self.assertNotIn("uri", embedded_image)
+
+    def test_external_control_map_exports_stable_channels_and_invalidates_changed_masks(self):
+        self.params.collision_max_error_m = 0.8
+        physical = PhysicalMaterial("Ground", 0.7, 0.05, id="test.physical.ground")
+        self.material.physical_materials.append(physical)
+        for surface in self.material.surfaces:
+            surface.physical_material_id = physical.id
+        build(self.params, self.material)
+        self.manifest = load_manifest(self.params.out_dir)
+        export_tiles(self.manifest, self.material, self.settings, "all")
+        tile_id = self.manifest["tiles"][0]["id"]
+        baseline_doc, _ = _read_adm(os.path.join(self.settings.out_dir, tile_id + ".adm"))
+        collider_mesh = baseline_doc["colliders"][0]["mesh"]
+        physical_before = (
+            baseline_doc["physicalMaterials"],
+            [primitive.get("extensions", {}).get("ADM_physical_surfaces_v1")
+             for primitive in baseline_doc["meshes"][collider_mesh]["primitives"]],
+        )
+
+        source_ids = [surface.id for surface in reversed(self.material.surfaces[:4])]
+        mask_path = os.path.join(self.tmp.name, "external-mask.png")
+        mask = np.empty((49, 65, 4), dtype=np.uint8)
+        mask[:] = (10, 100, 64, 255)
+        Image.fromarray(mask).save(mask_path)
+        self.material.external_control_map_path = mask_path
+        self.material.external_control_map_surface_ids = source_ids
+        self.settings.control_map_resolution = 16
+        original_rules = self.material.rules_digest()
+
+        result = export_tiles(self.manifest, self.material, self.settings, "all")
+        self.assertEqual(len(result["written"]), len(self.manifest["tiles"]))
+        self.assertEqual(self.material.rules_digest(), original_rules)
+        expected = quantize(np.array([[
+            mask[0, 0, source_ids.index(surface.id)] for surface in self.material.surfaces[:4]
+        ]], dtype=np.float32))[0]
+        tile = self.manifest["tiles"][0]
+        doc, _chunks = _read_adm(os.path.join(self.settings.out_dir, tile["id"] + ".adm"))
+        for material in doc["materials"]:
+            surface_ids = material["extensions"]["ADM_terrain_surface_v1"]["surfaceIds"]
+            self.assertEqual(surface_ids, [surface.id for surface in self.material.surfaces[:4]])
+            control = material["extensions"]["ADM_terrain_control_map_v1"]
+            image = doc["images"][doc["textures"][control["texture"]["index"]]["source"]]
+            image_path = os.path.join(self.settings.out_dir, *image["uri"].split("/"))
+            pixels = np.asarray(Image.open(image_path).convert("RGBA"))
+            np.testing.assert_array_equal(pixels[0, 0], expected)
+            self.assertTrue(np.all(pixels.sum(axis=2) == 255))
+        collider_mesh = doc["colliders"][0]["mesh"]
+        physical_after = (
+            doc["physicalMaterials"],
+            [primitive.get("extensions", {}).get("ADM_physical_surfaces_v1")
+             for primitive in doc["meshes"][collider_mesh]["primitives"]],
+        )
+        self.assertEqual(physical_after, physical_before)
+        self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+
+        mask[0, 0, 0] = 11
+        Image.fromarray(mask).save(mask_path)
+        self.assertEqual(set(changed_tiles(self.manifest, self.material, self.settings)),
+                         {item["id"] for item in self.manifest["tiles"]})
+
+    def test_project_v14_external_control_map_paths_and_ids_round_trip(self):
+        project_path = os.path.join(self.tmp.name, "world.awtp")
+        mask_path = os.path.join(self.tmp.name, "mask.png")
+        project = Project(self.params, self.material, self.settings, path=project_path)
+        project.material.external_control_map_path = mask_path
+        project.material.external_control_map_surface_ids = [
+            surface.id for surface in project.material.surfaces[:4]]
+
+        payload = project.to_dict()
+        self.assertEqual(payload["format_version"], 14)
+        self.assertEqual(payload["material"]["external_control_map"]["path"], "mask.png")
+        restored = Project.from_dict(payload, project_path)
+        self.assertEqual(restored.material.external_control_map_path, mask_path)
+        self.assertEqual(restored.material.external_control_map_surface_ids,
+                         project.material.external_control_map_surface_ids)
+
+        legacy = dict(payload)
+        legacy["format_version"] = 13
+        legacy["material"] = dict(payload["material"])
+        legacy["material"].pop("external_control_map")
+        restored_legacy = Project.from_dict(legacy, project_path)
+        self.assertEqual(restored_legacy.material.external_control_map_path, "")
+        self.assertEqual(restored_legacy.material.external_control_map_surface_ids, [])
+
     def test_physical_paint_exports_stable_per_triangle_references(self):
         self.params.collision_max_error_m = 0.8
         self.params.collision_max_triangles_per_tile = 4096
+        self.settings.control_map_resolution = 16
         physical = PhysicalMaterial("Packed ground", 0.72, 0.05, "adm.phys.ground.v1")
         self.material.physical_materials.append(physical)
         self.material.ensure_physical_paint(65, 49)
@@ -510,10 +641,13 @@ class ExportTest(unittest.TestCase):
         project.material.surface("grass").physical_material_id = physical.id
         project.material.ensure_physical_paint(8, 8)
         project.material.physical_paint[2:4, 3:6] = 0
+        project.export.control_map_resolution = 128
         payload = project.to_dict()
-        self.assertEqual(payload["format_version"], 12)
+        self.assertEqual(payload["format_version"], 14)
+        self.assertEqual(payload["export"]["control_map_resolution"], 128)
         self.assertEqual(payload["export"]["palette_conflict_policy"], "STRICT")
         restored = Project.from_dict(payload)
+        self.assertEqual(restored.export.control_map_resolution, 128)
         self.assertTrue(restored.material.height_blend_enabled)
         self.assertEqual(restored.material.surface("grass").height_map.path, str(height_path))
         self.assertEqual(restored.material.surface("grass").id, project.material.surface("grass").id)
@@ -1195,7 +1329,7 @@ class ExportTest(unittest.TestCase):
         self.assertTrue(any("retains R16 in KTX2" in warning for warning in result["warnings"]))
         project = Project(self.params, self.material, self.settings)
         data = project.to_dict()
-        self.assertEqual(data["format_version"], 12)
+        self.assertEqual(data["format_version"], 14)
         restored = Project.from_dict(data)
         self.assertEqual((restored.export.gpu_container, restored.export.gpu_encoding), ("KTX2", "RGBA8"))
         self.assertEqual(self.material.rules_digest(), restored.material.rules_digest())
@@ -1290,7 +1424,7 @@ class ExportTest(unittest.TestCase):
                         shared = True
         self.assertTrue(shared)
         data = Project(self.params, self.material, self.settings).to_dict()
-        self.assertEqual(data["format_version"], 12)
+        self.assertEqual(data["format_version"], 14)
         self.assertEqual(Project.from_dict(data).material.surface("rock").gpu_encodings, rock.gpu_encodings)
         rock.gpu_encodings["height"] = "UNKNOWN"
         with self.assertRaisesRegex(ValueError, "unsupported per-map GPU encoding"):
