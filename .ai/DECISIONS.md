@@ -42,7 +42,8 @@ implementation ambiguity. Link each decision to its source and tests.
 
 - The surface preview uses PyVista's VTK PBR actor with separately bound
   albedo, ORM, normal, and emission textures. The multi-surface final view
-  samples separate layer textures in a VTK shader; its CPU weight views are
+  samples separate layer textures in a VTK shader when parallax is enabled;
+  with mode `NONE`, it uses CPU composition. Its CPU weight views are
   diagnostic approximations. The terrain inspection view is a separate path.
 - VTK 9.7.2 on Windows exposes fragment and vertex shader replacements,
   named texture bindings and custom uniforms. An offscreen experiment sampled
@@ -69,13 +70,14 @@ implementation ambiguity. Link each decision to its source and tests.
   tested on VTK 9.7.2; shader-hook compatibility on other versions remains
   unverified. The UI reports configuration rather
   than claiming shader compilation succeeded.
-- The multi-surface final view binds each layer's original-resolution maps and
-  computes each parallax ray, map sample and height-adjusted
-  weight in the fragment shader. Shader diagnostics inspect per-fragment
-  weights and offsets; the separate CPU weight views and displayed mean weights
-  remain estimates at unshifted UVs. Texture-unit exhaustion is reported
-  rather than silently dropping maps; when a Qt context is not yet available,
-  the OpenGL minimum of 16 units is used conservatively.
+- With parallax enabled, the multi-surface final view binds each layer's
+  original-resolution maps and computes each parallax ray, map sample and
+  height-adjusted weight in the fragment shader. Shader diagnostics inspect
+  per-fragment weights and offsets; the separate CPU weight views and displayed mean weights
+  remain estimates at unshifted UVs. With parallax mode `NONE`, the final view
+  uses CPU-composited maps rather than this shader. Texture-unit exhaustion is
+  reported rather than silently dropping maps; when a Qt context is not yet
+  available, the OpenGL minimum of 16 units is used conservatively.
 - Scalar maps from one layer with matching dimensions share a floating-point
   RGBA texture. Channel selection and inversion are applied before packing;
   height occupies red for the POM ray sampler. Differently sized maps remain

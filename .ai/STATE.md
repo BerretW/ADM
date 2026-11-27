@@ -1,5 +1,12 @@
 # Mission state
 
+- Mission closed as an accepted development baseline, not full completion of
+  every original requirement. See [FINAL_REPORT.md](FINAL_REPORT.md),
+  [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md), and the unchecked items in
+  [TASKS.md](TASKS.md).
+- The multi-surface final-material view uses CPU composition when parallax mode
+  is `NONE`; its per-fragment layered shader is used for parallax/POM and shader
+  diagnostics. This is unfinished preview behavior, not an external blocker.
 - Blender 1.24.41 and 1.24.42 inadvertently include an ignored nested
   `adm_blender.zip` from the source directory. Do not distribute those
   packages. The manifest now excludes ZIP files and the build checks the
@@ -42,8 +49,8 @@
 - World Tile 0.7.12 passed all 119 tests. Its 102-file ZIP matched the source
   bytes, passed extracted auto-upgrade and POM rendering tests, and exported
   four tiles from the relocated reference project.
-- Mission completion is not claimed. A standalone core-PBR BC5 texture cannot
-  retain its BC5 primary and also supply reconstructed RGB under the existing
+- Full completion of the original mission is not claimed. A standalone core-PBR
+  BC5 texture cannot retain its BC5 primary and also supply reconstructed RGB under the existing
   two-channel fallback contract; no standard expansion was authorized. Five
   simultaneous surfaces cannot be represented exactly by a four-layer primitive.
   Opaque extension references cannot be safely remapped without their schemas;
@@ -484,8 +491,9 @@ See `TASKS.md` and `TESTS.md` for current evidence.
   or GPU-format export still converts. Isolated tests cover R8, R16, BC4, BC5
   and BC7 in DDS/KTX2, BC7 sRGB, external-source integrity, mip bytes, and
   save/reload; they do not establish cross-platform BC7 decoding.
-- The multi-surface final-material view now samples layer maps independently in
-  VTK and computes per-layer parallax/POM and height blending. Offscreen tests
+- The multi-surface final-material view samples layer maps independently in
+  VTK and computes per-layer parallax/POM and height blending when parallax
+  is enabled. With mode `NONE`, it uses CPU composition. Offscreen tests
   compare rendered offsets and height-blend output against reference math and
   exercise lit emission and normal maps. Weight diagnostics remain unshifted
   CPU estimates, hardware texture-unit limits can prevent configuration, and

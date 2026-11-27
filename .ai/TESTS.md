@@ -1,6 +1,9 @@
 # Mission verification record
 
 ## Completed so far
+- The reference catalog check passed for eight categories, and the registry
+  matched all 47 shader profiles. Both distribution ZIPs passed integrity and
+  byte-for-byte comparison with their current packaged source files.
 - Blender 1.24.45: 36 build steps passed, with 2,150 reported passing cases and
   10 external-asset skips. The matrix tested 1.24.44 before the version bump.
   The ZIP passed integrity, 48 source-byte comparisons, and the nested-archive

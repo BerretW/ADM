@@ -7,14 +7,16 @@ been executed.
 
 ## Advanced materials — local reference verification
 
-- Blender Tools 1.24.41: 36 build steps passed, with 2,149 reported cases and
-  10 external-asset skips. The build tested version 1.24.40 before bumping the
+- Blender Tools 1.24.45: 36 build steps passed, with 2,150 reported cases and
+  10 external-asset skips. The build tested version 1.24.44 before bumping the
   patch version. The extracted package passed material-height, unknown shader,
-  node, and humanoid joint regressions and an isolated install and re-enable test.
-- World Tile 0.7.12: 119 tests passed on Windows with VTK 9.7.2. The extracted
-  package passed auto-upgrade and POM preview checks and exported four tiles from a relocated
-  reference project. Rendered comparisons exercised POM and selected irregular
-  tile and mixed-LOD seams; a five-surface case demonstrates a palette limit.
+  scene, mesh, primitive, and registration regressions, and installed and
+  re-enabled in an isolated extension repository.
+- World Tile 0.7.17: 131 tests passed on Windows with VTK 9.7.2. The extracted
+  package passed GPU encoding and export checks and exported four tiles from a
+  relocated reference project. Rendered comparisons exercised POM and selected
+  irregular tile and mixed-LOD seams; a five-surface case demonstrates a palette
+  limit.
 - Blender 5.2.3's bounded packaged regression preserved unknown root and
   material extension JSON across project reload and export, with warnings
   about opaque references. It rejected malformed and conflicting root data.

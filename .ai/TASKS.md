@@ -53,10 +53,11 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Preserve biome graph and noise controls, naming, repeat, and edit workflow.
 - [x] Extend existing sphere/plane/relief preview for actual supported maps and
       transparent preview limitations.
-- [x] Add a true multi-surface height blend preview, distinct from single-surface
+- [ ] Add a true multi-surface height blend preview, distinct from single-surface
       preview and fast terrain inspection.
   - Single-surface, multi-surface and detailed terrain views implement parallax
     and POM. Per-fragment shader weight and offset diagnostics are available;
+    the multi-surface final view uses CPU composition when parallax is NONE.
     CPU weight views and reported mean weights remain unshifted estimates.
     Supported maps and preview shapes have focused tests. VTK versions beyond
     the tested Windows 9.7.2 remain unverified.
@@ -145,7 +146,7 @@ checkboxes track verification and delivery, not merely code changes.
     fixture-specific VTK visualization renders actual parallax/POM and can
     disable POM for comparison; Blender's native preview does not render it.
     The ADM scene is bundled alongside the portable project.
-- [ ] Update specification, registries, profiles, docs, changelog, gaps,
+- [x] Update specification, registries, profiles, docs, changelog, gaps,
       conformance, and fixture catalog with exact implemented contracts.
 
 ## M12 - Full verification
@@ -154,6 +155,9 @@ checkboxes track verification and delivery, not merely code changes.
 - [x] Run package audits and review new input/file parsing boundaries.
   - The audited World Tile dependency graph has no known vulnerabilities, but
     no committed lockfile fixes every permitted dependency resolution.
-- [ ] Re-read MISSION.md and audit each checkbox against implementation.
-- [ ] Report actual implementation, assets, test evidence, performance, and
+- [x] Re-read MISSION.md and audit each checkbox against implementation.
+  - The remaining unchecked items record contract conflicts, incomplete
+    preservation, and unverified interoperability rather than test passes.
+- [x] Report actual implementation, assets, test evidence, performance, and
       remaining limitations or external blockers.
+  - See [FINAL_REPORT.md](FINAL_REPORT.md) and [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md).

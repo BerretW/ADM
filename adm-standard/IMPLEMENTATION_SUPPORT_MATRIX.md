@@ -56,9 +56,10 @@ represented as complete renderer conformance.
   that the normal fallback might not render correctly.
 - World Tile's CPU multi-surface composition approximates AO by darkening the
   final color and supplies blended normal, metallic, roughness, and emission
-  maps to its preview renderer. Its parallax and POM material previews sample
-  each layer separately in the VTK fragment shader. Shader weight diagnostics
-  use shifted coordinates; CPU weight views and reported mean weights use
+  maps to its preview renderer. The multi-surface final-material view uses this
+  CPU composition when parallax mode is `NONE`. Its parallax and POM material
+  previews sample each layer separately in the VTK fragment shader. Shader
+  weight diagnostics use shifted coordinates; CPU weight views and reported mean weights use
   unshifted coordinates. These previews have been tested with
   VTK 9.7.2; other versions remain unverified. Separate offscreen tests render
   selected exported-terrain seams. The opt-in detailed terrain mode uses the
