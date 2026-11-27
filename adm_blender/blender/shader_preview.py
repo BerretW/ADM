@@ -802,9 +802,11 @@ def _macro_color_apply(g, base, layer_index, data):
         amount = g.math("MULTIPLY", amount, texture.outputs["Alpha"])
     if data["blend_mode"] == "LERP":
         return g.mix("RGBA", base, texture.outputs["Color"], amount)
+    inverse = g.math("SUBTRACT", 1.0, amount)
+    amount_vector = g.combine((amount, amount, amount))
+    inverse_vector = g.combine((inverse, inverse, inverse))
     factor = g.vmath(
-        "MULTIPLY_ADD", texture.outputs["Color"], (amount, amount, amount),
-        (1.0 - amount, 1.0 - amount, 1.0 - amount),
+        "MULTIPLY_ADD", texture.outputs["Color"], amount_vector, inverse_vector,
     )
     return g.vmath("MULTIPLY", base, factor)
 

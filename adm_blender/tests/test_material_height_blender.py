@@ -680,7 +680,7 @@ def main():
         edited_macro, _ = read_container(edited_macro_encoded, K.ADM_MAGIC)
         edited_macro_ext = edited_macro["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]
         assert edited_macro_ext["blendMode"] == "TINT"
-        assert edited_macro_ext["strength"] == 0.6
+        assert abs(edited_macro_ext["strength"] - 0.6) < 1e-6
         assert edited_macro["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"][0] == \
             "surface.macro-color-roundtrip"
         macro_blend_path = os.path.join(folder, "macro_color.blend")
@@ -692,7 +692,7 @@ def main():
         macro_blender_material = bpy.data.materials[macro_material_name]
         assert macro_blender_material.adm.macro_color_enabled
         assert macro_blender_material.adm.macro_color_blend_mode == "TINT"
-        assert macro_blender_material.adm.macro_color_strength == 0.6
+        assert abs(macro_blender_material.adm.macro_color_strength - 0.6) < 1e-6
         assert macro_blender_material.adm.macro_color_image is not None
         assert macro_blender_material.adm.macro_color_preview_image is not None
         reloaded_macro_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
@@ -701,7 +701,7 @@ def main():
         reloaded_macro, _ = read_container(reloaded_macro_encoded, K.ADM_MAGIC)
         reloaded_macro_ext = reloaded_macro["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]
         assert reloaded_macro_ext["blendMode"] == "TINT"
-        assert reloaded_macro_ext["strength"] == 0.6
+        assert abs(reloaded_macro_ext["strength"] - 0.6) < 1e-6
         assert reloaded_macro_ext["texture"]["index"] < len(reloaded_macro["textures"])
 
         print("PHASE reject required terrain Macro Normal", flush=True)
