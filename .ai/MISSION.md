@@ -1,1379 +1,2081 @@
-# ADM – Advanced Material and Terrain Integration
+# ADM – Advanced Terrain & Physical Surface System
 
-## 0. Autonomous execution protocol
-Pracuješ v existujícím repozitáři:
+# 1. Mission objective
+Rozšiř existující ADM standard a jeho ekosystém o kompletní systém pokročilého terénního texturování, materiálového reliéfu a sémantických fyzikálních povrchů.
 
-[https://github.com/BerretW/ADM](https://github.com/BerretW/ADM)
+Cílem je umožnit vytváření vizuálně přesvědčivých terénů vhodných pro rozsáhlé otevřené světy a zároveň poskytnout enginům jednoznačná data o fyzikálních vlastnostech povrchu.
 
-Referenční stav při sestavení zadání:
+Moderní open-world hry, zejména Red Dead Redemption 2, představují pouze vizuální a technologickou inspiraci.
 
-`19fc2a48a78dc876420334ba43109b1dcdbf30c1`
+Nekopíruj proprietární shadery, algoritmy, datové formáty ani assety Rockstaru.
 
-Pracuj nad aktuálním stavem workspace. Pokud mezitím přibyly další změny, zachovej je a přizpůsob jim implementaci.
+ADM musí zůstat:
 
-Toto zadání představuje jednu kompletní vývojovou misi, nikoliv sérii samostatných úkolů vyžadujících potvrzení uživatele.
+- Otevřeným standardem.
+- Nezávislým na konkrétním enginu.
+- Datově řízeným.
+- Deterministickým v normativně definovaných operacích.
+- Zpětně kompatibilním.
+- Použitelným pro real-time rendering.
+- Použitelným na desktopových i konzolových platformách.
+- Rozšiřitelným bez opakovaného přepisování existujících subsystémů.
+ADM popisuje assety, jejich vzhled, geometrii, fyzikální povrchy a vlastnosti.
 
-Před zahájením implementace:
+Engine rozhoduje o jejich využití.
 
-- Ulož kompletní zadání do `.ai/MISSION.md`.
-- Vytvoř `.ai/TASKS.md` se všemi požadavky.
-- Vytvoř `.ai/STATE.md`.
-- Vytvoř `.ai/DECISIONS.md`.
-- Vytvoř `.ai/TESTS.md`.
-- Respektuj existující projektové instrukce a Autonomous Development Protocol, pokud je již přítomen.
-Po každé významné změně aktualizuj persistentní stav.
+---
 
-Po dokončení dílčího úkolu automaticky pokračuj dalším. Nečekej na potvrzení uživatele.
+# 2. Autonomous execution and persistent memory
+Pracuj autonomně až do dokončení celé mise.
 
-Pokud narazíš na překážku v jedné komponentě, zaznamenej ji a pokračuj v ostatních nezávislých úkolech.
+Nezastavuj se po jednotlivých milnících.
 
-Neukončuj práci po dokončení jednoho milestone.
+Nevyžaduj potvrzení běžných implementačních rozhodnutí.
 
-Při ztrátě kontextu obnov stav z persistentních souborů.
+Výchozí referenční stav posledního externího auditu:
 
-Pokud některá část zadání již byla implementována, ověř ji, otestuj a integruj. Nevytvářej duplicitní implementaci.
+- Repository: BerretW/ADM.
+- Commit: `cd3c9b9d1bfe1e0a0d7f8a1718a899f0371b0969`.
+- Blender Plugin: 1.24.45.
+- World Tile Editor: 0.7.17.
+- World Tile: 131 passing tests.
+- Blender build: 36 passing steps.
+- 2150 reported passing cases.
+- 10 documented external-asset skips.
+Tento commit představuje referenci, nikoliv požadavek na reset workspace.
 
-## 1. Hlavní cíl
-Kompletně rozšiř ADM formát, normativní specifikaci, shaderové profily a všechny nástroje pracující s materiály o:
+Respektuj všechny novější změny.
 
-- Per-layer Ambient Occlusion.
-- Per-layer Heightmap.
+Na začátku:
+
+1. Prozkoumej aktuální stav repozitáře.
+2. Načti existující `.ai/MISSION.md`.
+3. Načti `.ai/FINAL_REPORT.md`, pokud existuje.
+4. Načti `.ai/TECHNICAL_DEBT.md`, pokud existuje.
+5. Načti TASKS, STATE, DECISIONS a TESTS předchozí mise.
+6. Archivuj předchozí misi bez ztráty její historie.
+7. Zaznamenej aktuální výchozí commit.
+8. Ověř skutečný stav nezbytných závislostí.
+9. Vytvoř persistentní dokumentaci nové mise.
+Používej:
+
+- `.ai/MISSION.md`
+- `.ai/TASKS.md`
+- `.ai/STATE.md`
+- `.ai/DECISIONS.md`
+- `.ai/TESTS.md`
+MISSION.md musí obsahovat kompletní toto zadání.
+
+Neměň původní požadavky bez zaznamenání důvodu.
+
+Průběžně zaznamenávej:
+
+- Dokončenou práci.
+- Otevřené požadavky.
+- Technická rozhodnutí.
+- Výsledky testů.
+- Nalezené chyby.
+- Skutečné blokery.
+- Další konkrétní implementační kroky.
+Při obnovení kontextu načti persistentní dokumentaci a pokračuj.
+
+Dlouhotrvající externí procesy spouštěj s odpovídajícími časovými limity a průběžným logováním.
+
+Neopakuj neúspěšné testy bez změny implementace nebo diagnostiky.
+
+---
+
+# 3. Existing implementation and compatibility
+Využij existující implementace:
+
+- ADM Core.
+- Shader Registry.
+- Capability Registry.
+- Shader versioning and historical freezes.
+- PBR materials.
+- Layered material profiles.
+- COLOR_0 and COLOR_1.
+- Material Height Extension.
+- Per-layer AO.
 - Height Based Blending.
 - Parallax Mapping.
 - Parallax Occlusion Mapping.
-- GPU optimalizované jednokanálové textury.
-- Pokročilé GPU formáty normal a albedo textur.
-- Plnohodnotný material authoring.
-- Funkční material preview.
-- Import a export.
-- Automatické testy.
-- Referenční assety.
-Prioritní součásti:
-
-1. ADM Standard.
-2. Existing material authoring tools: ADM Blender Plugin and Apparatus World Tile Editor.
-3. Other existing tools that consume or author ADM materials and shaders.
-
-The mission does not require creating a new standalone ADM Editor. If no standalone
-editor exists in the repository, transfer every ADM Editor requirement to the
-relevant existing authoring tools, especially the ADM Blender Plugin and
-Apparatus World Tile Editor. Do not create a separate editor application.
-4. ADM Blender Plugin.
-5. Všechny ostatní shaderové komponenty repozitáře.
-ADM musí zůstat nezávislým otevřeným standardem.
-
-Nevytvářej žádnou závislost na RDR2, Raven Engine, Echo3D, Unity, Unreal Engine ani konkrétním grafickém API.
-
-Vstupní materiálové textury jsou již rozdělené externím nástrojem. Přímá podpora RDR2 MA formátu není součástí zadání.
-
-## 2. Respektování aktuálního stavu World Tile Editoru
-Od původního návrhu byl World Tile Editor významně rozšířen.
-
-Před implementací prostuduj změny mezi:
-
-`9b16598ec4aa0aab48f5a8178e94b0b64210a730`
-
-a
-
-`19fc2a48a78dc876420334ba43109b1dcdbf30c1`
-
-Zaměř se na:
-
-- `appartus_world_tile/awt/material.py`
-- `appartus_world_tile/awt/texturing.py`
-- `appartus_world_tile/awt/project.py`
-- `appartus_world_tile/awt/terrain_presets.py`
-- `appartus_world_tile/awt/adm_export.py`
-- `appartus_world_tile/awt/gui/main_window.py`
-- `appartus_world_tile/awt/gui/material_panel.py`
-- `appartus_world_tile/tests/test_export.py`
-- `appartus_world_tile/tests/test_pipeline.py`
-- `appartus_world_tile/tests/test_terrain_setup.py`
-- `appartus_world_tile/tests/test_terrain_wizard.py`
-Aktuální implementace obsahuje:
-
-- Surface Library.
-- Biome Surface Noise.
-- World-space noise.
-- Interaktivní biome height controls.
-- Surface preview typu Sphere.
-- Surface preview typu Plane.
-- Surface preview typu Terrain Relief.
-- Ovládání kamery.
-- Texture Repeat v metrech.
-- AWTP projektové verze 2, 3 a 4.
-- Material presets včetně novější verze s noise.
-- Vertex COLOR_1 blending.
-- Terrain Four Layer shader 2.0.0.
-- Road system.
-- Biome painting.
-- Surface painting.
-- Texture refinement.
-- Export Changed.
+- R8/R16 GPU textures.
+- BC4/BC5/BC7 GPU textures.
+- DDS and KTX2.
+- Per-map GPU encoding.
+- Source-byte preservation.
+- Physical materials.
+- Collider descriptors.
 - RTIN terrain generation.
-- Bezešvé LOD hranice.
-Veškerou uvedenou funkcionalitu zachovej.
+- Independent terrain tiles and LOD.
+- Biomes.
+- Surface Noise.
+- Roads.
+- Surface Library.
+- Material presets.
+- AWTP persistence.
+- Export Changed.
+- World Tile custom VTK shaders.
+- Blender import/export.
+- Unknown extension preservation.
+Nevytvářej paralelní náhrady funkčních subsystémů.
 
-Neprováděj kompletní přepis World Tile Editoru.
+Neprováděj rozsáhlé refaktory bez konkrétního technického důvodu.
 
-Rozšiřuj současné třídy, datové struktury, workflow a testovací infrastrukturu.
+Neměň význam existujících zmrazených shaderových profilů.
 
-## 3. GPU Texture Standard
-Rozšiř ADM GPU texture registry o:
+Zachovej současnou funkcionalitu a uživatelské workflow.
 
-Formát | DXGI | Použití
+---
 
-R8_UNORM | 61 | Skalární mapy
+# 4. Mission architecture
+Mise obsahuje čtyři související technologické oblasti.
 
-R16_UNORM | 56 | Přesné heightmapy
+## A. Advanced Terrain Texturing
 
-BC4_UNORM | 80 | Komprimované skalární mapy
+- Terrain Control Maps.
+- Seam-safe material palettes.
+- Macro Color Mapping.
+- Macro Normal Mapping.
+- Anti-tiling.
+- Stochastic Texture Sampling.
+- Triplanar Mapping.
+- Detail Material Maps.
+- Per-layer material controls.
+- Material Distance LOD.
 
-BC5_UNORM | 83 | Normal mapy
+## B. Advanced Material Relief
 
-BC7_UNORM | 98 | Lineární textury
+- Parallax Self-shadowing.
+- True Displacement Mapping.
+- Konzistentní kombinování materiálových efektů.
+- GPU texture and sampling optimization.
 
-BC7_SRGB | 99 | Barevné textury
-Zachovej podporu existujících GPU formátů.
+## C. Physical Surface System
 
-Rozšiř DDS DX10 a KTX2.
+- Sémantické fyzikální materiály.
+- Standardizované typy povrchů.
+- Uživatelské podtypy.
+- Semantic tags.
+- Per-triangle collider materials.
+- Independent terrain collision generation.
 
-Definuj normativně:
+## D. Authoring and ecosystem integration
 
-- Identifikátory formátů.
-- Channel layout.
-- Block dimensions.
-- Block sizes.
-- Mipmap byte sizes.
-- Color space.
-- Texture roles.
-- Missing-channel behavior.
-- Fallback semantics.
-- Texture validation.
-- Capability negotiation.
-Rozšiř GPU texture capabilities v souladu s ADM governance.
-
-Neměň potichu význam již existujících capability identifikátorů.
-
-Aktualizuj zejména:
-
-- `adm-standard/ADM-1.0-SPEC.md`
-- GPU texture registry.
-- Capability registry.
-- `adm_blender/core/gputex.py`
-- Core validators.
-- Image decoders.
-- Image encoders.
-- Texture tests.
-- Texture fixtures.
-Využij existující BC3/BC4 block encoding infrastrukturu, pokud je vhodná.
-
-Nevytvářej redundantní DDS a KTX2 implementace v každém nástroji.
-
-Sdílej společnou implementaci, kde je to možné.
-
-### 3.1 GPU optimalizované textury
-Preferované formáty:
-
-- Albedo: BC7_SRGB nebo kompatibilní BC1/BC3.
-- Normal: BC5_UNORM.
-- AO: BC4_UNORM.
-- Roughness: BC4_UNORM.
-- Metallic: BC4_UNORM.
-- Height: R8_UNORM, R16_UNORM nebo BC4_UNORM.
-- Emission: odpovídající barevný formát.
-PNG zůstává kompatibilním fallbackem a authoring formátem.
-
-PNG nesmí být preferováno před podporovanou GPU texturou při runtime načítání.
-
-Podporované DDS a KTX2 textury zachovávej byte-for-byte, pokud již splňují požadavky standardu.
-
-Zabraň zbytečné dekompresi a opakované kompresi.
-
-### 3.2 Precision and mipmaps
-Zachovej původní přesnost heightmap.
-
-Nikdy automaticky nepřeváděj 16bitovou heightmap na 8bitovou.
-
-R16 fallback musí zachovat 16bitovou přesnost.
-
-Generuj korektní mipmapy nebo zachovávej validní existující mipmap chain.
-
-Normal mapy filtruj ve vektorovém prostoru a normalizuj.
-
-Definuj filtrování skalárních heightmap.
-
-BC4 komprese nesmí být povinná pro heightmapy.
-
-### 3.3 Normal maps
-Pro BC5_UNORM používej rekonstrukci:
-
-```
-x = 2 * R - 1
-y = 2 * G - 1
-z = sqrt(max(0, 1 - x*x - y*y))
-
-normal = normalize(vec3(x,y,z))
-```
-Zachovej ADM tangent-space +Y convention.
-
-Definuj korektní RGB fallback.
-
-## 4. ADM Material Height Extension
-Vytvoř obecné verzované materiálové rozšíření umožňující definici povrchového reliéfu.
-
-Navrhované označení:
-
-`ADM_material_height_v1`
-
-Konečný název přizpůsob existujícím ADM konvencím.
-
-Rozšíření musí podporovat:
-
-- Height texture.
-- Channel selection.
-- Inversion.
-- Height scale.
-- Height bias.
-- Reference height.
-- UV set.
-- Parallax mode.
-- Parallax scale.
-- POM step settings.
-Materiálová heightmap musí být použitelná i mimo terénní shader.
-
-Jednoznačně rozlišuj:
-
-1. Geometrickou heightmapu terénu.
-2. Materiálovou heightmapu povrchu.
-3. Případný budoucí geometric displacement.
-Materiálová heightmap nesmí sama měnit geometrii, kolize, bounding boxes ani LOD geometrie.
-
-Nevytvářej druhou konkurenční definici existujícího top-level `occlusionTexture`.
-
-## 5. Nové verzované shaderové profily
-Rozšiř následující profily:
-
-- `adm.terrain.four_layer@1.1.0`
-- `adm.terrain.four_layer@2.1.0`
-- `adm.surface.two_layer@1.1.0`
-- `adm.pbr.layered@2.1.0`
-Pokud aktuální registry nebo governance vyžadují jiné verze, použij správné nové verze.
-
-Zachovej původní profily 1.0.0 a 2.0.0.
-
-Neměň jejich existující matematické chování.
-
-Dodržuj freeze manifest a development change control.
-
-Nové profily musí mít:
-
-- Normativní dokumentaci.
-- Shader registry entries.
-- Default values.
-- Parameter bounds.
-- Texture roles.
-- Capability requirements.
-- PBR fallback.
-- Reference pseudocode.
+- World Tile Editor.
+- Blender plugin.
+- Validators.
+- SDK.
+- CLI.
+- Existing viewers and reference renderers.
+- Importers and exporters.
+- Documentation.
 - Conformance fixtures.
-- Automated tests.
-Terrain Four Layer 2.x s COLOR_1 je prioritní.
+- Distribution packages.
+Nevytvářej samostatný ADM Editor.
 
-Zachovej zároveň variantu s texture-based blend mask.
+---
 
-## 6. Per-layer Ambient Occlusion
-Pro každou vrstvu přidej:
+# 5. Standard governance
+Navrhni vhodná verzovaná rozšíření podle aktuálních konvencí ADM.
+
+Pracovní návrhy identifikátorů:
+
+- `ADM_terrain_surface_v1`
+- `ADM_physical_surface_v1`
+- `ADM_material_displacement_v1`
+Případně další přesně vymezená rozšíření.
+
+Tyto názvy nejsou závazné. Ověř existující registry a naming conventions.
+
+Každý nový kontrakt musí obsahovat:
+
+- Normativní schéma.
+- Datové typy.
+- Jednotky.
+- Výchozí hodnoty.
+- Povolené rozsahy.
+- Matematickou definici.
+- Pravidla validace.
+- Capability negotiation.
+- Fallback behavior.
+- Serialization requirements.
+- Conformance fixtures.
+- Backward compatibility.
+Existující shader profily neměň.
+
+Nové chování zaváděj pomocí nových verzí nebo explicitních rozšíření.
+
+---
+
+# 6. Resolve existing terrain palette discontinuities
+Tato část má prioritu P0.
+
+Před dalšími rozsáhlými změnami prozkoumej známý problém výběru materiálových vrstev.
+
+Předchozí mise prokázala:
+
+- Viditelné švy při více než čtyřech současně nenulových materiálových vahách.
+- Rozdílné materiálové palety sousedních trojúhelníků.
+- Zesílení problému při Height Based Blending.
+- 54 konfliktních trojúhelníků při jednom exportu referenčního terénu.
+
+## 6.1 Separate global and local material identity
+Jednoznačně odděl:
+
+- Globální identitu povrchu.
+- Lokální index materiálu.
+- Lokální shader slot.
+- Prostorovou váhu povrchu.
+- Primitive material palette.
+Přemapování lokálních slotů nesmí měnit výsledný materiál na sdílené hranici.
+
+## 6.2 Seam-aware palette generation
+Implementuj deterministický algoritmus výběru materiálových palet respektující:
+
+- Sdílené vertexy.
+- Sdílené hrany.
+- Sousední trojúhelníky.
+- Sousední tiles.
+- Různé geometrické LOD.
+- Nepravidelné dlaždice.
+- Globální identitu povrchů.
+- Surface Noise.
+- Biome transitions.
+Přednostně řeš problém konzistentní redukcí vah a vhodnou prostorovou distribucí materiálových palet.
+
+Nepoužívej nezávislé ořezávání vah každého trojúhelníku, pokud vytváří nekonzistentní hranice.
+
+## 6.3 More than four active surfaces
+Čtyřvrstvý shader nemůže přesně reprezentovat libovolnou kombinaci více než čtyř nenulových vah.
+
+Prozkoumej a porovnej:
+
+- Seam-consistent palette reduction.
+- Region-based palette assignment.
+- Material boundary refinement.
+- Control-map-based material representation.
+- Explicit wider-layer shader profiles.
+- Texture-array-based representation.
+Nevytvářej automaticky osmivrstvý shader bez technického vyhodnocení.
+
+Pokud je širší shaderový profil potřebný, musí být samostatně verzovaný, volitelný a mít vlastní capability a fallback.
+
+Zachovej plnou podporu čtyřvrstvých profilů.
+
+## 6.4 Explicit conflict resolution
+World Tile Editor musí umožnit:
+
+- Zobrazení konfliktů materiálových palet.
+- Identifikaci dotčených trojúhelníků.
+- Zobrazení zahozených materiálových vah.
+- Měření chyby redukce.
+- Automatický návrh řešení.
+- Ruční opravu.
+- Strict export mode.
+- Explicit approximate export mode.
+Strict export nesmí vydat známý nekonzistentní výsledek za bezchybný.
+
+Approximate export musí uvádět rozsah aproximace.
+
+Nepotlačuj varování pouze proto, aby referenční projekt prošel.
+
+## 6.5 Verification
+Ověř skutečný shaderový výsledek, nikoliv pouze vertex weights.
+
+Testuj:
+
+- Dva až čtyři povrchy.
+- Pět a více povrchů.
+- Height Based Blending.
+- POM.
+- Permutace lokálních slotů.
+- Různé LOD.
+- Zakřivený terén.
+- Nepravidelné dlaždice.
+- Biomy bez společných povrchů.
+Pro konfliktní vstupy dolož buď bezešvý aproximovaný výsledek s měřitelnou chybou, přesnou reprezentaci vhodným profilem, nebo explicitní odmítnutí exportu.
+
+---
+
+# 7. Terrain Control Maps
+
+## 7.1 Purpose
+Rozšiř prostorovou reprezentaci materiálových vah nezávisle na hustotě geometrie.
+
+Control Map není barevná textura.
+
+Jedná se o prostorová data řídící distribuci materiálů.
+
+Musí být možné ji kombinovat s COLOR_1 a existujícím Height Based Blending.
+
+## 7.2 Supported modes
+Normativně definuj alespoň:
+
+- `VERTEX_ONLY`
+- `TEXTURE_RGBA`
+- `TEXTURE_RGB_IMPLICIT`
+- `VERTEX_MULTIPLY`
+- `VERTEX_OVERRIDE`
+- `VERTEX_MODULATE`
+VERTEX_ONLY používá existující vertex weights.
+
+TEXTURE_RGBA používá čtyři explicitní texturové váhy.
+
+TEXTURE_RGB_IMPLICIT používá tři explicitní a jednu implicitní váhu:
 
 ```
-layer{i}_ao_texture
-layer{i}_ao_channel
-layer{i}_ao_invert
-layer{i}_ao_strength
+w0 = max(0, 1 - R - G - B)
+w1 = R
+w2 = G
+w3 = B
 ```
-Výchozí nastavení:
+Následně normalizuj váhy.
 
-```
-texture = null
-channel = R
-invert = false
-strength = 1.0
-```
-Matematický kontrakt:
+Jednoznačně definuj pořadí a přemapování kanálů.
 
-```
-sample = sample_selected_linear_channel(texture)
+VERTEX_MULTIPLY násobí základní vertex weights texturovými vahami.
 
-if invert:
-    sample = 1 - sample
+VERTEX_OVERRIDE umožňuje řízené nahrazení základních vah.
 
-ao = mix(1.0, sample, strength)
-```
-Chybějící AO textura:
+VERTEX_MODULATE umožňuje deterministickou korekci základních vah.
 
-```
-ao = 1.0
-```
-Výsledné AO:
+Definuj:
 
-```
-finalAO = sum(finalWeight[i] * layerAO[i])
-```
-Definuj kombinaci s top-level AO.
+- Neutral values.
+- Zero-total fallback.
+- Missing-map behavior.
+- Normalization.
+- Weight bounds.
+- Channel identity.
+- Strength.
+- Override mask, pokud je relevantní.
 
-AO aplikuj na nepřímou difuzní složku osvětlení.
+## 7.3 Sampling
+Podporuj:
 
-AO nesmí automaticky ztmavovat veškeré přímé osvětlení, emission ani samotné albedo.
+- Explicit UV set.
+- UV scale and offset.
+- World-space planar mapping.
+- Sampler wrap modes.
+- Linear sampling.
+- GPU texture formats.
+- Independent resolution.
+- Mipmap filtering.
+Control Maps jsou lineární data, nikoliv sRGB.
 
-Pokud preview backend nedokáže oddělit nepřímé osvětlení, použij transparentně dokumentovanou aproximaci.
+Zajisti korektní zachování vah při filtraci a mipmappingu.
 
-## 7. Per-layer Heightmap
-Pro každou vrstvu přidej:
-
-```
-layer{i}_height_texture
-layer{i}_height_channel
-layer{i}_height_invert
-layer{i}_height_scale
-layer{i}_height_bias
-layer{i}_parallax_scale
-```
-Výchozí nastavení:
+## 7.4 Evaluation order
+Definuj jednotnou posloupnost:
 
 ```
-texture = null
-channel = R
-invert = false
-scale = 1.0
-bias = 0.0
-parallax_scale = 0.0
+Base vertex weights
+Control Map sampling
+Control Map combination
+Weight normalization
+Per-layer texture projection
+Per-layer parallax evaluation
+Height sampling
+Height Based Blending
+Final material evaluation
 ```
-Konvence:
+Přesný vztah k existujícím shaderovým kontraktům normativně zdokumentuj.
 
-- 0 = nejnižší část povrchu.
-- 1 = nejvyšší část povrchu.
-- Lineární data.
-- Žádná gamma korekce.
-Normativně definuj efektivní výšku, bounds, clipping a missing-texture behavior.
+Control Map nesmí být posouvána view-dependent parallaxem jednotlivých vrstev, pokud nový profil výslovně nedefinuje odlišné chování.
 
-Různé materiálové mapy mohou mít rozdílná rozlišení.
+## 7.5 LOD and seam consistency
+Stejná prostorová Control Map musí být použitelná napříč různými geometrickými LOD.
 
-Nepřevzorkovávej automaticky všechny textury na jednotnou velikost.
+Zajisti:
 
-## 8. Height Based Blending
-Přidej parametry:
+- Global surface identity.
+- Consistent UV phase.
+- Tile-border sampling.
+- Border padding.
+- Mipmap continuity.
+- Floating-origin independence.
+
+---
+
+# 8. World Tile Control Map authoring
+Integruj Control Maps do existujícího World Tile Editoru.
+
+Podporuj:
+
+- Generování z biome rules.
+- Generování z výšky terénu.
+- Generování ze sklonu.
+- Surface Noise.
+- Roads.
+- Surface Paint.
+- Import externích masek.
+- Ruční malování.
+- Nastavitelné rozlišení.
+- Export GPU textur.
+- Přímé zobrazení jednotlivých vah.
+Doporučená rozlišení:
+
+- 128².
+- 256².
+- 512².
+- 1024².
+- 2048².
+- 4096².
+Podporuj další validní rozměry, pokud odpovídají bezpečnostním limitům.
+
+Umožni uživateli zobrazit:
+
+- Samostatné kanály.
+- Jednotlivé povrchy.
+- Dominantní povrch.
+- Vertex weights.
+- Control Map weights.
+- Combined weights.
+- Final height-adjusted weights.
+- Palette conflicts.
+Změna Control Map nesmí automaticky vyžadovat rebuild vizuální geometrie.
+
+Výjimku představují explicitně vyžádané změny geometrie, palet nebo colliderů.
+
+---
+
+# 9. Macro Color Mapping
+Implementuj volitelné makroskopické barevné mapování.
+
+Účelem je potlačit jednotvárné zabarvení rozsáhlých ploch.
+
+Podporuj:
+
+- Macro Color Texture.
+- Strength.
+- UV scale.
+- UV offset.
+- UV set.
+- World-space projection.
+- Per-layer influence.
+- Blend mode.
+Minimální režimy:
+
+- Multiply.
+- Tint.
+- Lerp.
+Definuj jejich přesnou matematiku v lineárním barevném prostoru.
+
+Výchozí hodnoty musí být neutrální.
+
+Macro Color Map může být:
+
+- Sdílená mezi materiály.
+- Sdílená mezi dlaždicemi.
+- Samostatná pro oblast terénu.
+- Importovaná.
+- Ručně malovaná.
+- Procedurálně vytvořená authoring nástrojem.
+World Tile Editor musí podporovat generování z biomů, výšky, sklonu, šumu a uživatelských barevných pravidel.
+
+Macro Color nesmí být závislá na náhodné identitě konkrétní renderovací instance.
+
+---
+
+# 10. Macro Normal Mapping
+Implementuj makroskopickou normal mapu reprezentující větší povrchové struktury.
+
+Podporuj:
+
+- Texture reference.
+- Strength.
+- Scale.
+- Offset.
+- UV set.
+- World-space mapping.
+- Per-layer influence.
+Použij korektní metodu kombinování normál, například normativně definovaný Reoriented Normal Mapping.
+
+Definuj:
+
+- Coordinate space.
+- Tangent frames.
+- Normal orientation.
+- BC5 reconstruction.
+- Normal strength.
+- Normalization.
+- Missing-map fallback.
+Ověř kombinaci:
 
 ```
-height_blend_enabled
-height_blend_transition
-height_blend_strength
+Base normal
+Macro normal
+Detail normal
+Final surface normal
 ```
-Výchozí nastavení:
+Nepoužívej nekontrolované prosté sčítání normál.
 
-```
-enabled = false
-transition = 0.2
-strength = 1.0
-```
-Výchozí algoritmus pro posouzení:
+---
 
-```
-w = normalized_base_weights
+# 11. Anti-tiling and stochastic sampling
+Implementuj volitelné potlačení viditelného opakování textur.
 
-h_max = max(height[i] for active layers)
+Podporuj alespoň:
 
-q[i] = w[i] * exp(
-    clamp(
-        (height[i] - h_max) / max(transition, epsilon),
-        -80,
-        0
-    )
-)
+- `NONE`
+- `RANDOMIZED_TILING`
+- `STOCHASTIC_BLEND`
+Parametry:
 
-height_weights = normalize(q)
+- Deterministic seed.
+- World-space origin.
+- Cell size.
+- Rotation strength.
+- Offset strength.
+- Blend sharpness.
+- Variation strength.
+Přesné datové typy, rozsahy a algoritmus normativně definuj.
 
-final_weights = mix(
-    w,
-    height_weights,
-    height_blend_strength
-)
-```
-Před přijetím algoritmu ověř jeho vizuální a numerické chování.
-
-Pokud zvolíš jiný algoritmus, musí splňovat stejné invarianty a být přesně specifikován.
-
-Povinné invarianty:
-
-- Součet výsledných vah je 1.
-- Váhy jsou nezáporné.
-- Nulová původní váha zůstane nulová.
-- One-hot masky zůstávají one-hot.
-- Stejné efektivní výšky nemění původní váhy.
-- Chybějící heightmapy mají definované neutrální chování.
-- Materiály bez heightmap používají původní blending.
-- Vypnutý efekt reprodukuje starší shader.
-- Strength 0 reprodukuje starší shader.
-- Výsledek nezávisí na pořadí vrstev.
-- Výsledek neobsahuje NaN nebo Inf.
-Výsledné váhy použij konzistentně pro:
+Stejné prostorové transformace musí být aplikovány na odpovídající:
 
 - Albedo.
-- Alpha.
 - Normal.
-- Metallic.
 - Roughness.
+- Metallic.
 - AO.
+- Height.
 - Emission.
-Normalizuj výslednou normal map.
+- Detail Maps.
+Při rotaci nebo zrcadlení UV správně transformuj tangent-space normály.
 
-## 9. Integrace Surface Noise a Height Based Blending
-Toto je zásadní aktualizace proti původnímu zadání.
+Zohledni transformaci POM paprsků.
 
-Aktuální World Tile Editor již obsahuje Surface Noise v biome pravidlech.
+Definuj korektní texture derivatives a mip selection.
 
-Neodstraňuj tento systém ani jej nenahrazuj height blendingem.
+Zajisti:
 
-Zachovej existující generování makroskopických vah, včetně:
+- Determinism.
+- Stabilní výsledek při pohybu kamery.
+- Stabilní výsledek při změně LOD.
+- Tile seams.
+- Floating-origin independence.
+- Nezávislost na pořadí načtení assetů.
+Nezaváděj nedeterministickou fragmentovou náhodnost.
 
-- Height bands.
-- Slope bands.
-- Biome transitions.
-- Surface Noise.
-- Biome painting.
-- Surface painting.
-- Roads.
-- Texture refinement.
-Použij následující oddělení odpovědnosti:
+---
 
-### Authoring a geometrická fáze
+# 12. Triplanar Mapping
+Implementuj volitelný výběr projekce jednotlivých materiálových vrstev.
 
-```
-Biome rules
-    ↓
-Surface Noise
-    ↓
-Biome and surface painting
-    ↓
-Road overrides
-    ↓
-Surface weights
-    ↓
-COLOR_1
-```
-Přesné pořadí existujících operací zachovej podle současné implementace.
+Minimální režimy:
 
-### Shaderová fáze
+- `UV_MAPPING`
+- `WORLD_PLANAR`
+- `TRIPLANAR`
+Podporuj:
 
-```
-COLOR_1
-    ↓
-Base layer weights
-    ↓
-Optional parallax evaluation
-    ↓
-Material height sampling
-    ↓
-Height Based Blending
-    ↓
-Final material properties
-    ↓
-PBR lighting and AO
-```
-Surface Noise řeší makroskopické rozmístění povrchů.
-
-Height Based Blending řeší mikroskopické prolínání materiálů.
-
-Parallax řeší optický povrchový reliéf.
-
-Nesnaž se všechny tři technologie spojit do jediného efektu.
-
-Neměň obsah COLOR_1 na základě height textury při exportu.
-
-Nevypaluj Height Based Blending do vertex weights.
-
-Height blending musí zůstat skutečným shaderovým efektem.
-
-## 10. Parallax a POM
-Implementuj volitelné režimy:
-
-```
-NONE
-PARALLAX
-PARALLAX_OCCLUSION
-```
-Výchozí režim je NONE.
-
-Přidej:
-
-```
-parallax_mode
-parallax_min_steps
-parallax_max_steps
-layer{i}_parallax_scale
-```
+- Physical texture scale.
+- Projection origin.
+- Projection axis.
+- Triplanar sharpness.
+- Projection weights.
+- Normal-aware projection.
 Normativně definuj:
 
-- Tangent-space view direction.
-- Reference height.
-- Scale units.
-- UV displacement direction.
-- Grazing-angle behavior.
-- Adaptive step count.
-- Ray intersection.
-- Intersection refinement.
-- UV wrapping.
-- Sampling and mip selection.
-- Missing heightmap behavior.
-- Missing tangent behavior.
-- Frontface and backface behavior.
-- Multiple layer interaction.
-Jednoznačně definuj, zda a jak se při ray marchingu mění váhy jednotlivých vrstev.
+- Výpočet projekčních vah.
+- Orientaci jednotlivých rovin.
+- Zrcadlení.
+- Transformaci normál.
+- Degenerate cases.
+- Sampling.
+- Blending.
+Triplanar Mapping musí být využitelný nejen pro terény, ale také pro obecné statické modely.
 
-Nesmí vzniknout cyklická nebo nejednoznačná závislost mezi POM a Height Based Blending.
+Ověř kombinace s:
 
-Všechny materiálové mapy dané vrstvy musí být vzorkovány konzistentně.
-
-Pokud používají rozdílné UV sady, definuj transformaci nebo podporovaná omezení.
-
-POM je optický efekt, nikoliv geometrický displacement.
-
-POM nesmí být povinné pro každý materiál.
-
-Neprezentuj Bump Mapping jako plnohodnotné POM.
-
-## 11. ADM Editor Integration
-Najdi aktuální implementaci ADM Editoru a všech dalších authoring nástrojů.
-
-Rozšiř existující material editor.
-
-Každá vrstva musí obsahovat:
-
-```
-Layer
- ├─ Albedo
- ├─ Normal
- ├─ Metallic
- ├─ Roughness
- ├─ Ambient Occlusion
- ├─ Height
- ├─ Emission
- ├─ UV settings
- └─ Parallax settings
-```
-Přidej:
-
-- Texture selection.
-- Channel selection.
-- Inversion.
-- Texture preview.
-- AO strength.
-- Height scale.
-- Height bias.
-- Height blend settings.
-- Parallax settings.
-- GPU format selection.
-- Shader version selection.
-- Material validation.
-Zobrazuj informace o textuře:
-
-- Rozlišení.
-- Skutečný GPU formát.
-- Bitová hloubka.
-- Color space.
-- Mipmap count.
-- GPU memory estimate.
-- External/embedded status.
-Použij registry-driven UI, pokud to stávající architektura umožňuje.
-
-Nevytvářej ručně udržovanou duplicitní shader registry.
-
-### Preview
-Zajisti funkční preview nových shaderů.
-
-Režimy:
-
-- Final Material.
-- Albedo.
-- Normal.
+- Anti-tiling.
+- Control Maps.
+- Macro Maps.
+- Height Based Blending.
+- Detail Maps.
 - AO.
-- Roughness.
-- Metallic.
-- Height.
-- Base Layer Weights.
-- Height Blended Weights.
-- Parallax Offset.
-- COLOR_0.
-- COLOR_1.
-Přidej přepínání klasického a výškového prolínání.
+- Parallax.
+- POM.
+- Self-shadowing.
+Pokud některá kombinace není implementovatelná v konkrétním backendu, definuj explicitní fallback.
 
-Zachovej editaci starších shaderových verzí.
+Nepředstírej plnou podporu kombinací, které nebyly ověřeny.
 
-Upgrade materiálu na novou shaderovou verzi musí být explicitní nebo provedený při použití nové funkce s jasným oznámením.
+---
 
-Neprováděj tichou destruktivní migraci.
+# 13. Detail Material Maps
+Přidej univerzální podporu detailových textur.
 
-## 12. World Tile Editor – datový model
-Rozšiř existující třídy v `awt/material.py`.
+Minimálně:
 
-Především:
+- Detail Albedo.
+- Detail Normal.
+- Detail Roughness.
+Parametry:
 
-- `MapSlot`
-- `Surface`
-- `Biome`
-- `TerrainMaterial`
-Pro AO a Height znovu využij `MapSlot`, pokud jeho současný kontrakt umožňuje příslušnou texturovou referenci, channel selection a inversion.
+- Texture reference.
+- UV scale.
+- UV offset.
+- Strength.
+- Blend mode.
+- Fade start distance.
+- Fade end distance.
+Definuj neutrální výchozí hodnoty.
 
-Nevytvářej druhý konkurenční systém map slotů.
+Chybějící textura nesmí měnit základní materiál.
 
-Rozšiř `Surface` o:
+Umožni sdílení detailových textur mezi více materiály.
 
-- AO map.
-- AO strength.
-- Height map.
-- Height scale.
-- Height bias.
-- Parallax scale.
-- Emission, pokud dosud není součástí struktury.
-Rozšiř `TerrainMaterial` nebo odpovídající shader settings o:
+Zajisti korektní:
 
-- Height blending enable.
-- Height blend transition.
-- Height blend strength.
-- Parallax mode.
-- POM settings.
-- Target shader version.
-Rozšiř všechny související operace:
+- Color space.
+- Normal blending.
+- Mipmapping.
+- Filtering.
+- Distance fading.
+- GPU encoding.
+Detail Maps nesmí způsobovat nekontrolované aliasing artefakty.
 
-- `Surface.textures()`
-- `TerrainMaterial.textures()`
-- `_surface_dict()`
-- `TerrainMaterial.to_dict()`
-- `TerrainMaterial.from_dict()`
-- `TerrainMaterial.validate()`
-- `TerrainMaterial.fingerprint()`
-- Material presets.
-- Relative texture paths.
-- Texture collection.
-- Project serialization.
-Důsledně rozlišuj:
+---
 
-- Geometrické a biome rule změny.
-- Čistě materiálové změny.
-Změna AO nebo height textury nesmí vyžadovat rebuild geometrie.
+# 14. Per-layer material controls
 
-`rules_digest()` nesmí být zbytečně ovlivňován čistě shaderovými parametry.
+## 14.1 Normal Strength
+Přidej nezávislou intenzitu normal map každé materiálové vrstvy.
 
-Material fingerprint naopak musí zahrnovat všechny nové shaderové vlastnosti a jejich textury.
+Definuj přesnou matematiku.
 
-## 13. World Tile Editor – GUI
-Rozšiř `awt/gui/material_panel.py`.
+## 14.2 Blend Softness
+Umožni jednotlivým vrstvám definovat odlišnou měkkost materiálového přechodu.
 
-Využij existující třídy:
-
-- `TexturePicker`
-- `MapRow`
-- `SurfaceEditor`
-- `MaterialPreview`
-- `MaterialPanel`
-Zachovej jejich stávající funkcionalitu.
-
-Přidej AO a Height do existujícího Surface Editoru.
-
-Rozšiř MapRow nebo vytvoř jeho kompatibilní specializaci pro potřebné parametry.
-
-Přidej sekci Terrain Shader Settings.
-
-Uživatel musí mít možnost nastavit:
-
-- AO map.
-- AO strength.
-- AO channel.
-- AO invert.
-- Height map.
-- Height channel.
-- Height invert.
-- Height scale.
-- Height bias.
-- Height Blend Strength.
-- Height Blend Transition.
-- Parallax Mode.
-- Parallax Scale.
-- POM steps.
 Zachovej:
 
-- Biome Editor.
-- Surface Noise slider.
-- Interaktivní biome controls.
-- Surface naming.
-- Texture repeat in metres.
-- Stávající signály a editovací workflow.
-Nepřepisuj kompletní uživatelské rozhraní.
+- Zero-weight preservation.
+- One-hot preservation.
+- Normalized weights.
+- Permutation invariance.
+- Numerical stability.
+- Backward compatibility.
+Existující Height Based Blending algoritmy neměň.
 
-## 14. World Tile Editor – Material Preview
-Toto je prioritní část.
+Použij nový profil.
 
-Aktuální MaterialPreview podporuje:
+## 14.3 Material Porosity
+Přidej volitelný popisný parametr poréznosti povrchu.
 
-- Sphere.
-- Plane.
-- Terrain Relief.
-- Rotation.
-- Pan.
-- Zoom.
-- Texture repeat.
-Zachovej všechny uvedené funkce.
+Porosity může ovlivňovat materiálovou reakci na externě dodanou vlhkost.
 
-Aktuální preview podle dokumentace zobrazuje albedo, tint a skalární Metallic/Roughness, ale nezobrazuje všechny skutečné materiálové mapy.
+Případná materiálová odezva musí mít přesně definovaný kontrakt.
 
-Rozšiř jej na skutečný material preview.
+Neimplementuj simulaci deště, počasí nebo vodního cyklu.
 
-Musí zobrazovat:
+Aktuální environmentální hodnoty dodává engine nebo preview aplikace.
 
-- Albedo textures.
-- Normal maps.
-- Metallic maps.
-- Roughness maps.
-- AO maps.
-- Height maps.
+---
+
+# 15. Parallax Self-shadowing
+Implementuj univerzální lokální zastínění virtuálního materiálového reliéfu.
+
+Využij existující heightmapy.
+
+Nevyžaduj samostatnou shadow texture.
+
+Navrhované parametry:
+
+```
+parallax_self_shadow_enabled
+parallax_self_shadow_strength
+parallax_self_shadow_min_steps
+parallax_self_shadow_max_steps
+parallax_self_shadow_bias
+```
+Přizpůsob názvy existujícím konvencím.
+
+## 15.1 Normative algorithm
+Definuj:
+
+1. Virtuální průsečík POM paprsku s height fieldem.
+2. Směr ke konkrétnímu zdroji světla.
+3. Transformaci směru do správného tangent frame.
+4. Bounded ray march směrem ke světlu.
+5. Detekci překážek.
+6. Výpočet lokální visibility.
+7. Regulaci shadow strength.
+Zajisti:
+
+- Bounded iteration count.
+- Grazing-angle handling.
+- Numerical stability.
+- Bias against self-intersection.
+- Correct UV transforms.
+- Missing-height fallback.
+- Disabled behavior.
+- Zero-strength behavior.
+Definuj normativní testovací vektory.
+
+## 15.2 Lighting behavior
+Self-shadowing ovlivňuje příspěvek konkrétního přímého světla.
+
+Nesmí automaticky ztmavovat:
+
+- Emission.
+- Albedo.
+- Všechny ostatní světelné zdroje.
+- Veškeré nepřímé osvětlení.
+AO a Self-shadowing zůstávají oddělené technologie.
+
+U vícevrstvých materiálů definuj korektní kombinaci jednotlivých výsledků.
+
+## 15.3 Universal application
+Podporuj vhodné profily:
+
+- Terrain.
+- Layered PBR.
+- Two-layer surfaces.
+- Obecné povrchy s heightmapou.
+Nevytvářej technologii omezenou pouze na terrain shaders.
+
+## 15.4 Preview
+World Tile Editor musí umožnit změnu směru světla.
+
+Uživatel musí být schopen přímo porovnat:
+
+- POM.
+- POM + Self-shadowing.
+V Blenderu implementuj odpovídající dostupný preview nebo transparentně označenou aproximaci.
+
+---
+
+# 16. True Displacement Mapping
+Zaveď samostatné volitelné rozšíření pro skutečné geometrické posunutí povrchu.
+
+Důsledně odděl:
+
+- Material height.
+- Height Based Blending.
 - Parallax.
-- POM podle deklarované podpory.
-Zachovej fyzické rozměry a texture repeat convention současného preview.
+- POM.
+- Terrain elevation.
+- True displacement.
 
-Jednovrstvá Sphere nebo Plane preview nesmí předstírat funkčnost Height Based Blending mezi vrstvami.
+## 16.1 Data contract
+Minimálně:
 
-Pro testování Height Based Blending vytvoř samostatný multi-surface preview režim, který umožňuje:
+- Displacement texture.
+- Channel selection.
+- Invert.
+- Physical scale in meters.
+- Reference height.
+- Maximum displacement.
+- Direction convention.
+- UV mapping.
+- Enable.
+- Authored geometry state.
+Příklad principu:
 
-- Vybrat dva až čtyři povrchy.
-- Nastavit základní blend weights.
-- Zobrazit klasické prolínání.
-- Zapnout Height Based Blending.
-- Měnit transition a strength.
-- Zobrazovat finální váhy.
-- Měnit světlo a kameru.
-Rozšiř také:
+```
+displacementMeters =
+    (sampleHeight - referenceHeight) * scaleMeters
+```
+Definuj přesnou matematiku a pravidla omezení maximálního posunutí.
 
-- Show blended terrain.
-- Selected tile preview.
-- 3D terrain Material mode.
-Pro rozsáhlý terén zachovej rychlé preview režimy.
+## 16.2 Renderer independence
+ADM definuje požadovaný geometrický efekt, nikoliv konkrétní GPU implementaci.
 
-Detailní materiálový preview nesmí být povinný při prohlížení geometrie, LOD nebo biome weights.
+Povol například:
 
-Pokud současný renderer nezvládá nové efekty, rozšiř vhodně jeho materiálovou pipeline.
+- Offline subdivision.
+- CPU-generated displaced mesh.
+- GPU tessellation.
+- Jiné kompatibilní řešení.
+Nevyžaduj podporu hardware tessellation v každém ADM rendereru.
 
-Nevytvářej paralelní náhledový systém bez nutnosti.
+## 16.3 Geometry and bounds
+Definuj:
 
-## 15. World Tile Editor – Import Texture Sets
-Přidej funkci Import Material Sets from Directory.
+- Conservative bounds.
+- Tessellation or subdivision requirements.
+- Displacement direction.
+- Normal reconstruction.
+- Tangent reconstruction.
+- LOD behavior.
+- Tile boundary continuity.
+- Fallback.
+Displacement nesmí bez explicitního požadavku měnit kolizní geometrii.
 
-Uživatel již má samostatné rozdělené DDS textury uložené vedle sebe.
+Uživatel musí mít možnost vytvořit odpovídající collider jako samostatný authoring krok.
+
+## 16.4 Authoring and baking
+Blender plugin musí umožnit:
+
+- Nastavení displacementu.
+- Skutečný preview.
+- Export deklarativního displacementu.
+- Volitelné zapečení do geometrie.
+- Export již deformované geometrie.
+Zabraň dvojité aplikaci displacementu.
+
+World Tile Editor musí podporovat bezpečné použití displacementu na terénu.
+
+Při nemožnosti runtime preview může nabídnout bounded offline geometry preview.
+
+## 16.5 Reference comparison
+Vytvoř originální cihlový materiál.
+
+Na kouli a rovinné ploše demonstruj:
+
+1. Albedo.
+2. Normal Mapping.
+3. Normal + AO.
+4. Parallax.
+5. POM.
+6. POM + Self-shadowing.
+7. True Displacement.
+Dolož skutečné rendery z více úhlů kamery a světla.
+
+Zvláště demonstruj změnu siluety při skutečném displacementu.
+
+---
+
+# 17. Material Distance LOD
+Zaveď volitelné deklarativní úrovně materiálového detailu.
+
+Material Distance LOD je nezávislý na geometrickém LOD.
+
+Podporuj doporučené rozsahy vzdáleností v metrech.
+
+Příklad:
+
+```
+NEAR:
+    Full PBR
+    Height Blend
+    POM
+    Self-shadowing
+    Detail Maps
+    Macro Maps
+    Anti-tiling
+
+MID:
+    PBR
+    Height Blend
+    Optional Parallax
+    Optional Detail Maps
+    Macro Maps
+
+FAR:
+    Simplified PBR
+    Macro Maps
+    Reduced sampling
+```
+Nevynucuj univerzální vzdálenosti pro všechny assety.
+
+Podporuj plynulé přechody, pokud jsou smysluplné.
+
+Zabraň výrazným změnám barev, normál a materiálových vah při přepnutí.
+
+Engine může použít vlastní quality policy.
+
+ADM poskytuje deklarativní preference a dostupné vlastnosti.
+
+---
+
+# 18. GPU texture architecture and BC5 compatibility
+Tato část řeší známý technický dluh předchozí mise.
+
+## 18.1 Core PBR BC5
+Současná specifikace má omezení:
+
+- BC5 ukládá R a G.
+- Pokročilý renderer rekonstruuje Z.
+- Core PBR fallback očekává RGB normal mapu.
+- Současný dvoukanálový fallback kontrakt neumožňuje jednoduše reprezentovat obě očekávání jedinou texturou.
+Navrhni verzované řešení umožňující:
+
+- Zachovat originální BC5 GPU bytes.
+- Poskytnout správnou rekonstruovanou RGB normal mapu.
+- Zachovat sampler.
+- Zachovat UV set.
+- Zachovat normal strength.
+- Podporovat samostatné core-PBR materiály.
+- Podporovat layered shaders.
+- Podporovat embedded i external images.
+- Zabránit nejednoznačné interpretaci dat.
+Neměň význam historických BC5 kontraktů.
+
+Nepoužívej tichou rekompresi jako řešení.
+
+Zvaž explicitní role-dependent fallback nebo jinou jednoznačně verzovanou reprezentaci.
+
+## 18.2 Texture preservation
+Zachovej existující per-map GPU encoding.
+
+Kompatibilní originální GPU textury mají být standardně zachovány byte-for-byte.
+
+Konverze musí být explicitní nebo transparentně zdokumentovaná.
+
+Zachovej:
+
+- R16 precision.
+- Multichannel 16-bit source data.
+- Mipmap payloads.
+- BC5 normal semantics.
+- BC7 color space.
+- Embedded and external textures.
+
+## 18.3 Texture packing
+Rozvíjej existující interní packing stejně velkých scalar maps.
+
+Nedovol:
+
+- Neoprávněný resampling.
+- Ztrátu R16 precision.
+- Ztrátu kanálů.
+- Nekompatibilní color-space kombinace.
+- Tichou ztrátu materiálové vlastnosti.
+Interní renderer packing nesmí bez explicitní volby měnit zdrojová ADM data.
+
+## 18.4 Texture arrays and resource budgets
+Vyhodnoť vhodnost texture arrays, shared material resources a dalších optimalizací.
+
+Zohledni:
+
+- Rozdílná rozlišení.
+- Rozdílné formáty.
+- Mipmaps.
+- Color space.
+- Samplers.
+- Hardware texture-unit limits.
+- GPU memory.
+- Shader sampling cost.
+Nevyžaduj Vulkan descriptor indexing nebo jinou konkrétní API technologii v základním ADM kontraktu.
+
+Reference preview musí umět explicitně oznámit překročení dostupného rozpočtu.
+
+---
+
+# 19. Physical Surface System
+Tato část má prioritu P0.
+
+Rozšiř existující ADM physical materials.
+
+Nevytvářej paralelní fyzikální formát.
+
+## 19.1 Semantic surface identity
+Každý fyzikální materiál musí být schopný deklarovat:
+
+- Stable identity.
+- Surface type.
+- Surface subtype.
+- Semantic tags.
+- Existující fyzikální vlastnosti.
+Vizuální a fyzikální materiály jsou nezávislé.
 
 Například:
 
 ```
-rock_01_abte.dds
-rock_01_nm.dds
-rock_01_ma.dds
-rock_01_ao.dds
-rock_01_roughness.dds
-rock_01_height.dds
-rock_01_unknown.dds
+Visual: Wet grass
+Physical: Soft mud
 ```
-Výsledkem musí být jeden povrch `rock_01`.
+Tato kombinace musí být validní.
 
-Rozpoznávej konfigurovatelné přípony:
+## 19.2 Standard surface registry
+Vytvoř verzovaný machine-readable katalog.
+
+Minimální kategorie:
+
+- Unknown.
+- Grass.
+- Soil.
+- Mud.
+- Sand.
+- Rock.
+- Gravel.
+- Snow.
+- Ice.
+- Moss.
+- Leaves.
+- Wood.
+- Concrete.
+- Brick.
+- Asphalt.
+- Metal.
+- Glass.
+- Plastic.
+- Rubber.
+- Fabric.
+- Organic.
+Katalog nesmí být omezený pouze na terén.
+
+Musí být využitelný u libovolných ADM assetů.
+
+## 19.3 Surface subtypes
+Podporuj například:
 
 ```
-_abte
-_albedo
-_basecolor
-_diffuse
-_nm
-_normal
-_ao
-_occlusion
-_roughness
-_metallic
-_height
-_displacement
-_emission
-_emissive
+grass.short
+grass.long
+grass.dry
+grass.lush
+
+soil.dry
+soil.wet
+soil.forest
+soil.farmland
+
+mud.soft
+mud.hard
+
+sand.dry
+sand.wet
+
+gravel.fine
+gravel.coarse
+
+snow.fresh
+snow.compacted
+
+rock.granite
+rock.limestone
+rock.sandstone
+
+wood.raw
+wood.processed
 ```
-Podporuj DDS, KTX2, PNG, TIFF a TGA jako authoring vstupy.
+Jedná se o příklady, nikoliv pevně předepsané finální identifikátory.
 
-Soubor `_ma` automaticky ignoruj, pokud jsou již přítomny rozdělené mapy.
+Zaveď kvalifikované uživatelské typy podle naming conventions ADM.
 
-Soubor `_unknown` nikdy automaticky nepřiřazuj ke konkrétní materiálové vlastnosti.
+Definuj fallback neznámých typů.
 
-Funkce musí umožnit:
+Uživatelské typy musí být zachovány při round-trip.
 
-- Rekurzivní prohledání adresáře.
-- Seskupení materiálů.
-- Náhled nalezených sad.
-- Kontrolu chybějících map.
-- Řešení konfliktních variant.
-- Volbu jednotlivých povrchů k importu.
-- Zachování existujících povrchů.
-- Volitelnou aktualizaci existujících povrchů.
-Heuristiky názvů jsou pouze authoring pomůcka.
+## 19.4 Surface versus biome
+Rozlišuj biom a fyzikální povrch.
 
-Výsledný ADM materiál musí obsahovat explicitní texture references.
+Poušť je biom.
 
-Nesmí být závislý na příponách souborů.
+Může obsahovat:
 
-## 16. World Tile Editor – Project and Presets
-Aktuální `PROJECT_VERSION = 4`.
+- Sand.
+- Rock.
+- Gravel.
+- Dry soil.
+Biome metadata v authoring nástrojích nesmí nahrazovat fyzikální klasifikaci.
 
-Stávající implementace zapisuje projektovou verzi 4 při použití Surface Noise, jinak zachovává verzi 3.
+## 19.5 Physical parameters
+Zachovej existující physical material properties.
 
-Zachovej tento princip kompatibility, pokud je to vhodné.
+Nepřidávej duplicitní friction nebo restitution parametry s jiným významem.
 
-Při zavedení nových materiálových vlastností definuj novou projektovou verzi, například AWTP 5.
+Příklady nových dat:
 
-Požadavky:
+- Surface type.
+- Subtype.
+- Semantic tags.
+- Optional descriptive metadata.
+ADM nesmí definovat konkrétní gameplay reakce.
 
-- AWTP 2 lze načíst.
-- AWTP 3 lze načíst.
-- AWTP 4 lze načíst.
-- Nová verze zachovává všechny nové vlastnosti.
-- Staré projekty používají neutrální výchozí hodnoty.
-- Surface Noise zůstává zachováno.
-- Roads zůstávají zachovány.
-- Paint data zůstávají zachována.
-- Relative paths zůstávají zachovány.
-Při uložení staršího projektu nepřidávej nekompatibilní data pod historickým číslem verze.
+Neukládej instrukce:
 
-Aktualizuj:
+- Generate vegetation.
+- Play footstep sound.
+- Reduce player movement speed.
+- Spawn particles.
+- Apply gameplay damage.
+Engine rozhoduje o těchto akcích na základě dat.
 
-- `awt/project.py`
-- `awt/terrain_presets.py`
-- Material preset format.
-- Terrain setup wizard.
-- CLI.
-- Manifest serialization.
-- Project migration.
-- Project validation.
-Preset musí zachovat AO a Height textury včetně jejich relativních cest a všech parametrů.
+---
 
-Terrain Setup Wizard musí respektovat nově importované povrchy.
+# 20. Collider material assignment
+Prozkoumej existující collider kontrakty a rozšiř pouze skutečně chybějící části.
 
-Zachovej nové biome graph ovládání z aktuálního `main_window.py`.
+Podporuj:
 
-## 17. World Tile Editor – ADM Export Integration
-Rozšiř `awt/adm_export.py`.
+- Jeden fyzikální materiál pro celý collider.
+- Fyzikální materiály jednotlivých trojúhelníků.
+- Lokální material tables, pokud odpovídají existující architektuře.
+- Stabilní material references.
+- Jednoduché collider shapes.
+- Triangle mesh colliders.
+Validuj všechny indexy a vazby.
 
-Zaměř se na:
+Zachovej fyzikální materiály při:
 
-- `ExportSettings`
-- `prepare_adm_texture()`
-- `material_key()`
-- `tile_digest()`
-- `changed_tiles()`
-- `_surface_texture_slots()`
-- `_material_params()`
-- `build_tile_document()`
-- `tile_geometry()`
-Rozšiř exportní materiálové sloty o AO, Height a případné další nové mapy.
+- Triangulaci.
+- Importu.
+- Exportu.
+- Přesunu assetu.
+- Blender round-trip.
+- Project reload.
+Implementuj referenční Surface Query funkci.
 
-Nový shaderový profil musí být skutečně exportován.
+Na základě existujícího kolizního zásahu musí být možné jednoznačně získat:
 
-Pouhé přidání vlastností do `.awtp` nestačí.
+```
+Collider ID
+Triangle index
+Physical material ID
+Surface type
+Surface subtype
+Semantic tags
+Friction
+Restitution
+```
+Nevytvářej kompletní fyzikální engine.
 
+Referenční funkce má demonstrovat interpretaci standardizovaných dat.
+
+---
+
+# 21. Independent Terrain Collision Generator
+Integruj do World Tile Editoru generování samostatných colliderů.
+
+Kolizní geometrie nesmí být povinně totožná s vizuální geometrií.
+
+Podporuj:
+
+- Independent collision resolution.
+- Geometric error tolerance.
+- Simplification.
+- Material boundary refinement.
+- Triangle budget.
+- Independent export configuration.
+Zachovej geometrickou kontinuitu sousedních colliderů.
+
+## 21.1 Automatic physical classification
+Každý povrch v Surface Library musí mít možnost odkazovat na fyzikální materiál.
+
+Automatická klasifikace může využít:
+
+- Biome rules.
+- Surface Paint.
+- Control Maps.
+- Roads.
+- Stable dominant material weights.
+Nepoužívej:
+
+- View-dependent POM UV.
+- Camera-dependent LOD.
+- Lighting.
+- Final pixel color.
+- View-dependent shader weights.
+Fyzikální povrch musí být stabilní nezávisle na rendereru.
+
+## 21.2 Boundary refinement
+Umožni zpřesnění kolizní geometrie v okolí fyzikálních materiálových hranic.
+
+Například:
+
+- Grass / road.
+- Mud / rock.
+- Snow / ice.
+- Sand / gravel.
+Definuj:
+
+- Maximum subdivision depth.
+- Minimum triangle size.
+- Maximum triangle count.
+- Boundary error tolerance.
+- Deterministic tie-breaking.
+Zabraň neomezenému růstu geometrie.
+
+## 21.3 Independent physical paint
+Přidej samostatný režim malování fyzikálních povrchů.
+
+Ruční klasifikace má přednost před automatickou, pokud uživatel nezvolí jinak.
+
+Změna vizuálního materiálu nesmí automaticky odstranit ruční fyzikální klasifikaci.
+
+Umožni reset vybrané oblasti na automatické hodnoty.
+
+## 21.4 Collision diagnostics
+World Tile Editor musí zobrazovat:
+
+- Collision wireframe.
+- Physical material colors.
+- Material boundaries.
+- Triangle counts.
+- Geometry error.
+- Surface information under cursor.
+- Physical material identity.
+- Unassigned or unknown materials.
+Umožni samostatné zobrazení vizuální a kolizní geometrie.
+
+---
+
+# 22. World Tile Editor integration
+Rozšiř existující World Tile Editor.
+
+Nevytvářej novou aplikaci ani paralelní renderer bez prokázaného technického důvodu.
+
+Využij existující custom shader infrastrukturu:
+
+`appartus_world_tile/awt/gui/preview_shader.py`
+
+Ověř její aktuální stav.
+
+## 22.1 Renderer architecture
+Uspořádej nové technologie do rozšiřitelných shaderových komponent.
+
+Odděl:
+
+- Parameter binding.
+- Texture binding.
+- Mapping.
+- Control Map evaluation.
+- Parallax evaluation.
+- Height blending.
+- Normal composition.
+- Macro Maps.
+- Detail Maps.
+- Self-shadowing.
+- Diagnostics.
+- Resource budgeting.
+Nepřidávej neudržitelné množství vzájemně nezávislých shader replacements bez společné architektury.
+
+Využij sdílenou referenční matematiku ADM.
+
+## 22.2 Preview modes
+Zachovej a rozšiř:
+
+- Fast Geometry Preview.
+- Visual Material Preview.
+- Detailed Terrain Preview.
+- Multi-surface Preview.
+- Sphere.
+- Plane.
+- Terrain Relief.
 Přidej:
 
-- Legacy Terrain 2.0.0 export.
-- Advanced Terrain export.
-- Explicitní target shader version.
-- Automatickou volbu nové verze při použití nové funkcionality, pokud uživatel tuto možnost zapne.
-Pokud cílový profil nepodporuje některý parametr, nikdy jej tiše neodstraňuj.
+- Control Map Preview.
+- Macro Color Preview.
+- Macro Normal Preview.
+- Final Weight Preview.
+- Material Palette Diagnostics.
+- Physical Surface Preview.
+- Collision Mesh Preview.
+- Displacement Preview.
+Umožni porovnávání jednotlivých materiálových efektů před a po aktivaci.
 
-Informuj uživatele o ztrátě funkcionality nebo odmítni nekompatibilní export podle zvoleného režimu.
+## 22.3 Quality settings
+Zaveď vhodné úrovně:
 
-Zachovej:
+- Fast.
+- Standard.
+- Advanced.
+- Full.
+Uživatel musí mít možnost samostatně vypnout drahé efekty.
 
-- Embedded images.
-- External images.
-- Content hashing.
-- Texture deduplication.
-- Atomic writes.
-- Validation.
-- Shared texture folders.
-- Export Changed.
+Změna preview quality nesmí měnit exportovaná ADM data.
 
-### Tangents
-Aktuální export generuje tangenty pouze tehdy, pokud některý použitý povrch obsahuje normal mapu.
+Nedovol tiché snižování kvality exportu kvůli omezení preview rendereru.
 
-Rozšiř podmínku také na height/parallax funkce, které vyžadují tangent frame.
+## 22.4 Surface Library
+Integruj authoring všech nových vlastností.
 
-Materiál s POM musí mít validní tangent-space frame i bez normal mapy.
+Zachovej současnou práci s:
 
-Ověř winding, normal orientation a tangent handedness.
-
-## 18. Seamless Terrain and LOD
-Zachovej stávající RTIN geometrický systém.
-
-Neměň jeho garantovanou maximální chybu.
-
-Zachovej:
-
-- Shared tile edges.
-- World-space positions.
-- LOD boundaries.
-- Vertex COLOR_1.
-- Biome weights.
-- Surface Noise continuity.
-- Road continuity.
+- Texture sets.
+- Per-map GPU encoding.
+- Material presets.
 - Texture repeat.
-Aktuální export rozděluje triangles do primitives, které obsahují maximálně čtyři povrchy.
+- Surface Noise.
+- Biomes.
+- Roads.
+- Paint data.
+Při editaci jedné vlastnosti nesmí docházet ke ztrátě nesouvisejících hodnot.
 
-Prozkoumej:
+## 22.5 Persistence
+Rozšiř AWTP a material preset formáty verzovaným způsobem.
 
-- `triangle_masks()`
-- `group_masks()`
-- `_slots()`
-- `color1()`
-Height blending nesmí záviset na lokálním pořadí slotů.
+Zachovej načítání všech dosud podporovaných verzí.
 
-Ověř shodu výsledného materiálu v situacích:
+Zachovej relativní cesty.
 
-- Povrch má jiný lokální slot v sousední primitive.
-- Sousední dlaždice mají odlišné surface sets.
-- Sousední dlaždice používají různé LOD.
-- Krajní dlaždice mají odlišné rozměry.
-- Surface Noise zasahuje přes hranici dlaždic.
-- Přechod biomet používá sdílené povrchy.
-- Přechod biomet nemá žádný sdílený povrch.
-- Na hranici jsou více než čtyři relevantní povrchy.
-Prověř zejména UV phase u nepravidelně velkých krajních dlaždic. Nestačí předpokládat, že zaokrouhlení texture repeat automaticky zaručuje všechny potřebné vlastnosti.
+Neznámé vlastnosti nesmí být tiše zahozeny.
 
-Pokud jsou některá omezení přítomná již ve starší implementaci, zdokumentuj je a podle možností oprav.
+Pokud nelze bezpečně interpretovat neznámé reference, uživatele informuj a zabraň destruktivnímu exportu.
 
-Neporušuj geometrii kvůli opravě materiálového efektu.
+---
 
-## 19. Export Changed and Performance
-Rozšiř fingerprinting tak, aby změna následujících hodnot označila pouze příslušné dlaždice jako změněné:
+# 23. Export Changed and dependency tracking
+Rozlišuj nezávislé změny:
 
-- AO image content.
-- AO strength.
-- AO channel.
-- AO invert.
-- Height image content.
-- Height scale.
-- Height bias.
-- Height channel.
-- Height invert.
-- Height blend settings.
-- Parallax settings.
-- Shader version.
-- GPU format configuration.
-Při změně samotného materiálu nevyžaduj přepočet RTIN geometrie ani vertex weights.
+- Visual geometry.
+- Terrain rules.
+- Vertex weights.
+- Control Maps.
+- Macro Maps.
+- Detail Maps.
+- Shader settings.
+- GPU encoding.
+- Physical materials.
+- Collision geometry.
+- Physical paint.
+Změna fyzikálního materiálu nesmí zbytečně přegenerovat visual mesh.
 
-Pokud současný fingerprint systém označuje všechny dlaždice jako změněné při úpravě nepoužitého povrchu, rozšiř jej o správnou závislost na použitých materiálech.
+Změna Macro Color nesmí přegenerovat collider.
 
-Zachovej cache a sdílení textur.
+Změna preview kvality nesmí invalidovat ADM export.
 
-Měř výkon:
+Změna obsahu textury musí invalidovat skutečně dotčené assety.
 
-- Material preview.
-- Texture preparation.
-- Export Changed detection.
-- Export jednoho tile.
-- Export více tiles.
-- CPU memory.
-- GPU memory estimates.
-Neporovnávej nesrovnatelné pracovní zátěže.
+Změna nepoužívaného povrchu nesmí bezdůvodně invalidovat celý svět.
 
-## 20. Blender Integration
-Kompletně rozšiř `adm_blender`.
+Zachovej:
 
-Aktualizuj:
+- Content fingerprints.
+- Selective invalidation.
+- Atomic publication.
+- Validated export.
+- Source-byte preservation.
+Ověř opakovaný export beze změn.
 
-- Core constants.
-- Shader registry loading.
-- Material properties.
-- UI panels.
-- Shader parameter groups.
-- Shader node generation.
-- Shader mathematics.
-- Import.
-- Export.
-- Validation.
-- Material conversion.
-- Texture codecs.
-- Vertex painting.
-- GPU texture preservation.
-Implementuj nové shaderové profily pomocí funkčních Blender node groups.
+---
 
-Sdílej matematiku a node groups tam, kde je to vhodné.
+# 24. Seamless Terrain requirements
+Tato část je kritická.
 
-Zachovej existující COLOR_0 a COLOR_1 kontrakty.
+Ověř kontinuitu:
 
-Height Based Blending musí být skutečnou funkcí node tree.
-
-Používej Non-Color pro všechny datové textury.
-
-Zachovej heightmap bit depth.
-
-Pokud Blender preview nepodporuje plnou POM implementaci, nesmí z tohoto důvodu odstraňovat POM parametry při import/export round-trip.
-
-Transparentně označ preview approximations.
-
-Aktualizuj všechny stávající shader-aware vertex painting nástroje.
-
-## 21. Ostatní komponenty repozitáře
-Proveď repository-wide audit všech shader consumers.
-
-Zahrň:
-
-- ADM Editor.
-- Web editors.
-- Viewers.
-- Material inspectors.
-- CLI.
-- Importers.
-- Exporters.
-- Validators.
-- Reference renderers.
-- SDK.
-- Fixture generators.
-- Documentation generators.
-Nevynechávej komponentu pouze proto, že nebyla uvedena explicitně v zadání.
-
-Pro každou nalezenou komponentu stanov:
-
-- Full support.
-- Partial support.
-- Fallback support.
-- Not applicable.
-Každé omezení zdokumentuj.
-
-Nepodporované vlastnosti nesmí být tiše ztraceny při editaci a opětovném exportu.
-
-Neslibuj plnou podporu shaderu, pokud implementace zobrazuje pouze PBR fallback.
-
-## 22. Registry-driven Architecture
-Shader registry a normativní dokumentace jsou autoritativní.
-
-Nedovol vznik nezávislých verzí shaderových parametrů v jednotlivých nástrojích.
-
-Sdílej:
-
-- Parameter definitions.
-- Parameter types.
-- Default values.
-- Bounds.
-- Texture roles.
-- Shader versions.
-- Capabilities.
-- UI metadata.
-Pokud některý nástroj vyžaduje lokální generovanou registry, zajisti její deterministické generování a CI kontrolu.
-
-Referenční matematika musí být nezávislá na konkrétním rendereru.
-
-## 23. Automatické testování
-Zachovej všechny existující testy.
-
-Především nové testy Surface Noise, Terrain Wizard, Terrain Setup, Export a Pipeline.
-
-Přidej následující skupiny.
-
-### GPU Texture Tests
-
-- R8 DDS a KTX2.
-- R16 DDS a KTX2.
-- BC4 DDS a KTX2.
-- BC5 DDS a KTX2.
-- BC7 DDS a KTX2.
-- Odd texture dimensions.
-- Malé mip levels.
-- Neplatné hlavičky.
-- Neplatné mip chains.
-- Color space validation.
-- External images.
-- Embedded images.
-- Fallback.
-- R16 precision.
-- GPU passthrough.
-Použij nezávislé test vectors nebo ověřené dekodéry.
-
-Netestuj vlastní enkodér pouze vlastním dekodérem.
-
-### Shader Mathematics Tests
-
-- Layer AO.
-- Height scale/bias.
-- Channel selection.
-- Inversion.
-- Missing maps.
-- One-hot masks.
-- Zero masks.
-- Equal heights.
-- Zero-weight layers.
-- Layer permutation invariance.
-- Disabled height blending.
+- Visual geometry.
+- Collision geometry.
+- UV phase.
+- Control Maps.
+- Macro Color.
+- Macro Normal.
+- Anti-tiling.
+- Triplanar.
+- Detail Maps.
+- Height Based Blending.
 - POM.
-- Numerical stability.
-- Backward compatibility.
-
-### World Tile Tests
-
-- AWTP 2/3/4 migration.
-- Nový AWTP round-trip.
-- Material presets round-trip.
-- Surface Noise regression.
-- Surface Noise + Height Based Blending.
-- Roads regression.
-- Biome painting regression.
-- Surface painting regression.
-- Import Material Sets.
-- Missing texture maps.
-- Duplicate names.
-- AO/Height export.
-- Texture passthrough.
-- Tangents with POM without normal map.
-- Export Changed.
-- Different local layer slots.
-- Tile boundaries.
-- Different LOD.
-- Non-uniform edge tiles.
-- More than four surfaces.
-- Geometry error guarantee.
-- Material-only editing without rebuild.
-
-### GUI Tests
-Rozšiř existující GUI testovací infrastrukturu.
-
+- Self-shadowing.
+- True Displacement.
+- Material palette selection.
 Testuj:
 
-- Surface Editor.
-- AO map selection.
-- Height map selection.
-- Shader settings.
-- Surface Noise controls.
-- Material import dialog.
-- Preset save/load.
-- Sphere preview.
-- Plane preview.
-- Terrain relief preview.
-- Multi-surface preview.
-- Project save/load.
-- Export workflow.
-Nestačí testovat existenci widgetu.
+- Stejně velké tiles.
+- Nepravidelné krajní tiles.
+- Různé LOD.
+- Zakřivené povrchy.
+- Rozdílné lokální sloty.
+- Rozdílné primitive grouping.
+- Více než čtyři povrchy.
+- Velké world-space souřadnice.
+- Floating origin.
+- Biome transitions.
+- Roads.
+Zachovej současné RTIN geometrické garance.
 
-Ověř propojení UI, datového modelu, preview a exportu.
+Nepovažuj shodu vertex weights za dostatečný důkaz vizuální kontinuity.
 
-### Blender Tests
+Používej skutečné renderovací testy.
 
-- Shader creation.
-- Node generation.
-- Import/export round-trip.
-- Channel selection.
-- AO.
-- Height blending.
-- COLOR_1 painting.
-- BC4/BC5/BC7 texture handling.
-- R16 precision.
-- Old profile regression.
-- External images.
-- PBR fallback.
-Přidej skutečný bake nebo render test, který ověří Height Based Blending.
+Rozlišuj geometrické, materiálové a kolizní švy.
 
-## 24. Referenční projekty a assety
-Vytvoř vlastní procedurální textury bez závislosti na cizích herních assetech.
+---
 
-Přidej referenční materiály:
+# 25. Blender plugin integration
+Rozšiř existující ADM Blender plugin.
 
-- Rock.
-- Sand.
-- Dirt.
+Integruj:
+
+- Nové extension metadata.
+- Nové shader profiles.
+- Shader Registry.
+- Material authoring.
+- Control Maps.
+- Macro Color.
+- Macro Normal.
+- Anti-tiling.
+- Triplanar.
+- Detail Maps.
+- Per-layer controls.
+- Self-shadowing metadata.
+- Displacement.
+- Physical Surface Registry.
+- Collider material assignment.
+
+## 25.1 Collider authoring
+Umožni:
+
+- Přiřazovat fyzikální materiály celým colliderům.
+- Přiřazovat fyzikální materiály jednotlivým plochám.
+- Zobrazovat surface types barvou.
+- Kontrolovat neplatné reference.
+- Zachovat přiřazení po triangulaci.
+- Importovat World Tile collidery.
+- Exportovat upravené collidery.
+
+## 25.2 Material preview
+Implementuj skutečné Blender node groups tam, kde lze normativní kontrakt reprodukovat.
+
+Existující Blender native POM zůstává známým omezením.
+
+Prozkoumej vhodnou implementaci bez narušení kompatibility Blenderu.
+
+Pokud přesný efekt nelze realizovat, zajisti:
+
+- Zachování všech parametrů.
+- Nejlepší dostupnou funkční aproximaci.
+- Explicitní označení omezení.
+- Ověřený import/export round-trip.
+Nevydávej Bump Mapping za skutečný POM.
+
+Nevydávej AO za Parallax Self-shadowing.
+
+Nevydávej metadata-only podporu za rendererovou konformitu.
+
+## 25.3 Stability
+Zachovej opravy předchozí mise:
+
+- Stable dynamic enums.
+- Profile switching.
+- Inactive parameter preservation.
+- Registration rollback.
+- Deferred migrations.
+- Shader parameter ownership.
+- Bounded test processes.
+Prozkoumej existující dependency-cycle warnings.
+
+Oprav je tam, kde lze bezpečně identifikovat příčinu.
+
+Nevytvářej rozsáhlý refaktor nesouvisejících částí pluginu pouze kvůli odstranění diagnostiky.
+
+---
+
+# 26. Forward compatibility
+Navazuj na existující unknown extension preservation.
+
+Rozlišuj:
+
+- Známá normativní rozšíření.
+- Neznámá volitelná rozšíření.
+- Neznámá povinná rozšíření.
+- Opaque metadata.
+- Známé přemapovatelné reference.
+- Neznámé reference.
+Neznámé povinné capability nesmí být tiše ignorovány.
+
+Opaque JSON lze zachovat, ale bez znalosti jeho schématu nelze automaticky garantovat korektní přemapování všech referencí.
+
+Prozkoumej možnost verzovaného deklarativního popisu referencí rozšíření, pokud je pro tuto misi skutečně potřebný.
+
+Neimplementuj nebezpečné heuristiky, které náhodné číselné hodnoty interpretují jako indexy ADM objektů.
+
+Nevytvářej falešnou garanci plné round-trip kompatibility.
+
+---
+
+# 27. Existing ecosystem integration
+Audituj všechny relevantní existující consumery.
+
+Podle jejich odpovědnosti aktualizuj:
+
+- SDK.
+- CLI.
+- Validators.
+- Reference mathematics.
+- Reference renderers.
+- Existing viewers.
+- Importers.
+- Exporters.
+- Blender plugin.
+- World Tile Editor.
+Pro každou technologii eviduj:
+
+- Full.
+- Partial.
+- Approximation.
+- Fallback.
+- Metadata preservation.
+- Unsupported.
+- Not applicable.
+Neupravuj externí repozitáře.
+
+Nevytvářej závislost ADM na Raven Engine, Echo3D, Unity, Unreal Engine nebo jiném konkrétním enginu.
+
+Nevyžaduj konkrétní renderovací API pro základní konformitu formátu.
+
+---
+
+# 28. Reference assets
+Vytvoř vlastní procedurální materiály.
+
+Nepoužívej proprietární herní assety.
+
+Minimálně:
+
 - Grass.
+- Dry Grass.
+- Forest Soil.
+- Mud.
+- Gravel.
+- Sand.
+- Rock.
+- Snow.
+- Brick.
 - Cobblestone.
-Každý materiál musí obsahovat:
+Podle potřeby vytvoř:
 
 - Albedo.
 - Normal.
 - Roughness.
 - AO.
 - Height.
-Vytvoř:
+- Detail Maps.
+- Macro Maps.
+Zachovej deterministickou generaci testovacích materiálů.
 
-### ADM Advanced Terrain Test Scene
-Ukazuje:
+## 28.1 Advanced Material Showcase
+Vytvoř ADM scénu umožňující izolovat:
 
-- Klasické prolínání.
-- Height Based Blending.
-- Layer AO.
-- Parallax.
+- Classic blending.
+- Height blending.
+- Control Maps.
+- Macro Color.
+- Macro Normal.
+- Anti-tiling.
+- Triplanar.
+- Detail Maps.
 - POM.
-- R8 Height.
-- R16 Height.
-- BC4 Height.
-- BC5 Normal.
-- BC7 Albedo.
+- Self-shadowing.
+- True Displacement.
+Každý efekt musí mít funkční srovnávací variantu.
 
-### Advanced World Tile Test Project
-Funkční `.awtp` projekt obsahující:
+## 28.2 Advanced Terrain Reference World
+Vytvoř přenositelný AWTP projekt.
+
+Musí obsahovat:
 
 - Více sousedních tiles.
-- Minimálně tři LOD.
+- Více geometrických LOD.
+- Nepravidelné krajní tiles.
+- Travnaté pláně.
+- Skalnaté svahy.
+- Hlínu.
+- Bláto.
+- Písek.
+- Sníh.
+- Cesty.
 - Několik biomů.
-- Surface Noise.
-- Height Based Blending.
-- AO.
-- Roads.
-- Sdílené povrchy.
 - Více než čtyři povrchy na úrovni světa.
-Uživatel musí být schopen projekt otevřít, zobrazit, upravit materiály a exportovat ADM bez dodatečné přípravy.
+- Control Maps.
+- Macro Maps.
+- Anti-tiling.
+- Triplanar.
+- Detail Maps.
+- Height Based Blending.
+- POM.
+- Self-shadowing.
+Součástí musí být samostatná kolizní geometrie s fyzikálními materiály.
 
-Přidej assety do fixture katalogu.
+Demonstruj automatické i ruční přiřazování fyzikálních povrchů.
 
-Nevkládej do Git repozitáře nepotřebné velké binární soubory, cizí herní assety ani lokální cache.
+Projekt musí být možné:
 
-## 25. Dokumentace
+1. Zkopírovat mimo repozitář.
+2. Otevřít.
+3. Zobrazit.
+4. Upravit.
+5. Vygenerovat geometrii a collidery.
+6. Exportovat validní ADM.
+Bez ručního opravování cest.
+
+## 28.3 Physical Surface Reference Asset
+Vytvoř samostatný ADM asset s několika fyzikálními povrchy.
+
+Demonstruj rozdílný vizuální a fyzikální materiál.
+
+Přidej referenční surface queries s očekávanými výsledky.
+
+## 28.4 Brick Material Showcase
+Vytvoř kouli a rovinnou plochu demonstrující rozdíl mezi normal mapou, POM, Self-shadowing a skutečným displacementem.
+
+Výsledkem musí být skutečné rendery, nikoliv pouze metadata.
+
+---
+
+# 29. Performance requirements
+ADM musí zůstat vhodný pro real-time rendering.
+
+Nevyžaduj současnou aktivaci všech efektů.
+
+Minimalizuj zbytečné:
+
+- Texture samples.
+- POM iterations.
+- Self-shadowing iterations.
+- Texture bindings.
+- Decoded texture copies.
+- Geometry rebuilds.
+- Shader recompilation.
+- Resource allocation.
+Implementuj bounded resource budgets.
+
+Využij existující caching.
+
+Měř:
+
+- Preview rendering time.
+- Texture preparation time.
+- GPU texture base-level footprint.
+- Odhad nebo skutečnou GPU memory podle dostupnosti měření.
+- Shader resource requirements.
+- Control Map generation.
+- Collision generation.
+- Triangle counts.
+- Export time.
+- Peak process memory.
+- Asset sizes.
+Rozlišuj CPU čas, GPU čas a celkový čas operace.
+
+Nevymýšlej naměřené hodnoty.
+
+Neprezentuj měření jednoho malého projektu jako důkaz škálovatelnosti celého otevřeného světa.
+
+---
+
+# 30. Automated verification
+Implementuj automatické testy všech nových normativních kontraktů.
+
+## Material palettes
+
+- Global material identity.
+- Slot permutation.
+- Shared-edge consistency.
+- Five-surface conflicts.
+- Exact versus approximate export.
+- Mixed LOD.
+- Curved terrain.
+- Strict conflict rejection.
+
+## Control Maps
+
+- Explicit RGBA.
+- Implicit fourth layer.
+- Channel remapping.
+- Multiply.
+- Override.
+- Modulate.
+- Zero weights.
+- Normalization.
+- Filtering.
+- Mipmaps.
+- Tile borders.
+
+## Macro Maps
+
+- Neutral defaults.
+- Linear color blending.
+- Normal combination.
+- Shared world-space sampling.
+- Missing-map fallback.
+
+## Anti-tiling
+
+- Determinism.
+- Consistent layer transforms.
+- Normal orientation.
+- Mip selection.
+- Tile seams.
+- Camera movement.
+
+## Triplanar
+
+- Axis orientation.
+- Projection weights.
+- Normal transformations.
+- Height sampling.
+- Degenerate cases.
+- Combined material effects.
+
+## Self-shadowing
+
+- Flat heightfield.
+- Single obstacle.
+- Multiple obstacles.
+- Opposite light directions.
+- Disabled behavior.
+- Zero strength.
+- Grazing angle.
+- Iteration bounds.
+- Missing heightmap.
+- Direct-light isolation.
+
+## Displacement
+
+- Zero displacement.
+- Physical scale.
+- Reference height.
+- Maximum displacement.
+- Conservative bounds.
+- Normal reconstruction.
+- Tile seams.
+- No double application.
+- No implicit collider modification.
+
+## Physical surfaces
+
+- Standard surface IDs.
+- Custom IDs.
+- Invalid IDs.
+- Unknown-type fallback.
+- Tags.
+- Collider references.
+- Triangle material assignments.
+- Surface queries.
+- Blender round-trip.
+
+## GPU textures
+
+- BC5 core-PBR fallback.
+- Source-byte preservation.
+- Embedded images.
+- External images.
+- R16 precision.
+- Mip chains.
+- Samplers.
+- Explicit re-encoding.
+- Resource limits.
+
+## World Tile
+
+- Legacy projects.
+- New project persistence.
+- Material presets.
+- UI bindings.
+- Control Map generation.
+- Physical paint.
+- Collision simplification.
+- Collision material boundaries.
+- Selective invalidation.
+- Atomic export.
+- Portable reference project.
+- Actual render comparisons.
+
+## Blender
+
+- Actual Blender runtime.
+- Registration.
+- Profile switching.
+- Material authoring.
+- Node generation.
+- Collider assignment.
+- Import/export.
+- Save/reload.
+- Round-trip.
+- Real render or bake tests.
+- World Tile imports.
+Neakceptuj přeskočený test jako důkaz úspěšné verifikace.
+
+---
+
+# 31. Validation and safety
+Audituj nové vstupní a výpočetní hranice.
+
+Minimálně:
+
+- Invalid dimensions.
+- Invalid DDS/KTX2.
+- Corrupt mipmaps.
+- Invalid UV references.
+- NaN and Inf.
+- Invalid enums.
+- Out-of-range weights.
+- Shader iteration limits.
+- Texture allocation limits.
+- Integer overflow.
+- Displacement bounds.
+- Collision triangle budgets.
+- Invalid physical material references.
+- Path traversal.
+- Symbolic links.
+- Atomic export.
+- Resource cleanup.
+Veškeré generátory geometrie a shader loops musí být omezené.
+
+Oprav všechny nalezené řešitelné problémy.
+
+---
+
+# 32. Explicitly out of scope
+Neimplementuj:
+
+- Vegetation distribution.
+- Procedural grass spawning.
+- Tree scattering.
+- Object spawning.
+- Gameplay surface effects.
+- Footstep audio systems.
+- Particle spawning systems.
+- Physics engine.
+- Character controller.
+- Dynamic weather simulation.
+- World streaming runtime.
+- Network replication.
+- Engine-specific GPU culling.
+- Clothing System.
+- PED Wardrobe System.
+- Proprietary Rockstar compatibility.
+ADM poskytuje sémantická data a materiálové vlastnosti.
+
+Engine rozhoduje, jak je použije.
+
+---
+
+# 33. Documentation
 Aktualizuj:
 
+- Main README.
 - ADM Specification.
-- Shader Registry.
 - Extension Registry.
 - Capability Registry.
-- Texture Specification.
-- Shader Profile Documentation.
-- Changelog.
-- README.
-- ADM Editor documentation.
-- World Tile Editor documentation.
-- Blender Plugin documentation.
-- SPEC_GAPS.
-- Conformance documentation.
+- Shader Registry.
+- Physical Surface Registry.
+- Normative profiles.
+- Blender documentation.
+- World Tile documentation.
+- Migration guide.
 - Fixture catalog.
-Přidej kapitolu vysvětlující rozdíl mezi:
+- CHANGELOG.
+- SPEC_GAPS.
+- Conformance requirements.
+- Implementation support matrix.
+Dokumentace musí rozlišovat skutečnou implementaci, normativní podporu, referenční matematiku, aproximaci a nepodporované vlastnosti.
 
-- Surface Noise.
-- COLOR_1 blending.
-- Height Based Blending.
-- Parallax.
-- POM.
-- Geometric terrain heightmap.
-Přidej dokumentaci pro nezávislé engine implementátory.
+---
 
-Definuj přesné algoritmy, nikoliv pouze očekávaný vizuální vzhled.
+# 34. Milestones
 
-Dokumentace musí odpovídat skutečně implementovaným funkcím.
+## M1 – Baseline and architecture audit
 
-## 26. Implementation Milestones
+- Archive previous mission.
+- Verify baseline.
+- Review technical debt.
+- Establish regression baseline.
+- Create persistent mission state.
 
-### M1 – Audit and persistent state
-Prozkoumej aktuální repository.
+## M2 – Terrain palette consistency
 
-Vytvoř kompletní checklist a identifikuj již existující funkcionalitu.
+- Global surface identity.
+- Seam-aware palette generation.
+- Conflict diagnostics.
+- Strict and approximate export.
+- Rendered seam tests.
 
-### M2 – GPU formats
-Rozšiř standard, codecs, validation a testy.
+## M3 – Physical Surface Standard
 
-### M3 – Material and shader contracts
-Implementuj material height extension, AO, Height Based Blending, Parallax a POM contracts.
+- Surface Registry.
+- Physical materials.
+- Semantic tags.
+- Collider assignments.
+- Surface queries.
 
-### M4 – Shared reference implementation
-Implementuj společnou matematiku, registry integration a referenční testy.
+## M4 – Terrain Control Maps
 
-### M5 – World Tile data model
-Rozšiř Surface, MapSlot, TerrainMaterial, project format, presets a fingerprinting.
+- Normative contracts.
+- Reference math.
+- Sampling.
+- Channel semantics.
+- Seam behavior.
 
-### M6 – World Tile GUI and Preview
-Integruj nové mapy, shader settings, multi-surface preview a Material Set Import.
+## M5 – Macro Mapping
 
-Zachovej všechny nově přidané uživatelské funkce.
+- Macro Color.
+- Macro Normal.
+- Shared projection.
+- Reference evaluation.
 
-### M7 – World Tile Export
-Integruj nové shaderové profily, GPU textury, tangents, Export Changed a seam tests.
+## M6 – Advanced texture projection
 
-### M8 – ADM Editor
-Kompletní material authoring, preview a serialization.
+- Anti-tiling.
+- Stochastic sampling.
+- Triplanar.
+- Combined map transformations.
 
-### M9 – Blender Plugin
-Shader nodes, material editing, import/export a round-trip.
+## M7 – Detail Material System
 
-### M10 – Remaining ecosystem
-Aktualizuj všechny další nalezené shader consumers.
+- Detail Maps.
+- Normal Strength.
+- Blend Softness.
+- Porosity.
 
-### M11 – Fixtures and documentation
-Vytvoř referenční ADM assety a funkční AWTP projekt.
+## M8 – Advanced Relief Rendering
 
-### M12 – Full verification
-Spusť kompletní dostupné testy, CI ekvivalenty a build procesy.
+- Parallax Self-shadowing.
+- True Displacement.
+- Material Distance LOD.
 
-Oprav všechny zjištěné regresní chyby.
+## M9 – GPU resource architecture
 
-Po každém milestone automaticky pokračuj dalším.
+- BC5 core-PBR solution.
+- Source preservation.
+- Texture packing.
+- Resource budgeting.
+- Performance.
 
-Milestones slouží jako interní organizační struktura, nikoliv jako body vyžadující potvrzení uživatele.
+## M10 – World Tile physical integration
 
-## 27. Definition of Done
-Mise je dokončena pouze tehdy, pokud:
+- Physical Material Library.
+- Automatic classification.
+- Physical painting.
+- Independent collision generation.
+- Boundary refinement.
+- Collision diagnostics.
 
-- ADM standard normativně definuje nové funkce.
-- GPU formáty mají funkční implementaci.
-- Staré shadery fungují beze změny.
-- Nové shaderové profily jsou v registry.
-- AO funguje samostatně pro každou vrstvu.
-- Height Based Blending funguje skutečně ve shaderu.
-- Parallax a POM odpovídají deklarovaným kontraktům.
-- ADM Editor umožňuje nové funkce vytvářet a editovat.
-- World Tile Editor používá nové funkce v preview.
-- World Tile Editor exportuje nové funkce do ADM.
-- Surface Noise zůstává plně funkční.
-- Nové preview zachovává Sphere, Plane a Terrain Relief.
-- Starší AWTP projekty fungují.
-- Material presets fungují.
-- Roads a painting fungují.
-- Export Changed funguje.
-- Geometrické a LOD garance zůstávají zachovány.
-- Blender plugin podporuje nové funkce a round-trip.
-- Další shader consumers jsou aktualizovány.
-- Referenční assety existují.
-- Referenční AWTP projekt funguje.
-- Dokumentace odpovídá implementaci.
-- Testy prošly nebo jsou skutečné externí blokery explicitně doložené.
-Nepoužívej placeholder implementations.
+## M11 – World Tile visual integration
 
-Nenechávej nefunkční UI prvky.
+- Control Map authoring.
+- Macro Map authoring.
+- Advanced preview.
+- Shader integration.
+- Persistence.
+- Export Changed.
+- ADM export.
 
-Nevynechávej požadavky kvůli velikosti zadání.
+## M12 – Blender and ecosystem
 
-Nesnižuj kvalitu testů kvůli zelenému CI.
+- Blender authoring.
+- Shader nodes.
+- Collider materials.
+- Import/export.
+- Round-trip.
+- Remaining consumers.
+- Support matrix.
 
-Neoznačuj úkol za dokončený pouze na základě úspěšné kompilace.
+## M13 – Reference assets
 
-## 28. Completion audit
-Před ukončením práce znovu načti `.ai/MISSION.md`.
+- Procedural material library.
+- Advanced Terrain Reference World.
+- Material Showcase.
+- Brick Showcase.
+- Physical Surface Reference Asset.
+- Actual renders.
 
-Proveď audit každého požadavku proti `.ai/TASKS.md`.
+## M14 – Full verification and distribution
 
-Zkontroluj skutečnou implementaci, nikoliv pouze checklist.
+- Complete regression suite.
+- Package audits.
+- Renderer tests.
+- Performance measurements.
+- Documentation.
+- Distribution.
+- Final audit.
+Pokračuj mezi milníky automaticky.
 
-Spusť kompletní dostupnou testovací sadu.
+---
 
-Pokud zůstává jakýkoliv splnitelný požadavek nedokončený, pokračuj v implementaci.
+# 35. Build and distribution policy
+Nevytvářej novou distribuční verzi po každé drobné změně.
 
-Závěrečný report musí obsahovat:
+Používej během implementace:
 
-- Seznam upravených komponent.
-- Nové shaderové profily.
-- Nové GPU formáty.
-- Změny ADM standardu.
-- Změny World Tile Editoru.
-- Změny ADM Editoru.
-- Změny Blender pluginu.
-- Zachované existující funkce.
-- Skutečné výsledky testů.
-- Výkonnostní měření, pokud byla provedena.
-- Cesty k referenčním assetům.
-- Cestu k referenčnímu AWTP projektu.
-- Screenshoty nebo rendery funkčních výsledků.
-- Zbývající omezení.
-- Skutečné externí blokery.
-Nezastavuj se u návrhu architektury.
+- Targeted tests.
+- Check-only builds.
+- Temporary candidate packages.
+- Bounded integration tests.
+Release version bump proveď po stabilizaci příslušné distribuce.
 
-Nezastavuj se po jednotlivém milestone.
+Zkontroluj, že balíčky neobsahují:
 
-Proveď kompletní implementaci celé mise.
+- Vnořené staré ZIP archivy.
+- Lokální vývojové soubory.
+- Nepotřebné cache.
+- Proprietární testovací textury.
+- Neplatné absolutní cesty.
+Ověř balíčky mimo vývojový workspace.
+
+Blender extension testuj v izolovaných preferences i izolovaném extension repository.
+
+Nenahrazuj uživateli jeho existující instalaci během automatických testů.
+
+Pokud nejsou dostupné další platformy, zaznamenej přesný rozsah ověření.
+
+Nevydávej Windows-only testy za multiplatformní certifikaci.
+
+---
+
+# 36. Definition of Done
+Mise je dokončena pouze tehdy, když:
+
+1. Nové technologie mají jednoznačné normativní kontrakty.
+2. Historické shader profily zůstávají kompatibilní.
+3. Známé materiálové konflikty mají explicitní a ověřené řešení.
+4. World Tile Editor podporuje authoring nových technologií.
+5. Pokročilé materiály jsou skutečně vizualizovatelné.
+6. Control Maps fungují nezávisle na hustotě geometrie.
+7. Fyzikální materiály jsou nezávislé na vizuálních materiálech.
+8. Collidery lze generovat a editovat samostatně.
+9. Blender plugin podporuje authoring a round-trip.
+10. Unsupported features nejsou tiše zahozeny.
+11. Core-PBR BC5 compatibility má normativní řešení.
+12. Referenční AWTP projekt je přenositelný.
+13. Referenční ADM assety projdou validací.
+14. Jsou doloženy skutečné rendery.
+15. Jsou doloženy seam tests.
+16. Jsou doloženy relevantní performance tests.
+17. Distribuční balíčky jsou funkční.
+18. Dokumentace odpovídá skutečné implementaci.
+19. Všechny zbývající nedostatky jsou explicitně evidovány.
+20. Byl dokončen finální audit původního zadání.
+Pokud je požadavek splnitelný, pokračuj v jeho implementaci.
+
+Pokud je požadavek objektivně blokován, dolož přesný technický důvod.
+
+Neoznačuj neověřené funkce za dokončené.
+
+---
+
+# 37. Final report
+Po dokončení vytvoř:
+
+- `.ai/FINAL_REPORT.md`
+- `.ai/TECHNICAL_DEBT.md`
+FINAL_REPORT musí obsahovat:
+
+- Baseline commit.
+- Výsledný commit nebo přesný stav workspace.
+- Dokončené milníky.
+- Nové extension IDs.
+- Nové capabilities.
+- Nové shader profiles.
+- Physical Surface Registry.
+- Consumer support matrix.
+- Test results.
+- Passed, failed and skipped counts.
+- Render results.
+- Seam results.
+- Collision results.
+- Performance measurements.
+- Package verification.
+- Reference asset locations.
+- Portable AWTP project location.
+- Brick Showcase location.
+- Skutečné screenshoty a rendery.
+- Známá omezení.
+TECHNICAL_DEBT musí obsahovat:
+
+- Příčinu každého zbývajícího problému.
+- Závažnost.
+- Současný workaround.
+- Doporučené budoucí řešení.
+- Odkaz na příslušný zdrojový kód nebo test.
+Před ukončením práce znovu načti celé MISSION.md.
+
+Porovnej každý požadavek se skutečnou implementací.
+
+Znovu otevři předčasně uzavřené checkboxy.
+
+Nezastavuj se u dokumentace.
+
+Nezastavuj se u referenční matematiky.
+
+Nezastavuj se pouze u zelených unit testů.
+
+Cílem je skutečně použitelný, vizuálně pokročilý a ověřený ADM Advanced Terrain & Physical Surface System.
+
+Continue autonomously until completion.

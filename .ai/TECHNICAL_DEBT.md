@@ -1,99 +1,57 @@
-# Technický dluh pro následující misi
+# Technical debt
 
-Tento seznam popisuje přijatá omezení a nedokončenou implementaci. Doporučení
-nejsou povolením rozšiřovat standard v již uzavřené misi.
+This file tracks issues confirmed during the current mission. Verify each
+starting observation before treating it as current debt. Every entry must state
+severity, cause, workaround, proposed fix, and source/test evidence.
 
-## Více než čtyři materiálové vrstvy
+## Starting observations to verify
 
-- **Závažnost:** vysoká; ořez může způsobit viditelné švy na hranicích dlaždic
-  a LOD.
-- **Příčina:** primitiv má čtyři sloty `COLOR_1`; pět současně nenulových
-  povrchů do nich nelze přesně uložit. Různé trojúhelníky mohou vybrat různé
-  čtyři vrstvy.
-- **Současný postup:** export vypisuje počet konfliktů. Omezte aktivní povrchy
-  na čtyři v dotčené oblasti a zkontrolujte výstup v detailním náhledu.
-- **Budoucí řešení:** navrhnout a otestovat konzistentní rozdělení palet
-  a chování hranic; pokud je nutné přesně zobrazit pět vrstev současně,
-  samostatně rozhodnout o kompatibilním kontraktu a jeho governance.
+### Four-layer palette conflicts
+- **Severity:** High; different per-triangle palettes can create visible seams
+  when more than four surfaces have nonzero weights.
+- **Cause:** A four-layer primitive cannot represent arbitrary five-plus
+  simultaneous weights; prior export trimmed per-triangle palettes.
+- **Workaround:** None accepted as final. Do not suppress the existing conflict
+  diagnostic or describe lossy output as seam-free.
+- **Next step:** Reproduce and compare deterministic reduction, regional
+  assignment, boundary refinement, Control Maps and wider profiles with
+  rendered seam tests.
+- **Evidence:** Previous mission `.ai/TECHNICAL_DEBT.md` (archived).
 
-## Core-PBR BC5 fallback
+### Blender standalone core-PBR BC5 fallback
+- **Severity:** High for portable normal-map use.
+- **Cause:** The primary BC5 data and current RGB fallback contract have
+  incompatible channel requirements in the standalone path.
+- **Workaround:** No general workaround is accepted until verified against the
+  exact current exporter and reader behavior.
+- **Next step:** Design and test a versioned, unambiguous representation that
+  retains original BC5 bytes.
+- **Evidence:** Previous mission `.ai/TECHNICAL_DEBT.md` (archived).
 
-- **Závažnost:** vysoká pro přenositelnost normálových map.
-- **Příčina:** BC5 primární textura vyžaduje dvoukanálový fallback, zatímco
-  samostatná core-PBR normála potřebuje rekonstruované RGB. Jedna textura
-  podle současného kontraktu neumí vyjádřit oba požadavky.
-- **Současný postup:** Blender zachová BC5 a varuje před zobrazením fallbacku.
-  U vrstvených materiálů může samostatná shaderová reference držet BC5,
-  zatímco core PBR používá rekonstruované RGB.
-- **Budoucí řešení:** prověřit interoperabilní reprezentaci obou referencí a
-  její náklady; případnou změnu kontraktu projednat samostatně.
+### Preview and renderer limitations
+- **Severity:** Medium; CPU composition and missing Blender POM rendering are
+  not equivalent to shader execution.
+- **Cause:** Existing renderer paths differ in sampling and effect support.
+- **Workaround:** Clearly label approximations and rely only on tested actual
+  shader previews for effects they implement.
+- **Next step:** Extend existing renderers where feasible; verify pixels and
+  report remaining backend limits.
+- **Evidence:** Previous mission closeout and World Tile tests (archived).
 
-## Nativní Blender POM preview
+### Opaque extension references
+- **Severity:** High when editing/re-exporting data with unknown references.
+- **Cause:** Unknown schemas do not identify which values reference ADM objects.
+- **Workaround:** Preserve opaque JSON only where supported and reject unsafe
+  transformations; never guess references from numeric values.
+- **Next step:** Add explicit reference declarations only if justified by
+  current formats and tested consumers.
+- **Evidence:** Previous mission `.ai/TECHNICAL_DEBT.md` (archived).
 
-- **Závažnost:** střední; authoring je zachován, vizuální posouzení v Blenderu
-  není ekvivalentní POM.
-- **Příčina:** Blender preview node tree nevykonává POM ray marching ani
-  odpovídající UV posuny. AO je v náhledu aproximováno.
-- **Současný postup:** Blender zachovává POM parametry a omezení oznamuje.
-  Skutečný POM lze ověřit ve World Tile VTK náhledu nebo referenční vizualizaci.
-- **Budoucí řešení:** ověřit proveditelnost rozšiřitelného Blender rendereru
-  a přidat obrazové testy proti referenční matematice bez vydávání bumpu za POM.
-
-## Opaque extension reference remapping
-
-- **Závažnost:** vysoká při úpravách a opětovném exportu neznámých rozšíření.
-- **Příčina:** bez schématu nelze rozlišit indexy a reference od obyčejných
-  hodnot ani je bezpečně přemapovat. Některá umístění rozšíření a neimportované
-  uzly se obecně nezachovávají.
-- **Současný postup:** Blender uchovává JSON na podporovaných místech, varuje
-  a odmítá některé nejednoznačné transformace. World Tile neznámá shaderová
-  nastavení uchovává v projektu, ale odmítne build a export.
-- **Budoucí řešení:** zavést explicitní schématy a referenční mapování pro
-  známá rozšíření; pro ostatní rozšířit bezztrátové uchování nebo odmítnutí
-  tam, kde nelze zaručit bezpečný výstup.
-
-## Multiplatformní ověření GPU kodeků
-
-- **Závažnost:** vysoká pro vydání mimo ověřené prostředí.
-- **Příčina:** Blender BC7 cesta používá nativní DDS dekodér; byla ověřena
-  pouze na Windows a Blenderu 5.2.3. Úplná nezávislá KTX2 a GPU interoperabilita
-  a všechny povolené dependency resoluce nejsou ověřeny.
-- **Současný postup:** používat otestované Windows prostředí a PNG fallback;
-  nepovažovat výsledky referenčních testů za nezávislou certifikaci.
-- **Budoucí řešení:** spustit nezávislé vektory, načtení a GPU upload na Linuxu
-  a macOS i dalších podporovaných verzích Blenderu/VTK; ověřit dependency
-  graph a zaznamenat přesné platformy a dekodéry.
-
-## Blender dependency-cycle warnings
-
-- **Závažnost:** střední; testy prošly, ale příčina a dopad nejsou uzavřeny.
-- **Příčina:** Blender při některých materiálových a scénových testech
-  detekuje dependency cycles; konkrétní příčina každého cyklu nebyla prokázána.
-- **Současný postup:** zachovat úplné diagnostické logy, testy spouštět
-  samostatně s časovým limitem a varování nepotlačovat.
-- **Budoucí řešení:** izolovat minimální scénu a node graph pro jednotlivé
-  cykly, ověřit vliv na výsledek a výkon a opravit jejich skutečný původ.
-
-## Vícevrstvý náhled bez parallaxu
-
-- **Závažnost:** střední; finální náhled není v tomto režimu skutečnou
-  per-fragment shaderovou implementací height blendingu.
-- **Příčina:** při `parallax_mode = NONE` používá finální vícevrstvý pohled
-  CPU kompozici. Shader se používá při parallaxu/POM a diagnostikách.
-- **Současný postup:** použít detailní terénní shaderový náhled nebo shaderové
-  diagnostiky a brát CPU kompozici a průměrné váhy jako aproximace.
-- **Budoucí řešení:** použít existující vrstvený VTK shader také pro finální
-  náhled bez parallaxu; ověřit reálné pixely, limity texturových jednotek,
-  chybové stavy a výkon bez změny rychlých náhledových režimů.
-
-## Další otevřené položky
-
-- **Závažnost:** střední. Kompletní authoring a round-trip všech nepodporovaných
-  parametrů zůstávají částečné; zachovat původní projekt a respektovat varování
-  či odmítnutí exportu. Doplnit testy a podporu podle dostupných schémat.
-- **Závažnost:** střední. Fixture-specific VTK vizualizace není obecný ADM
-  renderer. Použít ji pouze pro přiloženou scénu; do budoucna ověřit výstup
-  nezávislým rendererem.
-- **Závažnost:** střední. Testovaný dependency graph není úplný lock všech
-  přípustných verzí. Před distribucí dalších sestav ověřit konkrétní instalaci
-  a podle potřeb projektu zavést reprodukovatelný dependency graph.
+### Multiplatform codecs and Blender cycle diagnostics
+- **Severity:** Medium to high depending on release target.
+- **Cause:** Historical verification was Windows-focused; Blender dependency
+  cycles were observed without a confirmed minimal reproducer.
+- **Workaround:** State the tested platform/runtime and preserve diagnostics.
+- **Next step:** Test supported platforms where available; isolate cycle sources
+  before attempting targeted fixes.
+- **Evidence:** Previous mission closeout and test records (archived).

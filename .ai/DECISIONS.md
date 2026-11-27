@@ -1,106 +1,37 @@
 # Mission decisions
 
-Record only decisions verified from repository policy or required to resolve
-implementation ambiguity. Link each decision to its source and tests.
+Record evidence, consequences, compatibility, and tests for each accepted
+decision. Items below are pending investigation unless explicitly marked
+confirmed.
 
-## Pending audit
-- Shader/profile and capability versioning must follow the existing registry,
-  freeze manifest, and development-change governance; inspect those sources
-  before choosing identifiers or versions.
-- New material effects must be opt-in and preserve frozen legacy profiles.
-- Do not claim a renderer supports an effect unless its implementation and tests
-  demonstrate that support; retain unknown metadata through round trips.
+## Confirmed constraints
+- Work on the actual current checkout; never reset to the external audit
+  baseline or discard newer changes.
+- Preserve the previous mission history at `.ai/archive/1f5c763/`.
+- Do not create a standalone ADM Editor. Extend the existing Blender and World
+  Tile authoring applications.
+- Keep frozen shader/profile identities and meanings unchanged. New behavior
+  must be opt-in and versioned.
+- Do not claim renderer support from metadata, reference math, or a skipped
+  test. Verify rendered output where the request requires actual rendering.
+- Treat the pasted attachment as a read-only source; `.ai/MISSION.md` is its
+  working copy.
 
-## Confirmed implementation decisions
-- Keep `ADM-TEX-KTX2-1` and `ADM-TEX-DDS-1` meanings unchanged. Use separate
-  `-2` capabilities for additional formats and select portable fallbacks when
-  a reader only implements v1.
-- Keep shader-only AO/height/parallax settings out of `rules_digest`; include
-  their serialized fields and referenced image content in material fingerprints.
-- Reject advanced World Tile settings with the legacy terrain profile instead
-  of emitting a material that silently loses those settings. Version 2.1.0
-  exports the advanced profile.
-- Expose R8/R16 through a separate scalar codec API instead of routing R16
-  through the uint8 RGBA interface; reject R16 RGBA decoding to avoid silent
-  precision loss.
-- Keep BC7 encoding distinct from parsing and decoding. The decoder uses
-  `texture2ddecoder` when installed; never interpret BC7 blocks as another
-  format, and report a missing decoder dependency explicitly.
-- Add layered AO/height features under the exact additive profile identities
-  `adm.terrain.four_layer@1.1.0/@2.1.0`,
-  `adm.surface.two_layer@1.1.0`, and `adm.pbr.layered@2.1.0`; do not redefine
-  the existing 1.0.0 or 2.0.0 profile schemas.
-- Keep each layer's AO, height, normal, and PBR texture references on the
-  albedo's UV set. A per-layer height map's parallax offset affects that layer's
-  samples, but never changes the already-computed base weights.
-- Implement all ADM Editor requirements in existing authoring tools rather than
-  creating a separate application. The primary targets are the ADM Blender
-  Plugin and Apparatus World Tile Editor; apply relevant work to other existing
-  material and shader consumers.
+## Pending audit and design decisions
+- Compare palette reduction, region assignment, boundary refinement, control
+  maps, wider profiles and texture arrays against actual seam/render fixtures.
+  Choose only after measuring representability, compatibility, cost and error.
+- Determine the correct strict-export behavior and a user-visible definition of
+  approximation before changing export defaults.
+- Audit existing physical material/collider schemas before adding fields or
+  registries; avoid duplicate friction/restitution semantics.
+- Compare versioned BC5 fallback designs and prove primary-byte preservation,
+  sampler/UV retention, core-PBR behavior and layered-shader compatibility.
+- Derive parameter ranges, equations, sampling order, fallbacks and capabilities
+  from explicit contracts and reference tests, not renderer assumptions.
+- Verify VTK/Blender shader-hook behavior and budgets against actual supported
+  runtimes before claiming combinations are supported.
 
-## World Tile preview renderer audit
-
-- The surface preview uses PyVista's VTK PBR actor with separately bound
-  albedo, ORM, normal, and emission textures. The multi-surface final view
-  samples separate layer textures in a VTK shader when parallax is enabled;
-  with mode `NONE`, it uses CPU composition. Its CPU weight views are
-  diagnostic approximations. The terrain inspection view is a separate path.
-- VTK 9.7.2 on Windows exposes fragment and vertex shader replacements,
-  named texture bindings and custom uniforms. An offscreen experiment sampled
-  a separately bound height texture in a custom fragment replacement. Another
-  experiment ray-marched that texture with explicit gradients and observed
-  different UV offsets at frontal and oblique camera angles. This establishes
-  technical feasibility, not application integration or shader conformance.
-- Built-in PBR code samples albedo, ORM, normals and emission separately. Any
-  per-layer POM implementation must shift each of those map samples consistently,
-  retain stable derivatives for ray samples, and handle missing or degenerate
-  tangent frames. The existing CPU-composited multi-surface maps cannot represent
-  independently view-dependent offsets for multiple layers; implementing that
-  path requires per-layer GPU sampling rather than shifting a single composite.
-- VTK shader replacements depend on generated shader hooks and names; guard
-  against version differences with actual render tests and visible failure
-  diagnostics. Keep effect code and texture/uniform binding separate from UI
-  controls so later effects can extend the pipeline. Retain the existing
-  renderer unless concrete evidence proves it unsuitable; the experiment does
-  not justify replacing the backend.
-- The single-surface preview passes its own view-space position through a vertex
-  varying because VTK omits `vertexVC` in some render passes. A derivative-based
-  tangent frame drives the bounded offset, and the same shifted coordinates are
-  substituted into VTK's albedo, ORM, normal, and emission samples. This is
-  tested on VTK 9.7.2; shader-hook compatibility on other versions remains
-  unverified. The UI reports configuration rather
-  than claiming shader compilation succeeded.
-- With parallax enabled, the multi-surface final view binds each layer's
-  original-resolution maps and computes each parallax ray, map sample and
-  height-adjusted weight in the fragment shader. Shader diagnostics inspect
-  per-fragment weights and offsets; the separate CPU weight views and displayed mean weights
-  remain estimates at unshifted UVs. With parallax mode `NONE`, the final view
-  uses CPU-composited maps rather than this shader. Texture-unit exhaustion is
-  reported rather than silently dropping maps; when a Qt context is not yet
-  available, the OpenGL minimum of 16 units is used conservatively.
-- Scalar maps from one layer with matching dimensions share a floating-point
-  RGBA texture. Channel selection and inversion are applied before packing;
-  height occupies red for the POM ray sampler. Differently sized maps remain
-  independent, and no source texture is resampled or modified. The packed
-  allocation counts toward the decoded texture budget before allocation.
-  The reference project's four-layer palettes fit the 16-unit fallback.
-- The VTK layered shader can also read a four-component point-weight attribute
-  from a polydata mapper with scalar coloring disabled. This enables a rendered
-  test of exported `COLOR_1` weights without changing the existing preview
-  controls. Zero total weight selects layer zero, as required by the shader
-  contract. Mapper and weight-array prerequisites are checked explicitly.
-- The opt-in detailed terrain view uses this same shader and the exporter's
-  per-tile palette selection and quantized vertex weights. It retains a separate
-  250,000-triangle budget, while the existing fast albedo bake and geometry
-  views remain available for larger selections. The UI reports incompatible
-  material data, texture-unit exhaustion, and over-four-surface conflicts.
-  Palette actors share texture objects within each redraw; the cache is discarded
-  on redraw so changed source files are reloaded. This avoids duplicate texture
-  allocations. Unique decoded texture base levels are capped at 512 MiB per
-  redraw; transient decoding allocations, renderer overhead, and GPU mipmaps
-  are not included in that estimate.
-- Five simultaneously nonzero surface weights at a shared vertex cannot all
-  fit in a four-layer primitive. A rendered synthetic POM example confirms
-  that the exporter's per-triangle trimming can choose different palettes and
-  introduce a visible seam. The exporter reports the conflict count; this is a
-  format and export-policy limitation, not evidence that VTK needs replacement.
+## Evidence log
+No new implementation or contract decisions are approved yet. Add references to
+the exact source, fixture and test when decisions are resolved.
