@@ -20,7 +20,7 @@ from .. import texturing
 from ..adm_export import Cancelled as ExportCancelled
 from ..adm_export import ExportSettings, changed_tiles, export_tiles, rules_outdated
 from ..heightmap import Heightmap, load_heightmap, preview
-from ..material import PAINT_AUTO, Band, TerrainMaterial
+from ..material import IMAGE_FILTER, PAINT_AUTO, Band, MacroColorSettings, TerrainMaterial
 from ..pipeline import (BuildParams, Cancelled, build, estimate_memory, fit_material, height_transform, hillshade,
                         load_manifest, tile_grid)
 from ..project import PROJECT_EXTENSION, PROJECT_FILTER, Project, load_project
@@ -467,6 +467,22 @@ class MainWindow(QMainWindow):
         self.external_control_map_channels = [QComboBox() for _ in range(4)]
         for channel, combo in zip("RGBA", self.external_control_map_channels):
             combo.setToolTip(f"Stable terrain surface ID assigned to the {channel} mask channel")
+        self.macro_color_path = QLineEdit()
+        self.macro_color_path.setPlaceholderText("Optional RGB/RGBA Macro Color image")
+        self.browse_macro_color = QPushButton("…")
+        self.browse_macro_color.setFixedWidth(32)
+        self.macro_color_projection = QComboBox()
+        self.macro_color_projection.addItem("Local UV", "LOCAL_UV")
+        self.macro_color_projection.addItem("Shared world XZ", "SHARED_WORLD_XZ")
+        self.macro_color_blend_mode = QComboBox()
+        self.macro_color_blend_mode.addItem("Multiply", "MULTIPLY")
+        self.macro_color_blend_mode.addItem("Tint", "TINT")
+        self.macro_color_blend_mode.addItem("Lerp", "LERP")
+        self.macro_color_strength = _spin(0.0, 1.0, 1.0, 0.05, 3)
+        self.macro_color_layer_influence = [_spin(0.0, 1.0, 1.0, 0.05, 3) for _ in range(4)]
+        self.macro_color_scale = [_spin(-1_000_000, 1_000_000, 1.0, 0.01, 4) for _ in range(2)]
+        self.macro_color_offset = [_spin(-1_000_000_000, 1_000_000_000, 0.0, 0.1, 4) for _ in range(2)]
+        self.macro_color_origin = [_spin(-1_000_000_000, 1_000_000_000, 0.0, 0.1, 4) for _ in range(2)]
         self.gpu_container = QComboBox()
         self.gpu_container.addItem("DDS", "DDS")
         self.gpu_container.addItem("KTX2", "KTX2")
@@ -601,6 +617,23 @@ class MainWindow(QMainWindow):
         form.addRow("External RGBA map", row)
         for channel, combo in zip("RGBA", self.external_control_map_channels):
             form.addRow(f"{channel} surface", combo)
+        row = QHBoxLayout()
+        row.addWidget(self.macro_color_path)
+        row.addWidget(self.browse_macro_color)
+        form.addRow("Macro Color image", row)
+        form.addRow("Macro projection", self.macro_color_projection)
+        form.addRow("Macro blend mode", self.macro_color_blend_mode)
+        form.addRow("Macro strength", self.macro_color_strength)
+        for index, box in enumerate(self.macro_color_layer_influence, 1):
+            box.setToolTip(f"Influence for local terrain layer {index} in each four-layer palette")
+            form.addRow(f"Layer {index} influence", box)
+        for label, boxes in (("Macro scale", self.macro_color_scale),
+                             ("Macro offset", self.macro_color_offset),
+                             ("World XZ origin", self.macro_color_origin)):
+            row = QHBoxLayout()
+            row.addWidget(boxes[0])
+            row.addWidget(boxes[1])
+            form.addRow(label, row)
         form.addRow("GPU container", self.gpu_container)
         form.addRow("GPU encoding", self.gpu_encoding)
         form.addRow("Palette conflicts", self.palette_conflict_policy)
@@ -805,6 +838,7 @@ class MainWindow(QMainWindow):
 
         self.browse_export.clicked.connect(self._choose_export)
         self.browse_external_control_map.clicked.connect(self._choose_external_control_map)
+        self.browse_macro_color.clicked.connect(self._choose_macro_color)
         self.export_changed.clicked.connect(lambda: self._start_export("changed"))
         self.export_selected.clicked.connect(lambda: self._start_export("selected"))
         self.export_all.clicked.connect(lambda: self._start_export("all"))
@@ -832,6 +866,20 @@ class MainWindow(QMainWindow):
             combo.currentIndexChanged.connect(self._material_changed)
         self.external_control_map_path.textChanged.connect(self._mark_dirty)
         self.external_control_map_path.textChanged.connect(self._material_changed)
+        self.macro_color_path.textChanged.connect(self._mark_dirty)
+        self.macro_color_path.textChanged.connect(self._material_changed)
+        self.macro_color_path.textChanged.connect(self._schedule_check)
+        macro_signals = [self.macro_color_projection.currentIndexChanged,
+                         self.macro_color_blend_mode.currentIndexChanged,
+                         self.macro_color_strength.valueChanged]
+        macro_signals.extend(box.valueChanged for box in (
+            self.macro_color_layer_influence + self.macro_color_scale
+            + self.macro_color_offset + self.macro_color_origin))
+        for signal in macro_signals:
+            signal.connect(self._mark_dirty)
+            signal.connect(self._material_changed)
+            signal.connect(self._schedule_check)
+        self.macro_color_projection.currentIndexChanged.connect(self._update_macro_origin_enabled)
 
         # Anything stored in the project marks it modified; the tile selection does not.
         for box in (self.spacing, self.height_min, self.height_max, self.threads, self.texture_error,
@@ -840,6 +888,7 @@ class MainWindow(QMainWindow):
             box.valueChanged.connect(self._mark_dirty)
         for box in (self.remap, self.embed, self.validate, self.convert_gpu_sources):
             box.toggled.connect(self._mark_dirty)
+        self._update_macro_origin_enabled()
         for edit in (self.lods, self.out_dir, self.export_dir):
             edit.textChanged.connect(self._mark_dirty)
         for combo in (self.origin, self.tile_cells, self.gpu_container, self.gpu_encoding,
@@ -877,7 +926,48 @@ class MainWindow(QMainWindow):
         material.external_control_map_path = self.external_control_map_path.text().strip()
         surface_ids = [str(combo.currentData() or "") for combo in self.external_control_map_channels]
         material.external_control_map_surface_ids = surface_ids if any(surface_ids) else []
+        material.macro_color = MacroColorSettings(
+            path=self.macro_color_path.text().strip(),
+            projection=self.macro_color_projection.currentData(),
+            blend_mode=self.macro_color_blend_mode.currentData(),
+            strength=self.macro_color_strength.value(),
+            layer_influence=[box.value() for box in self.macro_color_layer_influence],
+            scale=[box.value() for box in self.macro_color_scale],
+            offset=[box.value() for box in self.macro_color_offset],
+            origin=[box.value() for box in self.macro_color_origin],
+        )
         return material
+
+    def _refresh_macro_color_widgets(self, material: TerrainMaterial) -> None:
+        macro = material.macro_color
+        self.macro_color_path.blockSignals(True)
+        self.macro_color_path.setText(macro.path)
+        self.macro_color_path.blockSignals(False)
+        for combo, value in ((self.macro_color_projection, macro.projection),
+                             (self.macro_color_blend_mode, macro.blend_mode)):
+            combo.blockSignals(True)
+            index = combo.findData(value)
+            if index < 0:
+                combo.addItem(f"Unsupported: {value}", value)
+                index = combo.count() - 1
+            combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+        for box, value in (
+            [(self.macro_color_strength, macro.strength)]
+            + list(zip(self.macro_color_layer_influence, macro.layer_influence))
+            + list(zip(self.macro_color_scale, macro.scale))
+            + list(zip(self.macro_color_offset, macro.offset))
+            + list(zip(self.macro_color_origin, macro.origin))
+        ):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self._update_macro_origin_enabled()
+
+    def _update_macro_origin_enabled(self, *_args) -> None:
+        enabled = self.macro_color_projection.currentData() == "SHARED_WORLD_XZ"
+        for box in self.macro_color_origin:
+            box.setEnabled(enabled)
 
     def _refresh_external_control_map_channels(self, material: TerrainMaterial) -> None:
         ids = material.external_control_map_surface_ids
@@ -1017,6 +1107,12 @@ class MainWindow(QMainWindow):
                 index = combo.findData(surface.id)
                 if index >= 0:
                     combo.setCurrentIndex(index)
+
+    def _choose_macro_color(self) -> None:
+        start = self.macro_color_path.text().strip() or self.settings.value("last_dir", "")
+        path, _ = QFileDialog.getOpenFileName(self, "Open Macro Color image", start, IMAGE_FILTER)
+        if path:
+            self.macro_color_path.setText(path)
 
     def _load_source(self, path: str, raw_size: tuple[int, int] | None = None) -> None:
         material = self._material()
@@ -2076,6 +2172,7 @@ class MainWindow(QMainWindow):
         self.external_control_map_path.setText(project.material.external_control_map_path)
         self.external_control_map_path.blockSignals(False)
         self._refresh_external_control_map_channels(project.material)
+        self._refresh_macro_color_widgets(project.material)
         self._material_changed()
         self.export_dir.setText(export.out_dir)
         self.lod_distance.setValue(export.lod_distance_m)

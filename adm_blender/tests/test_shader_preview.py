@@ -126,7 +126,7 @@ def preview_bsdf(mat, materials):
 def main():
     adm_blender.register()
     from adm_blender.core import constants as K
-    from adm_blender.core.material_math import height_blend_weights
+    from adm_blender.core.material_math import height_blend_weights, terrain_macro_color
     from adm_blender.blender import materials as M
     from adm_blender.blender import shader_preview as SP
     from adm_blender.blender.export_adm import ExportOptions, ModelExporter
@@ -688,6 +688,56 @@ def main():
     alb = bake(plane, mat, "DIFFUSE")
     check(close(alb[8, 8, :3], (0.9, 0.1, 0.1)),
           f"TERRAIN_4@2.0.0: zero weights fall back to layer 0 ({alb[8, 8, :3]})")
+
+    # Macro Color is an sRGB albedo-only operation over the existing normalized weights.
+    layer_colors = ((0.9, 0.1, 0.1), (0.1, 0.9, 0.1), (0.1, 0.1, 0.9), (0.5, 0.5, 0.1))
+    for index, color in enumerate(layer_colors):
+        set_param(mat, f"layer{index}_base_color", (*color, 1.0))
+    color1.data.foreach_set("color", np.tile((0.0, 1.0, 0.0, 0.0), len(color1.data)).ravel())
+    macro_sample = (0.5, 0.25, 0.75, 0.5)
+    macro_image = image("macro_color_srgb", lambda x, y: macro_sample, non_color=False)
+    mat.adm.macro_color_enabled = True
+    mat.adm.macro_color_image = macro_image
+    mat.adm.macro_color_projection = "LOCAL_UV"
+    mat.adm.macro_color_tex_coord = 0
+    mat.adm.macro_color_strength = 0.4
+    mat.adm.macro_color_layer_influence = (1.0, 0.5, 1.0, 1.0)
+    saved_weights = np.array([tuple(item.color) for item in color1.data], dtype=np.float32)
+    for blend_mode in ("MULTIPLY", "TINT", "LERP"):
+        mat.adm.macro_color_blend_mode = blend_mode
+        M.refresh_shader_preview(mat)
+        bsdf = preview_bsdf(mat, M)
+        pixel = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
+        expected = terrain_macro_color(
+            layer_colors, (0.0, 1.0, 0.0, 0.0), macro_sample, blend_mode, 0.4,
+            (1.0, 0.5, 1.0, 1.0),
+        )
+        check(close(pixel, expected), f"TERRAIN_4: {blend_mode} Macro Color matches linear reference ({pixel})")
+    check(np.array_equal(saved_weights, np.array([tuple(item.color) for item in color1.data], dtype=np.float32)),
+          "TERRAIN_4: Macro Color does not modify COLOR_1 terrain weights")
+    split_macro = image(
+        "macro_color_projection",
+        lambda x, y: (1.0, 0.0, 0.0, 1.0) if x < RES // 2 else (0.0, 0.0, 1.0, 1.0),
+        non_color=False,
+    )
+    mat.adm.macro_color_image = split_macro
+    mat.adm.macro_color_blend_mode = "LERP"
+    mat.adm.macro_color_strength = 1.0
+    mat.adm.macro_color_layer_influence = (1.0, 1.0, 1.0, 1.0)
+    mat.adm.macro_color_projection = "LOCAL_UV"
+    M.refresh_shader_preview(mat)
+    bsdf = preview_bsdf(mat, M)
+    local = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(close(local[8, 3, :3], (1.0, 0.0, 0.0)) and close(local[8, 12, :3], (0.0, 0.0, 1.0)),
+          f"TERRAIN_4: Macro Color samples local UV ({local[8, 3, :3]}, {local[8, 12, :3]})")
+    mat.adm.macro_color_projection = "SHARED_WORLD_XZ"
+    mat.adm.macro_color_origin = (-1.0, 0.0)
+    bpy.context.view_layer.update()
+    bsdf = preview_bsdf(mat, M)
+    world = bake_socket(plane, mat, bsdf.inputs["Base Color"].links[0].from_socket)
+    check(close(world[8, 3, :3], (1.0, 0.0, 0.0)) and close(world[8, 12, :3], (0.0, 0.0, 1.0)),
+          f"TERRAIN_4: Macro Color samples shared world XZ ({world[8, 3, :3]}, {world[8, 12, :3]})")
+    mat.adm.macro_color_enabled = False
 
     # Terrain scalar maps use their own UV set, layer tiling and normalized layer weights.
     for version in ("1.0.0", K.SHADER_PROFILE_V2):

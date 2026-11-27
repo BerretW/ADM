@@ -463,6 +463,26 @@ def _control_map_enabled_update(self, context):
     _preview_update(self, context)
 
 
+def _macro_color_image_update(self, context):
+    source = self.macro_color_image
+    self.macro_color_preview_image = None
+    if source is not None:
+        preview = source.copy()
+        preview.name = f"{source.name} ADM Macro Color"
+        preview.colorspace_settings.name = "sRGB"
+        self.macro_color_preview_image = preview
+    _preview_update(self, context)
+
+
+def _macro_color_enabled_update(self, context):
+    if self.macro_color_enabled:
+        for index in range(4):
+            name = f"macro_color_surface_{index}"
+            if not getattr(self, name):
+                setattr(self, name, f"surface.{uuid4().hex}")
+    _preview_update(self, context)
+
+
 def _official_shader_versions(shader):
     shader_id = K.OFFICIAL_SHADER_IDS.get(shader)
     if shader_id is None:
@@ -736,6 +756,39 @@ class ADMMaterialProps(PropertyGroup):
                                        description="Linear four-channel terrain weight texture")
     control_map_preview_image: PointerProperty(type=bpy.types.Image, options={"HIDDEN"})
     control_map_sampler_json: StringProperty(options={"HIDDEN"})
+    macro_color_enabled: BoolProperty(
+        name="Enable Macro Color", default=False, update=_macro_color_enabled_update,
+        description="Apply a shared sRGB color map to terrain albedo; this never changes weights or colliders",
+    )
+    macro_color_image: PointerProperty(name="Macro Color Image", type=bpy.types.Image,
+                                       update=_macro_color_image_update)
+    macro_color_preview_image: PointerProperty(type=bpy.types.Image, options={"HIDDEN"})
+    macro_color_projection: EnumProperty(name="Projection", default="LOCAL_UV", items=[
+        ("LOCAL_UV", "Local UV", "Sample the selected UV set"),
+        ("SHARED_WORLD_XZ", "Shared World XZ", "Sample world-space XZ coordinates"),
+    ], update=_preview_update)
+    macro_color_blend_mode: EnumProperty(name="Blend Mode", default="MULTIPLY", items=[
+        ("MULTIPLY", "Multiply", "Multiply albedo by the macro color"),
+        ("TINT", "Tint", "Multiply albedo using macro alpha as coverage"),
+        ("LERP", "Lerp", "Interpolate albedo toward macro color using alpha coverage"),
+    ], update=_preview_update)
+    macro_color_strength: FloatProperty(name="Strength", default=1.0, min=0.0, max=1.0,
+                                        update=_preview_update)
+    macro_color_layer_influence: FloatVectorProperty(
+        name="Layer Influence", size=4, default=(1.0, 1.0, 1.0, 1.0), min=0.0, max=1.0,
+        update=_preview_update)
+    macro_color_scale: FloatVectorProperty(name="Scale", size=2, default=(1.0, 1.0),
+                                           min=-1e6, max=1e6, update=_preview_update)
+    macro_color_offset: FloatVectorProperty(name="Offset", size=2, default=(0.0, 0.0),
+                                            min=-1e9, max=1e9, update=_preview_update)
+    macro_color_origin: FloatVectorProperty(name="World XZ Origin", size=2, default=(0.0, 0.0),
+                                            min=-1e9, max=1e9, update=_preview_update)
+    macro_color_tex_coord: IntProperty(name="UV Map", min=0, max=1, update=_preview_update)
+    macro_color_surface_0: StringProperty(name="Layer 1 Surface ID")
+    macro_color_surface_1: StringProperty(name="Layer 2 Surface ID")
+    macro_color_surface_2: StringProperty(name="Layer 3 Surface ID")
+    macro_color_surface_3: StringProperty(name="Layer 4 Surface ID")
+    macro_color_sampler_json: StringProperty(options={"HIDDEN"})
     layers_required: BoolProperty(name="Require Layered Rendering",
                                   description="List ADM_material_layers_v1 under extensionsRequired")
     vertex_tint_palette: PointerProperty(name="Tint Palette", type=bpy.types.Image, update=_vertex_palette_update)

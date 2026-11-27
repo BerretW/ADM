@@ -23,6 +23,8 @@ MATERIAL_HEIGHT_IMAGE = "_adm_material_height_image"
 MATERIAL_HEIGHT_SAMPLER = "_adm_material_height_sampler_json"
 MATERIAL_CONTROL_MAP_DATA = "_adm_terrain_control_map_json"
 MATERIAL_CONTROL_MAP_SAMPLER = "_adm_terrain_control_map_sampler_json"
+MATERIAL_MACRO_COLOR_DATA = "_adm_terrain_macro_color_json"
+MATERIAL_MACRO_COLOR_SAMPLER = "_adm_terrain_macro_color_sampler_json"
 MATERIAL_UNKNOWN_EXTENSIONS = "_adm_unknown_material_extensions_json"
 MATERIAL_TERRAIN_SURFACE = "_adm_terrain_surface_json"
 MATERIAL_UNKNOWN_SHADER = "_adm_unknown_shader_json"
@@ -720,7 +722,8 @@ class MaterialExporter:
                 self.extensions_used.update(unknown)
                 self.warn(f"material '{mat.name}': unknown material extensions are preserved, "
                           "but their internal references cannot be remapped")
-        if MATERIAL_TERRAIN_SURFACE in mat or mat.adm.control_map_enabled:
+        macro_color_active = (MATERIAL_MACRO_COLOR_DATA in mat or mat.adm.macro_color_enabled)
+        if MATERIAL_TERRAIN_SURFACE in mat or mat.adm.control_map_enabled or macro_color_active:
             try:
                 terrain_surface = json.loads(mat.get(MATERIAL_TERRAIN_SURFACE, '{"version":"1.0.0"}'))
                 if not isinstance(terrain_surface, dict):
@@ -732,6 +735,14 @@ class MaterialExporter:
                             getattr(mat.adm, f"control_map_surface_{index}") for index in range(4)
                         ],
                     }
+                elif macro_color_active:
+                    surface_ids = terrain_surface.get("surfaceIds")
+                    if not isinstance(surface_ids, list) or len(surface_ids) != 4:
+                        surface_ids = [
+                            getattr(mat.adm, f"macro_color_surface_{index}") for index in range(4)
+                        ]
+                    terrain_surface["version"] = "1.0.0"
+                    terrain_surface["surfaceIds"] = surface_ids
             except (TypeError, ValueError) as exc:
                 raise ShaderExportError(
                     f"material '{mat.name}': cannot preserve terrain surface identities: {exc}") from exc
@@ -822,6 +833,52 @@ class MaterialExporter:
             for preserved in (control_map, texture_ref, sampler):
                 if preserved and preserved.get("extensions"):
                     self.extensions_used.update(preserved["extensions"])
+        if macro_color_active:
+            try:
+                props = mat.adm
+                image = props.macro_color_image
+                if not isinstance(image, bpy.types.Image):
+                    raise ValueError("Macro Color image is missing")
+                sampler = json.loads(mat.get(MATERIAL_MACRO_COLOR_SAMPLER, "null"))
+                if sampler is not None and not isinstance(sampler, dict):
+                    raise ValueError("invalid Macro Color texture sampler")
+                texture_ref = {"index": 0}
+                if props.macro_color_projection == "LOCAL_UV":
+                    texture_ref["texCoord"] = int(props.macro_color_tex_coord)
+                macro_color = {
+                    "version": "1.0.0",
+                    "texture": texture_ref,
+                    "projection": props.macro_color_projection,
+                    "blendMode": props.macro_color_blend_mode,
+                    "strength": float(props.macro_color_strength),
+                    "layerInfluence": list(props.macro_color_layer_influence),
+                    "scale": list(props.macro_color_scale),
+                    "offset": list(props.macro_color_offset),
+                }
+                if props.macro_color_projection == "SHARED_WORLD_XZ":
+                    macro_color["origin"] = list(props.macro_color_origin)
+                elif props.macro_color_projection != "LOCAL_UV":
+                    raise ValueError("unsupported Macro Color projection")
+                sampler_index = None
+                if sampler is not None:
+                    sampler_key = ("preserved", json.dumps(sampler, sort_keys=True, ensure_ascii=False))
+                    if sampler_key not in self._sampler_cache:
+                        self.samplers.append(sampler)
+                        self._sampler_cache[sampler_key] = len(self.samplers) - 1
+                    sampler_index = self._sampler_cache[sampler_key]
+                    if isinstance(sampler.get("extensions"), dict):
+                        self.extensions_used.update(sampler["extensions"])
+                image_entry = self._add_image(self._image_key(image, True), image.name, image, True)
+                texture_ref["index"] = self._texture(image_entry, sampler_index)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ShaderExportError(f"material '{mat.name}': cannot export terrain Macro Color: {exc}") from exc
+            out.setdefault("extensions", {})[K.TERRAIN_MACRO_COLOR_EXT] = macro_color
+            self.extensions_used.add(K.TERRAIN_MACRO_COLOR_EXT)
+            self.extensions_required.add(K.TERRAIN_MACRO_COLOR_EXT)
+            if macro_color_active:
+                for preserved in (macro_color, texture_ref, sampler):
+                    if preserved and preserved.get("extensions"):
+                        self.extensions_used.update(preserved["extensions"])
         if self.vertex_controls:
             p = mat.adm
             vc = {"parameters": {
@@ -1717,6 +1774,29 @@ def build_material(m, resolve_texture, resolve_normal_texture):
         mat[MATERIAL_CONTROL_MAP_DATA] = json.dumps(
             control_map, ensure_ascii=False, allow_nan=False)
         mat[MATERIAL_CONTROL_MAP_SAMPLER] = json.dumps(sampler, ensure_ascii=False, allow_nan=False)
+    macro_color = (m.get("extensions") or {}).get(K.TERRAIN_MACRO_COLOR_EXT)
+    if macro_color is not None:
+        image, sampler = resolve_texture(macro_color["texture"])
+        if image is None:
+            missing_textures.append(macro_color["texture"])
+        props = mat.adm
+        props.macro_color_projection = macro_color["projection"]
+        props.macro_color_blend_mode = macro_color["blendMode"]
+        props.macro_color_strength = macro_color.get("strength", 1.0)
+        props.macro_color_layer_influence = macro_color.get("layerInfluence", [1.0] * 4)
+        props.macro_color_scale = macro_color.get("scale", [1.0, 1.0])
+        props.macro_color_offset = macro_color.get("offset", [0.0, 0.0])
+        props.macro_color_origin = macro_color.get("origin", [0.0, 0.0])
+        props.macro_color_tex_coord = macro_color["texture"].get("texCoord", 0)
+        surface_ids = terrain_surface.get("surfaceIds", []) if isinstance(terrain_surface, dict) else []
+        for index in range(4):
+            setattr(props, f"macro_color_surface_{index}",
+                    surface_ids[index] if index < len(surface_ids) else "")
+        props.macro_color_image = image
+        props.macro_color_sampler_json = json.dumps(sampler, ensure_ascii=False, allow_nan=False)
+        mat[MATERIAL_MACRO_COLOR_DATA] = json.dumps(macro_color, ensure_ascii=False, allow_nan=False)
+        mat[MATERIAL_MACRO_COLOR_SAMPLER] = json.dumps(sampler, ensure_ascii=False, allow_nan=False)
+        props.macro_color_enabled = True
     def _resolve_texture(ref):
         image, sampler = resolve_texture(ref)
         if image is None:

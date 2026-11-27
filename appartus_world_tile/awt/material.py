@@ -63,6 +63,113 @@ class MapSlot:
 
 
 @dataclass
+class MacroColorSettings:
+    """A shared Macro Color overlay applied to each local terrain layer."""
+
+    path: str = ""
+    projection: str = "LOCAL_UV"
+    blend_mode: str = "MULTIPLY"
+    strength: float = 1.0
+    layer_influence: list[float] = field(default_factory=lambda: [1.0] * 4)
+    scale: list[float] = field(default_factory=lambda: [1.0, 1.0])
+    offset: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    origin: list[float] = field(default_factory=lambda: [0.0, 0.0])
+
+    def to_dict(self, base_dir: str | None) -> dict:
+        path = self.path
+        if path and base_dir is not None:
+            try:
+                path = os.path.relpath(path, base_dir).replace("\\", "/")
+            except ValueError:
+                pass
+        return {
+            "path": path,
+            "projection": self.projection,
+            "blend_mode": self.blend_mode,
+            "strength": self.strength,
+            "layer_influence": list(self.layer_influence),
+            "scale": list(self.scale),
+            "offset": list(self.offset),
+            "origin": list(self.origin),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, base_dir: str | None) -> "MacroColorSettings":
+        if not isinstance(data, dict):
+            raise ValueError("Macro Color settings must be an object")
+        path = data.get("path", "")
+        if not isinstance(path, str):
+            raise ValueError("Macro Color path must be a string")
+        if path and base_dir is not None and not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(base_dir, path))
+        result = cls(
+            path=path,
+            projection=data.get("projection", "LOCAL_UV"),
+            blend_mode=data.get("blend_mode", "MULTIPLY"),
+            strength=data.get("strength", 1.0),
+            layer_influence=data.get("layer_influence", [1.0] * 4),
+            scale=data.get("scale", [1.0, 1.0]),
+            offset=data.get("offset", [0.0, 0.0]),
+            origin=data.get("origin", [0.0, 0.0]),
+        )
+        result.validate_settings()
+        return result
+
+    def validate_settings(self) -> None:
+        if not isinstance(self.path, str):
+            raise ValueError("Macro Color path must be a string")
+        if self.projection not in ("LOCAL_UV", "SHARED_WORLD_XZ"):
+            raise ValueError("Macro Color projection must be LOCAL_UV or SHARED_WORLD_XZ")
+        if self.blend_mode not in ("MULTIPLY", "TINT", "LERP"):
+            raise ValueError("Macro Color blend mode must be MULTIPLY, TINT or LERP")
+        vectors = (
+            (self.layer_influence, 4, 0.0, 1.0, "layer influence"),
+            (self.scale, 2, -1_000_000.0, 1_000_000.0, "scale"),
+            (self.offset, 2, -1_000_000_000.0, 1_000_000_000.0, "offset"),
+            (self.origin, 2, -1_000_000_000.0, 1_000_000_000.0, "origin"),
+        )
+        for values, length, low, high, label in vectors:
+            if (not isinstance(values, (list, tuple)) or len(values) != length
+                    or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                           or not math.isfinite(value) or not low <= value <= high for value in values)):
+                raise ValueError(f"Macro Color {label} must contain {length} finite values in range")
+        if all(value == 0.0 for value in self.scale):
+            raise ValueError("Macro Color scale must not be [0, 0]")
+        if isinstance(self.strength, bool) or not isinstance(self.strength, (int, float)) \
+                or not math.isfinite(self.strength) or not 0.0 <= self.strength <= 1.0:
+            raise ValueError("Macro Color strength must be finite and in 0..1")
+
+    def validate(self) -> None:
+        self.validate_settings()
+        if self.path:
+            if not os.path.isfile(self.path):
+                raise ValueError(f"Macro Color texture not found: {self.path}")
+            from PIL import Image
+
+            with open(self.path, "rb") as handle:
+                signature = handle.read(12)
+            if signature[:4] == b"DDS " or signature == b"\xabKTX 20\xbb\r\n\x1a\n":
+                from .adm_export import _core
+
+                _core()
+                from adm_blender.core import gputex
+
+                with open(self.path, "rb") as handle:
+                    source = handle.read(MAX_TEXTURE_BYTES + 1)
+                try:
+                    info = gputex.parse(source, gputex.mime_of(source), strict=True)
+                except gputex.GpuTextureError:
+                    info = None
+                if info is not None and not info["srgb"]:
+                    raise ValueError("Macro Color GPU textures must use an sRGB format")
+            prepared = prepare_texture(self.path)
+            with Image.open(io.BytesIO(prepared.data)) as image:
+                image.load()
+                if len(image.getbands()) < 3:
+                    raise ValueError("Macro Color texture must provide at least three color channels")
+
+
+@dataclass
 class Surface:
     name: str
     color: list[int] = field(default_factory=lambda: [255, 255, 255])  # sRGB tint, multiplies albedo
@@ -261,6 +368,7 @@ class TerrainMaterial:
     unknown_terrain_shader_settings: dict = field(default_factory=dict, repr=False)
     external_control_map_path: str = ""
     external_control_map_surface_ids: list[str] = field(default_factory=list)
+    macro_color: MacroColorSettings = field(default_factory=MacroColorSettings)
 
     # ------------------------------------------------------------ lookups
     def surface_names(self) -> list[str]:
@@ -284,6 +392,8 @@ class TerrainMaterial:
             for path in surface.textures():
                 if path not in seen:
                     seen.append(path)
+        if self.macro_color.path and self.macro_color.path not in seen:
+            seen.append(self.macro_color.path)
         return seen
 
     # --------------------------------------------------------- editing
@@ -431,6 +541,8 @@ class TerrainMaterial:
         if (not all(isinstance(ident, str) and ident.strip() for ident in surface_ids)
                 or len(set(surface_ids)) != len(surface_ids)):
             raise ValueError("Surface IDs must be unique and not empty")
+        if self.macro_color.path and len(surface_ids) < 4:
+            raise ValueError("Macro Color requires at least four surfaces to provide four stable local IDs")
         for ident in surface_ids:
             try:
                 encoded_length = len(ident.encode("utf-8"))
@@ -468,6 +580,7 @@ class TerrainMaterial:
 
     def validate(self) -> None:
         self.validate_rules()
+        self.macro_color.validate()
         for surface in self.surfaces:
             if (not isinstance(surface.gpu_encodings, dict) or
                     any(name not in TEXTURE_MAPS or value not in GPU_ENCODINGS
@@ -540,6 +653,8 @@ class TerrainMaterial:
         """Changes whenever the look of exported tiles changes, including texture files."""
         selected = self.surfaces if surfaces is None else surfaces
         paths = dict.fromkeys(path for surface in selected for path in surface.textures())
+        if self.macro_color.path:
+            paths.setdefault(self.macro_color.path, None)
         hashes = texture_hashes if texture_hashes is not None else {}
         for path in paths:
             if path not in hashes:
@@ -561,6 +676,8 @@ class TerrainMaterial:
         data = {"surfaces": surface_data,
                 "uv_scale": self.uv_scale(tile_size_m, selected), "double_sided": self.double_sided,
                 "files": {path: hashes[path] for path in paths}}
+        if self.macro_color.path:
+            data["macro_color"] = self.macro_color.to_dict(None)
         if surfaces is not None or self.has_advanced_shader_features():
             data["terrain_shader"] = {
                     "version": self.terrain_shader_version,
@@ -629,6 +746,8 @@ class TerrainMaterial:
                 "path": path,
                 "surface_ids": list(self.external_control_map_surface_ids),
             }
+        if self.macro_color != MacroColorSettings():
+            data["macro_color"] = self.macro_color.to_dict(base_dir)
         return data
 
     @classmethod
@@ -645,6 +764,9 @@ class TerrainMaterial:
                            invert=bool(value.get("invert", False)))
 
         material = cls()
+        raw_macro_color = data.get("macro_color")
+        if raw_macro_color is not None:
+            material.macro_color = MacroColorSettings.from_dict(raw_macro_color, base_dir)
         raw_control_map = data.get("external_control_map")
         if raw_control_map is not None:
             if not isinstance(raw_control_map, dict):

@@ -134,11 +134,20 @@ design, metadata-only support, or skipped test does not count as completion.
       tile, and LOD; label them as input data, not shader-composed results.
 - [x] Render adjacent external-mask Control Map tiles at magnified and
       minified scales and measure the shared-edge pixel difference.
-- [ ] Diagnose shader-composed final weights and verify source-rule seams,
-      mip/border continuity, parallax, and cross-reader output.
-- [ ] Macro Color: author/import color maps and preserve image/source bytes.
-- [ ] Macro Color: render neutral/enabled previews and verify collision geometry
-      remains unchanged.
+- [x] Render adjacent source-rule Control Map tiles at magnified and minified
+      scales and measure the shared-edge pixel difference.
+- [ ] Diagnose shader-composed final weights and verify mip/border continuity,
+      parallax at tile edges, and cross-reader output.
+- [x] Macro Color: author/import color maps; persist source path and settings in
+      AWTP v15, fingerprint content, and preserve PNG fallbacks and compatible
+      GPU source bytes.
+- [x] Macro Color: export the required extension with four stable local IDs,
+      sRGB image handling, and portable fallback references.
+- [x] Macro Color: render neutral/enabled local and shared-world previews for
+      all blend modes; verify exported weights and collision assignments stay
+      unchanged.
+- [ ] Macro Color: verify mip/gutter continuity at tile borders, parallax
+      ordering, and cross-reader output.
 - [ ] Macro Normal: author/import BC5 and portable fallback data and preserve
       source bytes.
 - [ ] Macro Normal: render neutral/enabled previews and verify collision

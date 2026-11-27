@@ -163,9 +163,6 @@ class ModelImporter:
         if K.MATERIAL_HEIGHT_EXT in self.doc.get("extensionsRequired", []):
             raise ImportError_(f"{K.MATERIAL_HEIGHT_EXT} is required but its effect is not supported by Blender",
                                report)
-        if K.TERRAIN_MACRO_COLOR_EXT in self.doc.get("extensionsRequired", []):
-            raise ImportError_(f"{K.TERRAIN_MACRO_COLOR_EXT} is required but its renderer is not supported by "
-                               "Blender yet", report)
         if K.TERRAIN_MACRO_NORMAL_EXT in self.doc.get("extensionsRequired", []):
             raise ImportError_(f"{K.TERRAIN_MACRO_NORMAL_EXT} is required but its renderer is not supported by "
                                "Blender yet", report)

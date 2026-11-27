@@ -439,6 +439,25 @@ cross-seam RGB difference remains below 8/255 and its 95th percentile below
 external-mask path and the tested VTK scales; source-rule seam behavior,
 cross-reader filtering, and parallax-at-border remain open.
 
-The complete World Tile test suite passes 166 tests after the new export
-diagnostics and rendered seam coverage. Five pre-existing PyVista future
-warnings remain. No release build or package was produced.
+Source-rule seams now also have a VTK rendered regression. It builds adjacent
+tiles with a softened painted transition and verifies median RGB discontinuity
+below 8/255 and 95th percentile below 20/255 at magnified and minified views.
+The complete World Tile test suite passes 167 tests with five pre-existing
+PyVista future warnings. Blender parity, seam behavior under per-layer
+parallax/mip selection, and shader-composed final-weight diagnostics remain
+open. No release build or package was produced.
+
+World Tile now authors Macro Color image paths, projection, blend mode,
+strength, per-layer influence, scale, offset, and shared-world origin in the
+export UI. AWTP v15 persists the settings and relative path; source content
+participates in export fingerprinting. Export emits required
+`ADM_terrain_macro_color_v1` data, pads palettes to four stable IDs with
+zero-weight unused slots, validates sRGB GPU sources, and preserves compatible
+GPU bytes plus PNG fallback bytes. The Detailed VTK preview samples local UV
+or asset-space XZ coordinates before per-layer parallax and applies the
+Multiply, Tint, and Lerp equations to albedo only. Focused tests confirm neutral
+and enabled renders, unchanged `COLOR_1` weights and collider assignments, and
+project round-trip. The full World Tile suite passes 171 tests with five
+existing PyVista future warnings. Blender authoring/rendering and Macro Color
+tile-edge mip/gutter and cross-reader conformance remain open. No release build
+or package was produced.

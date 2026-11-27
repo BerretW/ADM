@@ -1458,6 +1458,29 @@ def draw_material(lay, context, mat):
             control_map.label(text="Linear weights affect visual blending only, not collider assignments",
                               icon="INFO")
 
+    if p.shader_key() in K.TERRAIN_MACRO_COLOR_PROFILES or p.macro_color_enabled:
+        macro_color = lay.box()
+        macro_color.label(text="Terrain Macro Color", icon="IMAGE_DATA")
+        macro_color.prop(p, "macro_color_enabled")
+        if p.macro_color_enabled:
+            macro_color.template_ID(p, "macro_color_image", new="image.new", open="image.open")
+            macro_color.prop(p, "macro_color_projection")
+            macro_color.prop(p, "macro_color_blend_mode")
+            macro_color.prop(p, "macro_color_strength")
+            macro_color.prop(p, "macro_color_layer_influence")
+            macro_color.prop(p, "macro_color_scale")
+            macro_color.prop(p, "macro_color_offset")
+            if p.macro_color_projection == "LOCAL_UV":
+                macro_color.prop(p, "macro_color_tex_coord")
+            else:
+                macro_color.prop(p, "macro_color_origin")
+            if p.macro_color_image is None:
+                macro_color.label(text="Choose an sRGB image to render and export Macro Color", icon="ERROR")
+            if p.shader_key() not in K.TERRAIN_MACRO_COLOR_PROFILES:
+                macro_color.label(text="The active shader profile cannot preview Macro Color", icon="ERROR")
+            macro_color.label(text="Changes albedo only; weights and collider assignments stay unchanged",
+                              icon="INFO")
+
     controls = lay.box()
     controls.label(text="ADM Vertex Control", icon="COLOR")
     controls.label(text="Serialized when Export > Vertex Controls is enabled", icon="INFO")

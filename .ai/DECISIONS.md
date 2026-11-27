@@ -209,7 +209,7 @@ confirmed.
   The wider M2 comparison of palette reduction, boundary refinement, Control
   Maps, wider profiles, and arrays remains open.
 
-### Terrain Macro Color contract (M4 contract adopted; consumers pending)
+### Terrain Macro Color contract (M4 contract adopted; World Tile partial)
 - Apply the map after per-layer linear albedo sampling and final Control Map/
   height weights, before weighted layer combination. Support local UV and
   shared world-XZ projection; parallax must not shift macro coordinates.
@@ -225,9 +225,16 @@ confirmed.
 - Evidence: `adm-standard/extensions/ADM_terrain_macro_color_v1.md`,
   `adm_blender/core/material_math.py`, the validator, and independent vectors
   in `adm-standard/fixtures/expectations/terrain_macro_color_v1.json`.
-- Consequences: Blender rejects required Macro Color data; World Tile and
-  Blender render/authoring support remain incomplete. Filtering, mip/border
-  continuity, and actual renderer output remain unverified.
+- Consequences: World Tile stores the map path and settings in AWTP v15,
+  fingerprints the source, authors local/shared projection and blend controls,
+  and exports the required extension with four stable IDs. When a palette has
+  fewer than four active layers, the exporter pads its local IDs
+  deterministically while keeping unused weight channels zero. The Detailed
+  VTK preview renders both projections and all blend modes; regression tests
+  confirm neutral behavior and unchanged exported weights and collider
+  assignments. Blender still rejects required Macro Color data. Tile-edge
+  mip/gutter continuity, parallax ordering, and cross-reader output remain
+  unverified.
 
 ### M2 palette policy with future Control Maps (architectural decision confirmed)
 - Preserve four local visual slots and their stable global surface-ID mapping

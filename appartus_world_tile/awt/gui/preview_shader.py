@@ -155,18 +155,22 @@ def _height_samples(slot: MapSlot) -> np.ndarray:
     return 1.0 - samples if slot.invert else samples
 
 
-def _install_view_position(shader):
+def _install_view_position(shader, asset_position=False):
     shader.AddVertexShaderReplacement(
         "//VTK::Camera::Dec", True, "//VTK::Camera::Dec\nuniform mat4 MCVCMatrix;", False)
     shader.AddVertexShaderReplacement(
         "uniform mat4 MCVCMatrix;", False,
         "#ifndef ADM_MCVC_MATRIX_DECLARED\n#define ADM_MCVC_MATRIX_DECLARED\n"
         "uniform mat4 MCVCMatrix;\n#endif", True)
+    declarations = "//VTK::PositionVC::Dec\nout vec3 admPositionVC;"
+    if asset_position:
+        declarations += "\nout vec3 admAssetPosition;"
+    shader.AddVertexShaderReplacement("//VTK::PositionVC::Dec", True, declarations, False)
+    implementation = "//VTK::PositionVC::Impl\nadmPositionVC = (MCVCMatrix * vertexMC).xyz;"
+    if asset_position:
+        implementation += "\nadmAssetPosition = vertexMC.xyz;"
     shader.AddVertexShaderReplacement(
-        "//VTK::PositionVC::Dec", True, "//VTK::PositionVC::Dec\nout vec3 admPositionVC;", False)
-    shader.AddVertexShaderReplacement(
-        "//VTK::PositionVC::Impl", True,
-        "//VTK::PositionVC::Impl\nadmPositionVC = (MCVCMatrix * vertexMC).xyz;", False)
+        "//VTK::PositionVC::Impl", True, implementation, False)
 
 
 def install_parallax(actor, pv, surface, material):
@@ -298,6 +302,10 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
             raise ValueError("Control Map preview needs a four-channel 8-bit image from 2 to 4096 pixels per side")
     if diagnostic is not None and diagnostic[0] == "control" and control_map_pixels is None:
         raise ValueError("Control Map channel diagnostics require a Control Map image")
+    macro = material.macro_color
+    macro_enabled = bool(macro.path)
+    if macro_enabled:
+        macro.validate()
 
     textures = {}
     lines = [_LAYER_FRAME]
@@ -397,6 +405,21 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
             "vec4 admControlWeights = textureGrad(admControlMap, admBaseUv, admBaseDx, admBaseDy);",
             "float admBaseWeightSum = dot(admControlWeights, vec4(1.0));",
         ]
+    if macro_enabled:
+        color_map("admMacroColor", macro.path)
+        if macro.projection == "LOCAL_UV":
+            macro_source = "admBaseUv"
+        elif macro.projection == "SHARED_WORLD_XZ":
+            macro_source = f"(admAssetPosition.xz - vec2({number(macro.origin[0])}, {number(macro.origin[1])}))"
+        else:
+            raise ValueError(f"Unknown Macro Color projection: {macro.projection}")
+        lines += [
+            f"vec2 admMacroUv = {macro_source} * vec2({number(macro.scale[0])}, "
+            f"{number(macro.scale[1])}) + vec2({number(macro.offset[0])}, {number(macro.offset[1])});",
+            "vec2 admMacroDx = dFdx(admMacroUv);",
+            "vec2 admMacroDy = dFdy(admMacroUv);",
+            "vec4 admMacroSample = textureGrad(admMacroColor, admMacroUv, admMacroDx, admMacroDy);",
+        ]
 
     total = sum(weights)
     mode = {"NONE": 0, "PARALLAX": 1, "PARALLAX_OCCLUSION": 2}[material.parallax_mode]
@@ -474,6 +497,19 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
     lines.append("float admWeightSum = " + " + ".join(f"admWeight{i}" for i in range(count)) + ";")
     for i in range(count):
         lines.append(f"admWeight{i} /= admWeightSum;")
+    if macro_enabled:
+        if macro.blend_mode not in ("MULTIPLY", "TINT", "LERP"):
+            raise ValueError(f"Unknown Macro Color blend mode: {macro.blend_mode}")
+        for i in range(count):
+            factor = number(float(macro.strength) * float(macro.layer_influence[i]))
+            if macro.blend_mode == "MULTIPLY":
+                lines.append(f"admAlbedo{i} *= mix(vec3(1.0), admMacroSample.rgb, {factor});")
+            elif macro.blend_mode == "TINT":
+                lines.append(f"admAlbedo{i} *= mix(vec3(1.0), admMacroSample.rgb, "
+                             f"{factor} * admMacroSample.a);")
+            else:
+                lines.append(f"admAlbedo{i} = mix(admAlbedo{i}, admMacroSample.rgb, "
+                             f"{factor} * admMacroSample.a);")
     lines += ["vec3 admMixedAlbedo = vec3(0.0);", "vec3 admMixedNormal = vec3(0.0);",
               "vec3 admMixedEmission = vec3(0.0);", "vec3 admMixedOrm = vec3(0.0);"]
     for i in range(count):
@@ -486,7 +522,7 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
     for name, texture in textures.items():
         actor.prop.SetTexture(name, texture)
     shader = actor.GetShaderProperty()
-    _install_view_position(shader)
+    _install_view_position(shader, asset_position=macro_enabled and macro.projection == "SHARED_WORLD_XZ")
     if vertex_weights is not None:
         from vtkmodules.vtkCommonDataModel import vtkDataObject
 
@@ -499,9 +535,12 @@ def install_layered_preview(actor, pv, surfaces, weights, material, *, height_bl
             "//VTK::Color::Impl", True, "//VTK::Color::Impl\nadmWeightsVC = admWeightsMC;", False)
         shader.AddFragmentShaderReplacement(
             "//VTK::Color::Dec", True, "//VTK::Color::Dec\nin vec4 admWeightsVC;", False)
+    position_inputs = "in vec3 admPositionVC;"
+    if macro_enabled and macro.projection == "SHARED_WORLD_XZ":
+        position_inputs += "\nin vec3 admAssetPosition;"
     shader.AddFragmentShaderReplacement(
         "//VTK::PositionVC::Dec", True,
-        "//VTK::PositionVC::Dec\nin vec3 admPositionVC;\n" + _LAYER_FUNCTIONS, False)
+        "//VTK::PositionVC::Dec\n" + position_inputs + "\n" + _LAYER_FUNCTIONS, False)
     shader.AddFragmentShaderReplacement("//VTK::UniformFlow::Impl", True, "\n".join(lines), False)
     expressions = {"albedoTex": "vec4(admMixedAlbedo, 1.0)",
                    "materialTex": "vec4(admMixedOrm, 1.0)",

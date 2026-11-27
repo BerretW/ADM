@@ -615,7 +615,7 @@ def main():
         assert control_doc["materials"][0]["extensions"][K.TERRAIN_CONTROL_MAP_EXT]["texture"]["index"] == \
             ref["index"]
 
-        print("PHASE reject required terrain Macro Color", flush=True)
+        print("PHASE import/export required terrain Macro Color", flush=True)
         macro_doc = copy.deepcopy(control_doc)
         macro_material = macro_doc["materials"][0]
         macro_material["extensions"].pop(K.TERRAIN_CONTROL_MAP_EXT)
@@ -644,14 +644,65 @@ def main():
         macro_path = os.path.join(folder, "required_macro_color.adm")
         with open(macro_path, "wb") as stream:
             stream.write(macro_fixture)
-        before = (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))
-        try:
-            ModelImporter(bpy.context, macro_path, ImportOptions()).run()
-        except ImportError_ as exc:
-            assert K.TERRAIN_MACRO_COLOR_EXT in str(exc) and "required" in str(exc)
-        else:
-            raise AssertionError("Required unsupported terrain Macro Color was accepted")
-        assert before == (len(bpy.data.objects), len(bpy.data.materials), len(bpy.data.images))
+        macro_root = ModelImporter(bpy.context, macro_path, ImportOptions()).run()
+        macro_blender_material = next(
+            material for material in bpy.data.materials
+            if material.get(M.MATERIAL_MACRO_COLOR_DATA)
+        )
+        assert macro_blender_material.adm.macro_color_enabled
+        assert macro_blender_material.adm.macro_color_projection == "LOCAL_UV"
+        assert macro_blender_material.adm.macro_color_image is not None
+        assert macro_blender_material.adm.macro_color_preview_image is not None
+        assert macro_blender_material.adm.macro_color_preview_image.colorspace_settings.name == "sRGB"
+        macro_preview_nodes = [
+            node for node in macro_blender_material.node_tree.nodes
+            if node.name.startswith("ADM Preview")
+        ]
+        assert any(node.bl_idname == "ShaderNodeTexImage" and node.image ==
+                   macro_blender_material.adm.macro_color_preview_image for node in macro_preview_nodes)
+        macro_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
+        macro_encoded, macro_export_report = macro_exporter.export()
+        assert macro_export_report.ok, macro_export_report.errors
+        macro_exported, _ = read_container(macro_encoded, K.ADM_MAGIC)
+        exported_macro = macro_exported["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]
+        assert K.TERRAIN_MACRO_COLOR_EXT in macro_exported["extensionsRequired"]
+        assert exported_macro["projection"] == "LOCAL_UV"
+        assert exported_macro["texture"]["texCoord"] == 0
+        assert exported_macro["texture"]["index"] < len(macro_exported["textures"])
+        assert macro_exported["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] == \
+            macro_doc["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"]
+        macro_blender_material.adm.macro_color_blend_mode = "TINT"
+        macro_blender_material.adm.macro_color_strength = 0.6
+        macro_blender_material.adm.macro_color_surface_0 = "surface.macro-color-roundtrip"
+        edited_macro_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
+        edited_macro_encoded, edited_macro_report = edited_macro_exporter.export()
+        assert edited_macro_report.ok, edited_macro_report.errors
+        edited_macro, _ = read_container(edited_macro_encoded, K.ADM_MAGIC)
+        edited_macro_ext = edited_macro["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]
+        assert edited_macro_ext["blendMode"] == "TINT"
+        assert edited_macro_ext["strength"] == 0.6
+        assert edited_macro["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"][0] == \
+            "surface.macro-color-roundtrip"
+        macro_blend_path = os.path.join(folder, "macro_color.blend")
+        macro_root_name = macro_root.name
+        macro_material_name = macro_blender_material.name
+        bpy.ops.wm.save_as_mainfile(filepath=macro_blend_path)
+        bpy.ops.wm.open_mainfile(filepath=macro_blend_path)
+        macro_root = bpy.data.objects[macro_root_name]
+        macro_blender_material = bpy.data.materials[macro_material_name]
+        assert macro_blender_material.adm.macro_color_enabled
+        assert macro_blender_material.adm.macro_color_blend_mode == "TINT"
+        assert macro_blender_material.adm.macro_color_strength == 0.6
+        assert macro_blender_material.adm.macro_color_image is not None
+        assert macro_blender_material.adm.macro_color_preview_image is not None
+        reloaded_macro_exporter = ModelExporter(bpy.context, macro_root, ExportOptions())
+        reloaded_macro_encoded, reloaded_macro_report = reloaded_macro_exporter.export()
+        assert reloaded_macro_report.ok, reloaded_macro_report.errors
+        reloaded_macro, _ = read_container(reloaded_macro_encoded, K.ADM_MAGIC)
+        reloaded_macro_ext = reloaded_macro["materials"][0]["extensions"][K.TERRAIN_MACRO_COLOR_EXT]
+        assert reloaded_macro_ext["blendMode"] == "TINT"
+        assert reloaded_macro_ext["strength"] == 0.6
+        assert reloaded_macro_ext["texture"]["index"] < len(reloaded_macro["textures"])
 
         print("PHASE reject required terrain Macro Normal", flush=True)
         normal_doc = copy.deepcopy(macro_doc)

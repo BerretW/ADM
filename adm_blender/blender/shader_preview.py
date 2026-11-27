@@ -18,8 +18,8 @@ import bpy
 
 from ..core import constants as K
 from .materials import (
-    MATERIAL_CONTROL_MAP_DATA, MATERIAL_CONTROL_MAP_SAMPLER, PREVIEW_PREFIX, UV_NAMES, _from,
-    material_output, normal_map_node, principled_of, slot_texture_node,
+    MATERIAL_CONTROL_MAP_DATA, MATERIAL_CONTROL_MAP_SAMPLER, MATERIAL_MACRO_COLOR_SAMPLER,
+    PREVIEW_PREFIX, UV_NAMES, _from, material_output, normal_map_node, principled_of, slot_texture_node,
 )
 
 APPROXIMATE = frozenset({"SKIN", "FUR", "FABRIC"})
@@ -481,6 +481,7 @@ def _rock(g):
 def _terrain(g):
     b = g.bsdf()
     control_map_data = _control_map_config(g)
+    macro_color_data = _macro_color_config(g)
     mask = g.tex("blend_mask") if control_map_data is None else None
     if g.a.shader == "TWO_LAYER":
         blend = g.math("MINIMUM", g.math("MAXIMUM", g.red(mask), 0.0), 1.0) if mask else 0.0
@@ -580,6 +581,8 @@ def _terrain(g):
         if t is not None:
             base = g.vmath("MULTIPLY", base, t.outputs["Color"])
             balpha = g.math("MULTIPLY", balpha, t.outputs["Alpha"])
+        if macro_color_data is not None:
+            base = _macro_color_apply(g, base, i, macro_color_data)
         albedo = acc(albedo, wvec(i, base))
         alpha = acc(alpha, g.math("MULTIPLY", w[i], balpha))
         for prop in ("metallic", "roughness"):
@@ -735,6 +738,75 @@ def _control_map_weights(g, vertex_weights, data):
     else:
         raise ValueError(f"material '{g.mat.name}' has unsupported Control Map mode {mode!r}")
     return normalize(weights)
+
+
+def _macro_color_config(g):
+    props = g.a
+    if not props.macro_color_enabled:
+        return None
+    image = props.macro_color_preview_image or props.macro_color_image
+    if image is None:
+        return None
+    if props.macro_color_projection not in ("LOCAL_UV", "SHARED_WORLD_XZ"):
+        raise ValueError(f"material '{g.mat.name}' has unsupported Macro Color projection "
+                         f"{props.macro_color_projection!r}")
+    if props.macro_color_blend_mode not in ("MULTIPLY", "TINT", "LERP"):
+        raise ValueError(f"material '{g.mat.name}' has unsupported Macro Color blend mode "
+                         f"{props.macro_color_blend_mode!r}")
+    try:
+        sampler = json.loads(g.mat.get(MATERIAL_MACRO_COLOR_SAMPLER, "null")) or {}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"material '{g.mat.name}' has invalid Macro Color sampler metadata") from exc
+    if not isinstance(sampler, dict):
+        raise ValueError(f"material '{g.mat.name}' has invalid Macro Color sampler metadata")
+    if sampler.get("wrapS", "REPEAT") != sampler.get("wrapT", "REPEAT"):
+        g.mat["_adm_macro_color_preview_fallback"] = "Blender uses one wrap mode for both texture axes"
+    elif "_adm_macro_color_preview_fallback" in g.mat:
+        del g.mat["_adm_macro_color_preview_fallback"]
+    return {
+        "image": image,
+        "projection": props.macro_color_projection,
+        "blend_mode": props.macro_color_blend_mode,
+        "strength": float(props.macro_color_strength),
+        "layer_influence": tuple(props.macro_color_layer_influence),
+        "scale": tuple(props.macro_color_scale),
+        "offset": tuple(props.macro_color_offset),
+        "origin": tuple(props.macro_color_origin),
+        "tex_coord": int(props.macro_color_tex_coord),
+        "wrap": sampler.get("wrapS", "REPEAT"),
+    }
+
+
+def _macro_color_apply(g, base, layer_index, data):
+    if layer_index >= len(data["layer_influence"]):
+        return base
+    if data["projection"] == "SHARED_WORLD_XZ":
+        geometry = g.new("ShaderNodeNewGeometry", "Macro Color World Position")
+        position = g.separate(geometry.outputs["Position"])
+        uv = g.combine((
+            g.math("SUBTRACT", position[0], data["origin"][0]),
+            g.math("SUBTRACT", position[2], data["origin"][1]),
+            0.0,
+        ))
+    else:
+        uv = g.uv(data["tex_coord"])
+    uv = g.vmath("MULTIPLY_ADD", uv, (data["scale"][0], data["scale"][1], 1.0),
+                 (data["offset"][0], data["offset"][1], 0.0))
+    texture = g.new("ShaderNodeTexImage", "Macro Color")
+    texture.image = data["image"]
+    texture.interpolation = "Linear"
+    texture.extension = {"CLAMP_TO_EDGE": "EXTEND", "MIRRORED_REPEAT": "MIRROR"}.get(data["wrap"], "REPEAT")
+    g.link(uv, texture.inputs["Vector"])
+    amount = data["strength"] * data["layer_influence"][layer_index]
+    if data["blend_mode"] != "MULTIPLY":
+        amount = g.math("MULTIPLY", amount, texture.outputs["Alpha"])
+    if data["blend_mode"] == "LERP":
+        return g.mix("RGBA", base, texture.outputs["Color"], amount)
+    factor = g.vmath(
+        "MULTIPLY_ADD", texture.outputs["Color"], (amount, amount, amount),
+        (1.0 - amount, 1.0 - amount, 1.0 - amount),
+    )
+    return g.vmath("MULTIPLY", base, factor)
 
 
 def _thin_fresnel(g, b, tint_a, tint_b, transparency, ior, base_alpha):

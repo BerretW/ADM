@@ -25,8 +25,9 @@ severity, cause, workaround, proposed fix, and source/test evidence.
   source-rule tile borders and cross-reader filtering parity. Export diagnostics
   now report palette conflicts by LOD and tile/LOD, plus exact emitted
   `COLOR_1` input means by stable ID across tiles/LODs; they do not yet
-  aggregate final rendered weights. A VTK render regression verifies external
-  mask seam pixels at magnified and minified scales only. World Tile now imports
+  aggregate final rendered weights. VTK render regressions now verify external-
+  mask and source-rule seam pixels at magnified and minified scales; parallax-
+  at-border and cross-reader seam parity remain unverified. World Tile now imports
   bounded external RGBA masks, persists their paths and stable-ID channel
   mapping in AWTP v14, and uses them in export and the Detailed preview.
   External image bytes remain external to the project file.
@@ -77,15 +78,14 @@ severity, cause, workaround, proposed fix, and source/test evidence.
 - **Severity:** High for assets that require the macro effect.
 - **Cause:** `ADM_terrain_macro_color_v1@1.0.0` has a normative contract,
   reference color/coordinate math, profile/image/color-space/sampler
-  validation, and independent vectors, but neither World Tile nor Blender
-  renders or authors it. Filtered mip/border continuity has no renderer
-  evidence.
-- **Workaround:** Blender rejects required Macro Color data before scene
-  mutation. Do not treat metadata or reference math as renderer support.
-- **Next step:** Implement World Tile authoring, import, persistence, shader
-  sampling, preview, and export; then implement and test Blender metadata and
-  rendering support. Verify local/shared projection, mip/border continuity,
-  parallax ordering, and unchanged physical classification.
+  validation, and independent vectors. World Tile now authors, persists,
+  exports, and previews the feature, but Blender rejects required Macro Color
+  data and neither reader has tile-edge mip/gutter conformance evidence.
+- **Workaround:** Do not rely on Macro Color in Blender assets. World Tile
+  preview/export support is not cross-reader certification.
+- **Next step:** Implement Blender metadata and rendering support; verify
+  mip/border continuity, parallax ordering, and cross-reader output for both
+  consumers.
 - **Evidence:** `adm-standard/extensions/ADM_terrain_macro_color_v1.md`,
   `adm_blender/core/material_math.py`, `adm_blender/core/validate.py`,
   `adm_blender/blender/import_adm.py`, the focused tests, and the compatibility

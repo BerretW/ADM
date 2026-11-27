@@ -273,8 +273,8 @@ def prepare_adm_texture(path: str, role: str, gpu_container: str = "DDS",
     from PIL import Image
     from adm_blender.core import gputex
 
-    color_role = role == "albedo"
-    compression = {"albedo": "AUTO", "normal": "RGBA8", "data": "BC3"}.get(role)
+    color_role = role in ("albedo", "macro_color")
+    compression = {"albedo": "AUTO", "macro_color": "AUTO", "normal": "RGBA8", "data": "BC3"}.get(role)
     if compression is None:
         raise ValueError(f"Unknown texture role {role!r}")
     if gpu_container not in GPU_CONTAINERS or gpu_encoding not in GPU_ENCODINGS:
@@ -1132,10 +1132,8 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
                 if control_map_source is not None else [])
     by_slot: dict[tuple[str, str, str, int | None], int] = {}
 
-    def texture_index(surface: Surface, name: str) -> int:
-        key = _texture_key(surface, name, settings.gpu_encoding)
+    def prepared_texture_index(key: tuple[str, str, str, int | None], prepared: PreparedTexture) -> int:
         path, role, encoding, channel = key
-        prepared = texture_assets[key]
         shared_key = key if prepared.channel_remapped else (path, role, encoding, None)
         if shared_key not in by_slot:
             if settings.embed_textures:
@@ -1161,6 +1159,10 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
             textures.append(texture)
             by_slot[shared_key] = len(textures) - 1
         return by_slot[shared_key]
+
+    def texture_index(surface: Surface, name: str) -> int:
+        key = _texture_key(surface, name, settings.gpu_encoding)
+        return prepared_texture_index(key, texture_assets[key])
 
     def pbr_normal_index(surface: Surface) -> int:
         path, _, encoding, channel = _texture_key(surface, "normal", settings.gpu_encoding)
@@ -1208,6 +1210,12 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
         textures.append({"source": len(images) - 1, "sampler": 0})
         return len(textures) - 1
 
+    macro_texture_index = None
+    macro_color_enabled = bool(material.macro_color.path)
+    if macro_color_enabled:
+        macro_key = (material.macro_color.path, "macro_color", settings.gpu_encoding, None)
+        macro_texture_index = prepared_texture_index(macro_key, texture_assets[macro_key])
+
     for i in used:  # stable texture order: surface by surface
         for name in ("albedo", "metallic", "roughness", "normal", "ao", "height", "emission"):
             if _texture_key(surfaces[i], name, settings.gpu_encoding)[0]:
@@ -1218,6 +1226,8 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     for k, set_mask in enumerate(sets):
         slots = _slots(set_mask)
         if control_map_source is not None:
+            slots = slots + [i for i in range(len(surfaces)) if i not in slots][:4 - len(slots)]
+        if macro_color_enabled:
             slots = slots + [i for i in range(len(surfaces)) if i not in slots][:4 - len(slots)]
         palette_slots.append(slots)
         chosen = [surfaces[i] for i in slots]
@@ -1249,6 +1259,24 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
                 "texture": {"index": control_map_texture_index(k, _slots(set_mask)), "texCoord": 0},
                 "mapping": "UV",
             }
+        if macro_color_enabled:
+            macro = material.macro_color
+            texture_ref = {"index": macro_texture_index}
+            if macro.projection == "LOCAL_UV":
+                texture_ref["texCoord"] = 0
+            macro_extension = {
+                "version": "1.0.0",
+                "texture": texture_ref,
+                "projection": macro.projection,
+                "blendMode": macro.blend_mode,
+                "strength": float(macro.strength),
+                "layerInfluence": [float(value) for value in macro.layer_influence],
+                "scale": [float(value) for value in macro.scale],
+                "offset": [float(value) for value in macro.offset],
+            }
+            if macro.projection == "SHARED_WORLD_XZ":
+                macro_extension["origin"] = [float(value) for value in macro.origin]
+            exported_material["extensions"][constants.TERRAIN_MACRO_COLOR_EXT] = macro_extension
         if base.albedo:
             exported_material["baseColorTexture"] = {"index": texture_index(base, "albedo")}
         if base.normal:
@@ -1391,6 +1419,9 @@ def build_tile_document(manifest: dict, tile: dict, material: TerrainMaterial, s
     if control_map_source is not None:
         extensions.append(constants.TERRAIN_CONTROL_MAP_EXT)
         required_extensions.append(constants.TERRAIN_CONTROL_MAP_EXT)
+    if macro_color_enabled:
+        extensions.append(constants.TERRAIN_MACRO_COLOR_EXT)
+        required_extensions.append(constants.TERRAIN_MACRO_COLOR_EXT)
     if physical_material_records:
         extensions.append(constants.PHYSICAL_SURFACES_EXT)
         required_extensions.append(constants.PHYSICAL_SURFACES_EXT)
@@ -1534,6 +1565,8 @@ def export_tiles(
     if todo:
         texture_keys = dict.fromkeys(key for surface in surfaces
                                      for key in _surface_texture_slots(surface, settings.gpu_encoding))
+        if material.macro_color.path:
+            texture_keys[(material.macro_color.path, "macro_color", settings.gpu_encoding, None)] = None
         for key in texture_keys:
             path, role, encoding, channel = key
             prepared = prepare_adm_texture(path, role, settings.gpu_container, encoding,
