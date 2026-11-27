@@ -1247,6 +1247,11 @@ class ModelImporter:
             item = self.root.adm.physical_materials.add()
             item.name = material["id"]
             item.profile = material.get("profile", "UNSPECIFIED")
+            item.surface_type = material.get("type", "")
+            item.surface_subtype = material.get("subtype", "")
+            item.surface_tags_json = json.dumps(material.get("tags", []), separators=(",", ":"),
+                                                ensure_ascii=False)
+            item.surface_description = material.get("description", "")
             item.friction = material["friction"]
             item.restitution = material["restitution"]
         for component in d.get("modelComponents", []):

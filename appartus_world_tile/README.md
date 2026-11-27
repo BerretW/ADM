@@ -20,6 +20,7 @@ py -3 -m venv .venv
 .venv\Scripts\python -m pip install -e ".[gui]"
 .venv\Scripts\python -m awt gui [project.awtp, heightmap or manifest.json]
 .venv\Scripts\python -m awt build source\switz3.png -o out --spacing 2 --height-range 0 2500 --max-error 0.25 1 4 --save-project world.awtp
+.venv\Scripts\python -m awt build source\switz3.png -o out --collision-error 1.0 --collision-boundary-max-edge 4 --collision-max-triangles 262144
 .venv\Scripts\python -m awt export world.awtp                   :: only changed tiles
 .venv\Scripts\python -m awt export world.awtp --tiles x003_y001 x004_y001
 .venv\Scripts\python -m awt export world.awtp --all --build     :: rebuild, then write everything
@@ -104,13 +105,28 @@ material preview itself retains POM settings but does not render their offsets.
 height ranges for the loaded heightmap. `--water-level`, `--shore` and `--snow START FULL`
 override those automatic levels. `--texture-error 0` disables transition refinement;
 `--texture-detail` is the minimum new triangle edge length in metres.
+`--collision-error` builds a separate collision mesh with the requested maximum
+vertical error in metres; `0` disables collision output. The build rejects any tile
+that exceeds `--collision-max-triangles` rather than silently relaxing the error
+bound. Collision meshes use a separately measured RTIN and share refined tile-edge
+vertices, so render LODs do not affect collision geometry. Their stable authored surface
+weights support automatic physical classification; view-dependent shader effects do not.
+ADM export writes each collision mesh as a `MESH` collider. Physical painting is independent
+of visual terrain painting and overrides automatic assignments on collision triangles.
+Automatic classification requires a physical-material link on the dominant surface; triangles
+without a linked surface remain unassigned. Triangles that cross different physical assignments
+are refined until their RTIN split edge is at most `--collision-boundary-max-edge` metres; the
+per-tile triangle limit remains a hard cap and causes an explicit build error rather than a
+silent reduction in boundary detail.
 
 ## GUI
 
 * **File menu:** New / Open / Save / Save as project (`.awtp`), Open heightmap, Open built
   tiles. The title shows `*` while the project has unsaved changes; closing asks to save.
 * **Terrain tab:** heightmap, scale, tile size with tile count and memory estimate, LOD
-  errors, build folder, **Build tiles**.
+  errors, independent collision error, physical-boundary edge target and per-tile triangle cap, build folder,
+  **Build tiles**. A collision error of `0` disables collision generation. Builds
+  report the measured maximum error and reject a tile that exceeds its triangle cap.
 * **Material tab:** a surface library (albedo, tint, texture repeat in metres, metallic,
   roughness, AO and height maps with channel and invert, plus normal and emission maps) and
   optional height-blend/parallax settings, plus biomes that select and blend those surfaces.
@@ -136,8 +152,8 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   Texture pickers show source dimensions, format, bit depth, color-space metadata, mip count,
   and whether the file is external. GPU sources show the mip payload size; authoring images
   show an uncompressed RGBA base-level estimate rather than a promised export allocation.
-  Presets with surface noise use version 2; presets with advanced shader settings use version 3.
-  Presets with per-map GPU encodings use version 4.
+  New presets use version 6 to retain stable surface IDs and physical-material links; the loader
+  also accepts preset versions 1–5.
   Neighbouring biomes should share at least one surface so the transition uses a common
   texture rather than changing abruptly. Texture repeat is rounded to a whole number per tile,
   so textures continue across tiles. The **Surface** tab on the right shows the selected
@@ -168,11 +184,16 @@ override those automatic levels. `--texture-error 0` disables transition refinem
 * **Export tab:** ADM folder, LOD switch distance, embed or share textures, validation,
   **Export changed / Export selected / Export all**. Tiles that are new or changed since the
   last export get a red corner on the map.
-* **Map tab:** relief, biome weights, surface weights or mesh density per tile. Click or drag
+* **Map tab:** relief, biome weights, surface weights, physical assignments or mesh density per tile. Click or drag
   to select tiles, Shift adds, double-click opens one tile in 3D. Zoom with the mouse wheel and
   pan with the middle mouse button. Choose **Biome** or
-  **Surface**, enable **Paint**, and drag to paint; right-drag removes that type of paint.
-  **Paint softness** sets how far painted borders fade.
+  **Surface**, or **Physical**, enable **Paint**, and drag to paint; right-drag removes that
+  type of paint. On the **Material** tab, link each visual surface to an optional physical
+  material for automatic classification by stable dominant surface weights. Manual physical paint
+  takes precedence. **Physical library…** creates records with explicit friction, restitution
+  and optional ADM profile. Manual paint is sampled at collision-triangle centroids; the export
+  report counts assigned triangles and warns when a painted tile receives none.
+  **Paint softness** affects visual biome/surface borders, not physical assignments.
 * **3D tab:** the built tiles, coloured by height, surface weights, tile, or **Material**
   (a fast albedo bake without normal maps). Select **Detailed material** to sample layer
   maps, height blending, parallax, and POM in the VTK shader. It uses the same four-layer
@@ -186,6 +207,11 @@ override those automatic levels. `--texture-error 0` disables transition refinem
   vertex weights exported for each primitive. Channels name local palette slots, so the
   same channel can represent different surfaces in different primitives. This view uses
   the detailed triangle and palette budgets but does not load material textures.
+  **Collision mesh** displays selected collision geometry instead of render geometry, colours
+  faces by physical-material assignment, and reports triangle counts and measured error. Hover
+  over a face to inspect its dominant surface, physical-material name, and stable ID. Unassigned
+  faces are gray; unknown IDs are magenta. Collision inspection is limited to 250,000 triangles
+  and 256 MiB per collision file.
   The other modes retain the 8 M triangle budget. LOD, vertical exaggeration, and wireframe
   remain available.
 
@@ -236,14 +262,17 @@ priority can change the final result. Surface-specific rules remain on the **Mat
 
 ## Project file (`.awtp`)
 
-JSON with the build parameters (heightmap, scale, tiles, LOD errors, biome rules, paint and
-build folder), roads, the surface/biome material, the export settings and the tile selection. Paths are stored
-relative to the project file, so the folder can be moved together with its heightmap and
-textures. Reopening a project loads the heightmap and the built tiles from the build folder.
-Version 2 through 6 projects can be opened. Projects with per-map GPU encodings or non-default GPU export settings use
-version 6; otherwise, projects with advanced shader settings use version 5, projects with biome
-surface noise use version 4, and projects without either use version 3. Older tool versions
-cannot open files saved with a newer format version.
+JSON with build parameters (heightmap, scale, tiles, LOD errors, collision settings, biome
+rules, paint and build folder), roads, visual and physical material data, export settings and
+tile selection. Physical paint is stored separately from biome and visual-surface paint.
+Paths are stored relative to the project file, so the folder can be moved together with its
+heightmap and textures. Reopening a project loads the heightmap and the built tiles from the
+build folder.
+Project formats 2–10 can be opened. New saves use format version 11 and persist stable IDs for
+terrain surfaces and physical materials, surface-to-physical-material links, and the independent
+physical-paint map. Legacy projects derive a terrain-surface ID from its original name; renaming
+a surface does not change its ID.
+Older tool versions cannot open files saved with a newer format version.
 
 ## Create a road
 
@@ -335,11 +364,23 @@ adm/
   refreshes tiles recorded with older fingerprints. A missing `.adm` file is always exported again.
   GPU export setting changes mark textured tiles as changed; tiles that use no textures remain
   unchanged. Textured tiles with only preserved sources are conservatively marked as changed.
+  Collision mesh digests are part of the same tile fingerprint.
 * Each terrain primitive supports at most four surfaces. Weights at or below 2/255 are omitted
-  from a triangle's surface set. If a triangle needs more than four surfaces, export retains
-  the four with the greatest total corner weight and reports the number of affected triangles.
-  Adjacent triangles can retain different surfaces, producing a visible seam, especially with
-  height blending. Reduce the number of overlapping surfaces to avoid this limitation.
+  when the exporter determines a triangle's surface set. New projects use **Strict** palette
+  handling: export checks the selected tile LODs before writing and refuses a tile set if any
+  triangle needs more than four surfaces. Choose **Approximate (seam-aware reduction)** only
+  when losing some weight is acceptable. It keeps each vertex's dominant surface, reconciles
+  vertex weights across the primitive palettes that use that vertex, and reports the affected
+  triangles, up to 20 examples of dropped surfaces with raw U8 corner weights
+  (0 to 255), and mean and maximum total-variation error. The report suggests
+  reducing overlapping weights or painting fewer active surfaces with
+  **Surface** on the **Map** tab. This guarantees matching effective
+  weights at shared vertices within each tile LOD; it does not claim exact representation of
+  omitted surfaces or continuity across independently sampled tile/LOD boundaries. Projects
+  from versions 2–6 that do not store a palette policy load as **Approximate** to preserve their
+  previous export behavior. Saving writes project format version 11 with the selected policy.
+  Exported terrain materials use `ADM_terrain_surface_v1` to map local layer slots to those stable
+  IDs. The extension adds identity metadata and does not change rendering or physical assignments.
 * Every written tile is validated with the ADM validator before it replaces the old file
   (atomic write). Validation is the slowest step (see Performance); turn it off for quick
   iterations.
@@ -348,11 +389,12 @@ adm/
 
 ```
 out/
-  manifest.json           tiles, LOD statistics, biome/surface rules, and weights metadata
+  manifest.json           tiles, LOD and collision statistics, biome/surface rules, and weights
   preview.png             hillshade (≤ 1024 px)
   biomes.png               biome preview (≤ 1024 px)
   surfaces.png             dominant-surface preview (≤ 1024 px)
   tiles/x000_y000_lod0.ply
+  collision/x000_y000_collision.ply  optional independent collision mesh
 ```
 
 * Tile `x{ix}_y{iy}`: `ix` grows east, `iy` grows **north** (y000 is the southern row).
@@ -360,6 +402,14 @@ out/
   corner), Z is absolute height. `--origin center` puts the terrain centre at 0, 0.
 * All LODs retain matching tile boundaries, so adjacent tiles can use different LODs without
   cracks. Rebuild the tiles and re-export them to apply this to an existing project.
+* When collision generation is enabled, each tile has a separate `collision/*.ply` mesh. The
+  manifest records its measured height error, triangle count, refined boundary-vertex count and
+  stable dominant surfaces used for automatic physical classification. Collision vertices also
+  store stable authored surface weights; these weights do not change collision geometry.
+  ADM export references the mesh from a `MESH` collider. Manual paint overrides automatic
+  physical-material links; a triangle with no applicable link remains unassigned. Older collision
+  manifests remain loadable, but automatic classification requires rebuilding with manifest
+  version 4, which records the weights' dominant surfaces.
 * PLY vertices: position, normal (from the full-resolution heightmap, so shading is seamless
   across tiles and LODs), `UVMap` (s, t) and `UVMap_1` (s1, t1).
 

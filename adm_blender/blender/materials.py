@@ -22,6 +22,7 @@ MATERIAL_HEIGHT_DATA = "_adm_material_height_json"
 MATERIAL_HEIGHT_IMAGE = "_adm_material_height_image"
 MATERIAL_HEIGHT_SAMPLER = "_adm_material_height_sampler_json"
 MATERIAL_UNKNOWN_EXTENSIONS = "_adm_unknown_material_extensions_json"
+MATERIAL_TERRAIN_SURFACE = "_adm_terrain_surface_json"
 MATERIAL_UNKNOWN_SHADER = "_adm_unknown_shader_json"
 MATERIAL_UNKNOWN_SHADER_IMAGE = "_adm_unknown_shader_image_"
 
@@ -717,6 +718,16 @@ class MaterialExporter:
                 self.extensions_used.update(unknown)
                 self.warn(f"material '{mat.name}': unknown material extensions are preserved, "
                           "but their internal references cannot be remapped")
+        if MATERIAL_TERRAIN_SURFACE in mat:
+            try:
+                terrain_surface = json.loads(mat[MATERIAL_TERRAIN_SURFACE])
+                if not isinstance(terrain_surface, dict):
+                    raise ValueError("invalid terrain surface identity data")
+            except (TypeError, ValueError) as exc:
+                raise ShaderExportError(
+                    f"material '{mat.name}': cannot preserve terrain surface identities: {exc}") from exc
+            out.setdefault("extensions", {})[K.TERRAIN_SURFACE_EXT] = terrain_surface
+            self.extensions_used.add(K.TERRAIN_SURFACE_EXT)
         if MATERIAL_HEIGHT_DATA in mat:
             try:
                 height = json.loads(mat[MATERIAL_HEIGHT_DATA])
@@ -1612,6 +1623,9 @@ def build_material(m, resolve_texture, resolve_normal_texture):
                if name not in K.SUPPORTED_EXTENSIONS}
     if unknown:
         mat[MATERIAL_UNKNOWN_EXTENSIONS] = json.dumps(unknown, ensure_ascii=False)
+    terrain_surface = (m.get("extensions") or {}).get(K.TERRAIN_SURFACE_EXT)
+    if terrain_surface is not None:
+        mat[MATERIAL_TERRAIN_SURFACE] = json.dumps(terrain_surface, ensure_ascii=False, allow_nan=False)
     missing_textures = []
 
     def _resolve_texture(ref):

@@ -12,6 +12,7 @@ try:
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QMessageBox
     from awt.gui.main_window import MainWindow
+    from awt.gui.physical_material_dialog import PhysicalMaterialDialog
     from awt.gui.height_blend_preview import compose_preview
     from awt.gui.height_blend_preview import HeightBlendPreview
     from awt.gui.height_blend_preview import _compose_pbr_maps, _read_rgba
@@ -21,6 +22,7 @@ except ImportError:
     QApplication = None
     TerrainSetupWizard = None
     MainWindow = None
+    PhysicalMaterialDialog = None
     MaterialPanel = None
     compose_preview = None
     HeightBlendPreview = None
@@ -28,7 +30,7 @@ except ImportError:
 
 import numpy as np
 
-from awt.material import Band, MapSlot, Surface, TerrainMaterial, normal_preview_array
+from awt.material import Band, MapSlot, PhysicalMaterial, Surface, TerrainMaterial, normal_preview_array
 from awt.heightmap import Heightmap
 from awt.project import load_project
 
@@ -107,7 +109,7 @@ raise SystemExit(app.exec())
             path = os.path.join(directory, "world.awtp")
             self.assertTrue(window._write_project(path))
             loaded = load_project(path)
-            self.assertEqual(loaded.to_dict()["format_version"], 4)
+            self.assertEqual(loaded.to_dict()["format_version"], 12)
             self.assertEqual(loaded.material.biomes[0].noise, 0.65)
             window._open_project_file(path)
             window.material_panel.biome_list.setCurrentRow(0)
@@ -122,18 +124,29 @@ raise SystemExit(app.exec())
         self.addCleanup(lambda: setattr(window, "_dirty", False))
         window.gpu_container.setCurrentIndex(window.gpu_container.findData("KTX2"))
         window.gpu_encoding.setCurrentIndex(window.gpu_encoding.findData("BC7"))
+        window.palette_conflict_policy.setCurrentIndex(
+            window.palette_conflict_policy.findData("APPROXIMATE"))
         window.convert_gpu_sources.setChecked(True)
+        window.collision_error.setValue(0.75)
+        window.collision_boundary_edge.setValue(2.5)
+        window.collision_triangles.setValue(4096)
         self.assertEqual(window._export_settings().gpu_container, "KTX2")
         self.assertEqual(window._export_settings().gpu_encoding, "BC7")
+        self.assertEqual(window._export_settings().palette_conflict_policy, "APPROXIMATE")
         self.assertTrue(window._dirty)
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "world.awtp")
             self.assertTrue(window._write_project(path))
             project = load_project(path)
-            self.assertEqual(project.to_dict()["format_version"], 6)
+            self.assertEqual(project.to_dict()["format_version"], 12)
+            self.assertEqual(project.params.collision_max_error_m, 0.75)
+            self.assertEqual(project.params.collision_boundary_max_edge_m, 2.5)
+            self.assertEqual(project.params.collision_max_triangles_per_tile, 4096)
             window._apply_widgets(project)
+            self.assertEqual(window.collision_boundary_edge.value(), 2.5)
             self.assertEqual(window.gpu_container.currentData(), "KTX2")
             self.assertEqual(window.gpu_encoding.currentData(), "BC7")
+            self.assertEqual(window.palette_conflict_policy.currentData(), "APPROXIMATE")
             self.assertTrue(window.convert_gpu_sources.isChecked())
         project = Project(BuildParams(input_path="", out_dir=""))
         project.export.out_dir = "export"
@@ -142,6 +155,13 @@ raise SystemExit(app.exec())
         self.assertEqual(window._export_settings().gpu_encoding, "FUTURE")
         self.assertIn("Unsupported", window.gpu_encoding.currentText())
         with self.assertRaisesRegex(ValueError, "Unsupported GPU"):
+            window._export_settings().validate_values()
+        project.export.gpu_encoding = "AUTO"
+        project.export.palette_conflict_policy = "FUTURE"
+        window._apply_widgets(project)
+        self.assertEqual(window._export_settings().palette_conflict_policy, "FUTURE")
+        self.assertIn("Unsupported", window.palette_conflict_policy.currentText())
+        with self.assertRaisesRegex(ValueError, "Unsupported palette conflict policy"):
             window._export_settings().validate_values()
 
     def test_per_map_gpu_encoding_edits_and_preserves_unknown_values(self):
@@ -601,6 +621,85 @@ raise SystemExit(app.exec())
             self.assertIsNotNone(viewer._actor)
             self.assertFalse(viewer._extra_actors)
             self.assertEqual(MATERIAL_MODE, viewer.color.findText("Material"))
+
+    def test_collision_inspection_colors_faces_reports_hover_and_rejects_escaping_paths(self):
+        import time
+        from awt.gui.viewer3d import Viewer3D, load_collision_tiles
+        from awt.material import PhysicalMaterial
+        from awt.pipeline import BuildParams, build, load_manifest
+        from tests.test_pipeline import _terrain
+
+        with tempfile.TemporaryDirectory() as directory:
+            heightmap = os.path.join(directory, "terrain.npy")
+            np.save(heightmap, _terrain(49, 65))
+            material = TerrainMaterial()
+            automatic = PhysicalMaterial("Automatic grass", 0.65, 0.02)
+            manual = PhysicalMaterial("Manual override", 0.8, 0.0)
+            material.physical_materials.extend((automatic, manual))
+            material.surface("grass").physical_material_id = automatic.id
+            material.ensure_physical_paint(65, 49)
+            material.physical_paint[:, :16] = 1
+            params = BuildParams(input_path=heightmap, out_dir=os.path.join(directory, "build"),
+                                 tile_cells=64, max_errors_m=[0.2], spacing_m=2.0,
+                                 collision_max_error_m=0.8, collision_max_triangles_per_tile=4096)
+            build(params, material)
+            manifest = load_manifest(params.out_dir)
+            data = load_collision_tiles(manifest, [(0, 0)], material)
+            physical_names = {item["physical_name"] for item in data["collision_info"]}
+            self.assertTrue({"Automatic grass", "Manual override", "Unassigned"} <= physical_names)
+            self.assertEqual(len(data["collision_info"]), data["collision_triangles"])
+            self.assertGreaterEqual(len(np.unique(data["physical_colors"], axis=0)), 3)
+
+            viewer = Viewer3D()
+            self.addCleanup(viewer.shutdown)
+            viewer.set_manifest(manifest)
+            viewer.set_material(material)
+            viewer._tiles = [(0, 0)]
+            viewer.collision.setChecked(True)
+            deadline = time.monotonic() + 10
+            while viewer._loader is not None and viewer._loader.isRunning() and time.monotonic() < deadline:
+                self.app.processEvents()
+                QTest.qWait(20)
+            self.app.processEvents()
+            self.assertIn("physical_colors", viewer._data)
+            self.assertIn("Collision:", viewer.status.text())
+            self.assertIsNotNone(viewer._actor)
+            self.assertFalse(viewer.color.isEnabled())
+            self.assertTrue(viewer.collision.isEnabled())
+
+            class Picker:
+                def Pick(self, *_args):
+                    return True
+
+                def GetActor(self):
+                    return viewer._actor
+
+                def GetCellId(self):
+                    return 0
+
+            class Interactor:
+                def GetEventPosition(self):
+                    return 0, 0
+
+            viewer._picker = Picker()
+            viewer._on_mouse_move(Interactor(), "MouseMoveEvent")
+            self.assertIn("x000_y000 face 1", viewer.status.text())
+            self.assertIn(data["collision_info"][0]["surface"], viewer.status.text())
+            self.assertIn(data["collision_info"][0]["physical_name"], viewer.status.text())
+
+            bad_manifest = dict(manifest)
+            bad_manifest["tiles"] = [dict(tile) for tile in manifest["tiles"]]
+            bad_manifest["tiles"][0] = dict(bad_manifest["tiles"][0])
+            bad_manifest["tiles"][0]["collision"] = dict(bad_manifest["tiles"][0]["collision"])
+            bad_manifest["tiles"][0]["collision"]["file"] = "..\\outside.ply"
+            with self.assertRaisesRegex(ValueError, "inside the build directory"):
+                load_collision_tiles(bad_manifest, [(0, 0)], material)
+            with patch("awt.gui.viewer3d.COLLISION_PREVIEW_FILE_BUDGET", 1):
+                with self.assertRaisesRegex(ValueError, "preview limit"):
+                    load_collision_tiles(manifest, [(0, 0)], material)
+            with patch("awt.gui.viewer3d.COLLISION_PREVIEW_TRIANGLE_BUDGET", 0):
+                with self.assertRaisesRegex(ValueError, "triangle budget"):
+                    load_collision_tiles(manifest, [(0, 0)], material)
 
     def test_detailed_terrain_preview_loads_two_layers_and_renders_height_blend(self):
         import pyvista as pv
@@ -1395,12 +1494,12 @@ raise SystemExit(app.exec())
             np.testing.assert_allclose(image, permuted, atol=3)
             self.assertGreater(np.count_nonzero(np.abs(image[valid, 155:165] - unshifted[valid, 155:165]) > 5), 20)
 
-    def test_over_four_surface_conflict_is_visible_in_pom_shader(self):
+    def test_over_four_surface_approximation_preserves_rendered_shared_edge(self):
         from dataclasses import replace
         import pyvista as pv
         from PIL import Image
         from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
-        from awt.adm_export import color1, triangle_masks
+        from awt.adm_export import color1, group_masks, seam_consistent_weights, triangle_masks
         from awt.gui.preview_shader import install_layered_preview
 
         weights = np.array([[51, 51, 51, 51, 51], [51, 51, 51, 51, 51],
@@ -1408,8 +1507,11 @@ raise SystemExit(app.exec())
         faces = np.array([[2, 0, 1], [0, 3, 1]])
         masks, conflicts = triangle_masks(weights, faces)
         self.assertEqual(conflicts, 2)
-        slots = [[i for i in range(5) if int(mask) & (1 << i)] for mask in masks]
-        self.assertEqual(slots, [[0, 1, 2, 3], [1, 2, 3, 4]])
+        sets, assign = group_masks(masks)
+        face_palettes = np.fromiter((sets[assign[int(mask)]] for mask in masks), dtype=np.uint64)
+        effective_weights, reduction_errors = seam_consistent_weights(weights, faces, face_palettes)
+        slots = [[i for i in range(5) if int(palette) & (1 << i)] for palette in face_palettes]
+        self.assertTrue(np.all(reduction_errors[[0, 1]] > 0))
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "height.png")
             albedo = os.path.join(directory, "albedo.png")
@@ -1429,13 +1531,15 @@ raise SystemExit(app.exec())
             units = plotter.render_window.GetTextureUnitManager().GetNumberOfTextureUnits()
             points = np.array([[0, -5, 0], [0, 5, 0], [-8, 0, 0], [8, 0, 0]], dtype=np.float32)
 
-            def render(pom):
+            def render(pom, reverse=False):
                 plotter.clear()
                 plotter.add_light(pv.Light(position=(0, 0, 10), focal_point=(0, 0, 0)))
                 for face, chosen in zip(faces, slots):
+                    if reverse:
+                        chosen = chosen[::-1]
                     mesh = pv.PolyData(points[face], np.array([3, 0, 1, 2]))
                     mesh.active_texture_coordinates = points[face, :2] / 15 + 0.5
-                    mesh.point_data["layer_weights"] = color1(weights[face], chosen).astype(np.float32) / 255
+                    mesh.point_data["layer_weights"] = color1(effective_weights[face], chosen).astype(np.float32) / 255
                     white = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
                     white.SetUseSRGBColorSpace(True)
                     orm = pv.numpy_to_texture(np.full((2, 2, 3), 255, dtype=np.uint8))
@@ -1456,12 +1560,14 @@ raise SystemExit(app.exec())
                 return plotter.screenshot(return_img=True).astype(int)
 
             image = render(True)
+            permuted = render(True, reverse=True)
             unshifted = render(False)
             jump = np.abs(image[60:100, 79] - image[60:100, 80])
-            self.assertGreater(np.median(np.max(jump, axis=1)), 10)
+            self.assertLessEqual(np.median(np.max(jump, axis=1)), 10)
+            np.testing.assert_allclose(image, permuted, atol=3)
             self.assertGreater(np.count_nonzero(np.abs(image - unshifted) > 5), 100)
 
-    def test_export_reports_surface_conflict_seam_risk(self):
+    def test_export_reports_approximate_palette_reduction(self):
         import argparse
         import contextlib
         import io
@@ -1469,12 +1575,20 @@ raise SystemExit(app.exec())
         from awt.project import Project
 
         result = {"written": ["tile"], "skipped": 0, "bytes": 0, "seconds": 0.1, "out_dir": "output",
-                  "conflicts": 2, "warnings": []}
+                  "conflicts": 2, "reduced_vertices": 4, "mean_reduction_error": 0.2,
+                  "max_reduction_error": 0.4, "warnings": [],
+                  "conflict_details": [{
+                      "tile_id": "tile", "lod": 0, "triangle_index": 5,
+                      "dropped_surfaces": [{
+                          "name": "snow", "id": "awt.surface.snow", "corner_weights": [0, 40, 0],
+                      }],
+                  }],
+                  "conflict_details_truncated": 1}
         window = MainWindow()
         self.addCleanup(window.close)
         with patch.object(window, "_check_changes"):
             window._export_done(result)
-        self.assertIn("visible seams may result", window.report.toPlainText())
+        self.assertIn("approximate palettes", window.report.toPlainText())
 
         args = argparse.Namespace(project="project.awtp", out="", no_validate=False,
                                   build=False, all=True, tiles=None)
@@ -1484,8 +1598,9 @@ raise SystemExit(app.exec())
                 patch("awt.adm_export.export_tiles", return_value=result), \
                 contextlib.redirect_stdout(output):
             self.assertEqual(_export(args), 0)
-        self.assertIn("warning: 2 triangles", output.getvalue())
-        self.assertIn("visible seams may result", output.getvalue())
+        self.assertIn("approximate palette policy reduced weights", output.getvalue())
+        self.assertIn("mean total-variation error", output.getvalue())
+        self.assertIn("triangle 5: dropped snow (awt.surface.snow)", output.getvalue())
 
     def test_generated_reference_adm_renders_pom(self):
         import shutil
@@ -1844,6 +1959,55 @@ raise SystemExit(app.exec())
         window._road_clicked(4, 8)
         window.road_height.setValue(5)
         self.assertEqual(road.points[0][2], 5)
+
+    def test_map_can_paint_physical_assignments_without_visual_paint(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        self.addCleanup(lambda: setattr(window, "_dirty", False))
+        window.hm = Heightmap(np.full((33, 33), 10.0, np.float32), "terrain.npy", 0.0)
+        window.map.set_image(np.zeros((33, 33), np.uint8), 33, 33)
+        material = window._material()
+        material.physical_materials.append(PhysicalMaterial("Ground", 0.6, 0.0))
+        window._material_changed()
+        window._set_busy(False)
+        window.paint_kind.setCurrentIndex(2)
+        window.paint.setChecked(True)
+        window.paint_biome.setCurrentIndex(0)
+        window._paint_stroke([(16, 16)], False)
+        self.assertTrue(material.has_physical_paint())
+        self.assertIsNone(material.paint)
+        self.assertIsNone(material.surface_paint)
+        window._paint_stroke([(16, 16)], True)
+        self.assertFalse(material.has_physical_paint())
+
+    def test_physical_material_dialog_requires_coefficients_and_keeps_stable_id(self):
+        material = TerrainMaterial()
+        dialog = PhysicalMaterialDialog(material)
+        dialog.name.setText("Ground")
+        dialog.profile.setCurrentIndex(dialog.profile.findData("adm.phys.ground.v1"))
+        dialog.friction.setText("0.65")
+        dialog.restitution.setText("0.05")
+        dialog._save()
+        self.assertTrue(dialog.changed)
+        original_id = material.physical_materials[0].id
+        dialog.name.setText("Packed ground")
+        dialog._save()
+        self.assertEqual(material.physical_materials[0].name, "Packed ground")
+        self.assertEqual(material.physical_materials[0].id, original_id)
+
+    def test_surface_library_can_link_a_physical_material(self):
+        from awt.material import PhysicalMaterial
+        from awt.gui.material_panel import MaterialPanel
+
+        panel = MaterialPanel()
+        self.addCleanup(panel.close)
+        material = TerrainMaterial()
+        physical = PhysicalMaterial("Packed ground", 0.65, 0.05)
+        material.physical_materials.append(physical)
+        panel.set_material(material)
+        editor = panel.surface_editor
+        editor.physical_material.setCurrentIndex(editor.physical_material.findData(physical.id))
+        self.assertEqual(material.surface("grass").physical_material_id, physical.id)
 
     def test_removing_painted_surface_requires_confirmation(self):
         window = MainWindow()

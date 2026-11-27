@@ -16,7 +16,7 @@ from .material import TerrainMaterial
 from .pipeline import BuildParams
 
 PROJECT_FORMAT = "apparatus-world-tile-project"
-PROJECT_VERSION = 6
+PROJECT_VERSION = 12
 PROJECT_EXTENSION = ".awtp"
 PROJECT_FILTER = "Apparatus World Tile project (*.awtp)"
 
@@ -56,8 +56,7 @@ class Project:
             export.pop("convert_gpu_sources")
         return {
             "format": PROJECT_FORMAT,
-            "format_version": (6 if custom_gpu else 5 if self.material.has_advanced_shader_features() else
-                               4 if any(b.noise != 0.0 for b in self.material.biomes) else 3),
+            "format_version": PROJECT_VERSION,
             "generator": f"appartus_world_tile {__version__}",
             "build": params,
             "material": self.material.to_dict(base),
@@ -87,11 +86,14 @@ class Project:
         size = raw.get("raw_size")
         params.raw_size = (int(size[0]), int(size[1])) if isinstance(size, list) and len(size) == 2 else None
         export = ExportSettings()
-        for key, value in (data.get("export") or {}).items():
+        export_data = data.get("export") or {}
+        for key, value in export_data.items():
             if key in ExportSettings.__dataclass_fields__ and key != "out_dir":
                 if key == "convert_gpu_sources" and not isinstance(value, bool):
                     raise ValueError("GPU source conversion setting must be true or false")
                 setattr(export, key, type(getattr(export, key))(value))
+        if version < 7 and "palette_conflict_policy" not in export_data:
+            export.palette_conflict_policy = "APPROXIMATE"
         export.out_dir = _absolute((data.get("export") or {}).get("out_dir"), base)
         selection = [s for s in data.get("selection", []) if isinstance(s, str)]
         return cls(params=params, material=TerrainMaterial.from_dict(data.get("material") or {}, base),

@@ -99,6 +99,11 @@ class ADMPhysicalMaterial(PropertyGroup):
         *[(p, p.replace("adm.phys.", "").replace(".v1", "").title(), "")
           for p in K.PHYSICAL_SURFACE_PROFILES],
     ])
+    surface_type: StringProperty(name="Physical Type", description="Versioned physical type ID")
+    surface_subtype: StringProperty(name="Physical Subtype", description="Optional registered subtype ID")
+    surface_tags_json: StringProperty(name="Physical Tags JSON", default="[]",
+                                      description="JSON array of versioned semantic tag IDs")
+    surface_description: StringProperty(name="Physical Description")
     friction: FloatProperty(name="Friction", default=0.5, min=0.0, max=1.0)
     restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0)
 

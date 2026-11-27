@@ -1,0 +1,115 @@
+{
+  "registryVersion": "1.0.0",
+  "unknownType": "adm.physical.unknown.v1",
+  "types": [
+    {
+      "id": "adm.physical.unknown.v1",
+      "label": "Unknown",
+      "subtypes": ["adm.physical.unknown.unspecified.v1"]
+    },
+    {
+      "id": "adm.physical.asphalt.v1",
+      "label": "Asphalt",
+      "subtypes": ["adm.physical.asphalt.paved.v1", "adm.physical.asphalt.cracked.v1"]
+    },
+    {
+      "id": "adm.physical.bark.v1",
+      "label": "Bark",
+      "subtypes": ["adm.physical.bark.rough.v1", "adm.physical.bark.smooth.v1"]
+    },
+    {
+      "id": "adm.physical.concrete.v1",
+      "label": "Concrete",
+      "subtypes": ["adm.physical.concrete.polished.v1", "adm.physical.concrete.rough.v1"]
+    },
+    {
+      "id": "adm.physical.fabric.v1",
+      "label": "Fabric",
+      "subtypes": ["adm.physical.fabric.coarse.v1", "adm.physical.fabric.fine.v1"]
+    },
+    {
+      "id": "adm.physical.flesh.v1",
+      "label": "Flesh",
+      "subtypes": ["adm.physical.flesh.soft.v1", "adm.physical.flesh.firm.v1"]
+    },
+    {
+      "id": "adm.physical.foliage.v1",
+      "label": "Foliage",
+      "subtypes": ["adm.physical.foliage.dense.v1", "adm.physical.foliage.sparse.v1"]
+    },
+    {
+      "id": "adm.physical.glass.v1",
+      "label": "Glass",
+      "subtypes": ["adm.physical.glass.smooth.v1", "adm.physical.glass.frosted.v1"]
+    },
+    {
+      "id": "adm.physical.grass.v1",
+      "label": "Grass",
+      "subtypes": ["adm.physical.grass.short.v1", "adm.physical.grass.tall.v1"]
+    },
+    {
+      "id": "adm.physical.gravel.v1",
+      "label": "Gravel",
+      "subtypes": ["adm.physical.gravel.fine.v1", "adm.physical.gravel.coarse.v1"]
+    },
+    {
+      "id": "adm.physical.ice.v1",
+      "label": "Ice",
+      "subtypes": ["adm.physical.ice.smooth.v1", "adm.physical.ice.rough.v1"]
+    },
+    {
+      "id": "adm.physical.metal.v1",
+      "label": "Metal",
+      "subtypes": ["adm.physical.metal.ferrous.v1", "adm.physical.metal.nonferrous.v1"]
+    },
+    {
+      "id": "adm.physical.mud.v1",
+      "label": "Mud",
+      "subtypes": ["adm.physical.mud.soft.v1", "adm.physical.mud.compacted.v1"]
+    },
+    {
+      "id": "adm.physical.sand.v1",
+      "label": "Sand",
+      "subtypes": ["adm.physical.sand.fine.v1", "adm.physical.sand.coarse.v1"]
+    },
+    {
+      "id": "adm.physical.snow.v1",
+      "label": "Snow",
+      "subtypes": ["adm.physical.snow.powder.v1", "adm.physical.snow.compacted.v1"]
+    },
+    {
+      "id": "adm.physical.soil.v1",
+      "label": "Soil",
+      "subtypes": ["adm.physical.soil.loose.v1", "adm.physical.soil.compacted.v1"]
+    },
+    {
+      "id": "adm.physical.stone.v1",
+      "label": "Stone",
+      "subtypes": ["adm.physical.stone.smooth.v1", "adm.physical.stone.rough.v1"]
+    },
+    {
+      "id": "adm.physical.water.v1",
+      "label": "Water",
+      "subtypes": ["adm.physical.water.shallow.v1", "adm.physical.water.deep.v1"]
+    },
+    {
+      "id": "adm.physical.wood.v1",
+      "label": "Wood",
+      "subtypes": ["adm.physical.wood.soft.v1", "adm.physical.wood.hard.v1"]
+    }
+  ],
+  "tags": [
+    "adm.physical.tag.absorbent.v1",
+    "adm.physical.tag.cold.v1",
+    "adm.physical.tag.conductive.v1",
+    "adm.physical.tag.manufactured.v1",
+    "adm.physical.tag.organic.v1",
+    "adm.physical.tag.porous.v1",
+    "adm.physical.tag.rough.v1",
+    "adm.physical.tag.slippery.v1",
+    "adm.physical.tag.smooth.v1",
+    "adm.physical.tag.transparent.v1",
+    "adm.physical.tag.vegetated.v1",
+    "adm.physical.tag.wet.v1"
+  ]
+}

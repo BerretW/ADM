@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import math
 import os
 import time
@@ -28,12 +29,14 @@ from ..terrain_presets import list_presets, load_preset, preset_key, save_preset
 from .map_view import MapView
 from .material_panel import MaterialPanel, MaterialPreview, swatch
 from .height_blend_preview import HeightBlendPreview
+from .physical_material_dialog import PhysicalMaterialDialog
 from .terrain_wizard import TerrainSetupWizard
 from .viewer3d import DETAILED_MATERIAL_MODE, TRIANGLE_BUDGET, Viewer3D, triangle_count
 
 HEIGHTMAP_FILTER = "Heightmaps (*.png *.tif *.tiff *.r16 *.raw *.npy *.pgm);;All files (*)"
-MAP_MODES = ("Relief", "Biomes", "Surfaces", "Mesh density")
+MAP_MODES = ("Relief", "Biomes", "Surfaces", "Mesh density", "Physical surfaces")
 BIOMES_MODE, SURFACES_MODE, DENSITY_MODE = 1, 2, 3
+PHYSICAL_MODE = 4
 APP_NAME = "Apparatus World Tile"
 
 
@@ -391,6 +394,19 @@ class MainWindow(QMainWindow):
         self.tile_info = QLabel()
         self.tile_info.setWordWrap(True)
         self.tile_info.setStyleSheet("color: #9aa3ad")
+        self.collision_error = _spin(0.0, 1000.0, 0.0, 0.1, 2, " m")
+        self.collision_error.setSpecialValueText("Off")
+        self.collision_error.setToolTip("Build a separate collision mesh using a height-error bound. "
+                                        "This does not change render LODs.")
+        self.collision_boundary_edge = _spin(0.1, 10000.0, 4.0, 0.5, 2, " m")
+        self.collision_boundary_edge.setToolTip(
+            "Maximum RTIN split-edge length where physical assignments differ. "
+            "Refinement also stops at the per-tile triangle cap.")
+        self.collision_triangles = QSpinBox()
+        self.collision_triangles.setRange(2, 2_097_152)
+        self.collision_triangles.setValue(262144)
+        self.collision_triangles.setSingleStep(4096)
+        self.collision_triangles.setToolTip("Hard maximum number of triangles in each collision tile.")
 
         # Texturing
         self.histogram = HeightHistogram()
@@ -444,6 +460,12 @@ class MainWindow(QMainWindow):
         self.gpu_encoding.addItem("Automatic by map role", "AUTO")
         self.gpu_encoding.addItem("BC7 (lossy)", "BC7")
         self.gpu_encoding.addItem("RGBA8 (uncompressed)", "RGBA8")
+        self.palette_conflict_policy = QComboBox()
+        self.palette_conflict_policy.addItem("Strict (reject conflicts)", "STRICT")
+        self.palette_conflict_policy.addItem("Approximate (seam-aware reduction)", "APPROXIMATE")
+        self.palette_conflict_policy.setToolTip(
+            "Strict export refuses triangles with more than four active surfaces. Approximate export "
+            "keeps shared-vertex weights consistent and reports the measured reduction error.")
         self.gpu_encoding.setToolTip(
             "Applies to converted 8-bit images. GPU sources remain unchanged unless conversion is enabled; "
             "16-bit data keeps its precision and can use R16 or PNG instead.")
@@ -492,6 +514,9 @@ class MainWindow(QMainWindow):
         form = QFormLayout(group)
         form.addRow("Tile size", self.tile_cells)
         form.addRow("LOD errors (m)", self.lods)
+        form.addRow("Collision error (m)", self.collision_error)
+        form.addRow("Physical-boundary edge (m)", self.collision_boundary_edge)
+        form.addRow("Collision triangles/tile", self.collision_triangles)
         form.addRow("", self.tile_info)
         column.addWidget(group)
 
@@ -557,13 +582,15 @@ class MainWindow(QMainWindow):
         form.addRow("LOD 1 from", self.lod_distance)
         form.addRow("GPU container", self.gpu_container)
         form.addRow("GPU encoding", self.gpu_encoding)
+        form.addRow("Palette conflicts", self.palette_conflict_policy)
         form.addRow(self.convert_gpu_sources)
         form.addRow(self.embed)
         form.addRow(self.validate)
         note = QLabel("Each tile becomes <tile>.adm with its LODs, placed at its world position. Triangles "
-                      "are grouped into four_layer@2.0.0 materials of up to four surfaces, blended by "
-                      "COLOR_1. world.json remembers what was exported, so Export changed writes only "
-                      "tiles whose terrain, weights, material or settings differ.")
+                      "use four-layer materials blended by COLOR_1. Strict palette handling rejects "
+                      "over-four-surface conflicts; the explicit approximate mode reports its measured "
+                      "weight reduction. world.json remembers what was exported, so Export changed writes "
+                      "only tiles whose terrain, weights, visual or physical material, or settings differ.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #9aa3ad")
         form.addRow(note)
@@ -608,9 +635,12 @@ class MainWindow(QMainWindow):
         self.paint.setCheckable(True)
         self.paint.setToolTip("Left drag paints; right drag restores the underlying rules")
         self.paint_kind = QComboBox()
-        self.paint_kind.addItems(("Biome", "Surface"))
+        self.paint_kind.addItems(("Biome", "Surface", "Physical"))
         self.paint_biome = QComboBox()
         self.paint_biome.setToolTip("Biome or surface to paint")
+        self.physical_materials_button = QPushButton("Physical library…")
+        self.physical_materials_button.setToolTip("Create or edit physical materials independently of visual surfaces.")
+        self.physical_materials_button.hide()
         self.brush = _spin(0.1, 100000, 50.0, 5, 1, " m")
         self.brush.setToolTip("Brush radius")
         self.clear_paint = QPushButton("Clear paint")
@@ -627,7 +657,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(bar)
         paint_bar = QHBoxLayout()
         paint_bar.setContentsMargins(6, 0, 6, 0)
-        for widget in (self.paint, self.paint_kind, self.paint_biome):
+        for widget in (self.paint, self.paint_kind, self.paint_biome, self.physical_materials_button):
             paint_bar.addWidget(widget)
         paint_bar.addStretch(1)
         layout.addLayout(paint_bar)
@@ -723,6 +753,7 @@ class MainWindow(QMainWindow):
         self.map.selectionChanged.connect(self._selection_changed)
         self.paint.toggled.connect(self._paint_toggled)
         self.paint_kind.currentIndexChanged.connect(self._paint_kind_changed)
+        self.physical_materials_button.clicked.connect(self._edit_physical_materials)
         self.brush.valueChanged.connect(self._update_brush)
         self.spacing.valueChanged.connect(self._update_brush)
         self.clear_paint.clicked.connect(self._clear_paint)
@@ -767,18 +798,21 @@ class MainWindow(QMainWindow):
         self.histogram.biomeSelected.connect(self.height_biome.setCurrentIndex)
         for signal in (self.material_panel.changed, self.export_dir.textChanged, self.lod_distance.valueChanged,
                        self.embed.toggled, self.gpu_container.currentIndexChanged,
-                       self.gpu_encoding.currentIndexChanged, self.convert_gpu_sources.toggled):
+                       self.gpu_encoding.currentIndexChanged, self.palette_conflict_policy.currentIndexChanged,
+                       self.convert_gpu_sources.toggled):
             signal.connect(self._schedule_check)
 
         # Anything stored in the project marks it modified; the tile selection does not.
         for box in (self.spacing, self.height_min, self.height_max, self.threads, self.texture_error,
-                    self.texture_detail, self.lod_distance):
+                    self.texture_detail, self.collision_error, self.collision_boundary_edge,
+                    self.collision_triangles, self.lod_distance):
             box.valueChanged.connect(self._mark_dirty)
         for box in (self.remap, self.embed, self.validate, self.convert_gpu_sources):
             box.toggled.connect(self._mark_dirty)
         for edit in (self.lods, self.out_dir, self.export_dir):
             edit.textChanged.connect(self._mark_dirty)
-        for combo in (self.origin, self.tile_cells, self.gpu_container, self.gpu_encoding):
+        for combo in (self.origin, self.tile_cells, self.gpu_container, self.gpu_encoding,
+                      self.palette_conflict_policy):
             combo.currentIndexChanged.connect(self._mark_dirty)
         self.material_panel.changed.connect(self._mark_dirty)
 
@@ -802,6 +836,9 @@ class MainWindow(QMainWindow):
             raw_size=self._raw_size,
             texture_error=self.texture_error.value(),
             texture_detail_m=self.texture_detail.value(),
+            collision_max_error_m=self.collision_error.value(),
+            collision_boundary_max_edge_m=self.collision_boundary_edge.value(),
+            collision_max_triangles_per_tile=self.collision_triangles.value(),
         )
 
     def _material(self) -> TerrainMaterial:
@@ -812,6 +849,7 @@ class MainWindow(QMainWindow):
                               embed_textures=self.embed.isChecked(), validate=self.validate.isChecked(),
                               threads=self.threads.value(), gpu_container=self.gpu_container.currentData(),
                               gpu_encoding=self.gpu_encoding.currentData(),
+                              palette_conflict_policy=self.palette_conflict_policy.currentData(),
                               convert_gpu_sources=self.convert_gpu_sources.isChecked())
 
     def _transform(self) -> tuple[float, float]:
@@ -916,7 +954,8 @@ class MainWindow(QMainWindow):
 
     def _load_source(self, path: str, raw_size: tuple[int, int] | None = None) -> None:
         material = self._material()
-        if (self._after_source is None and (material.has_paint() or material.has_surface_paint() or material.roads)
+        if (self._after_source is None and (material.has_paint() or material.has_surface_paint()
+                                            or material.has_physical_paint() or material.roads)
                 and QMessageBox.question(self, APP_NAME, "Opening another heightmap clears map-specific paint and "
                                          "roads. Continue?") != QMessageBox.StandardButton.Yes):
             return
@@ -951,6 +990,7 @@ class MainWindow(QMainWindow):
             self.export_dir.setText(base + "_adm")
             self._material().paint = None  # paint belongs to the previous heightmap
             self._material().surface_paint = None
+            self._material().physical_paint = None
             self._material().roads.clear()
             self._road_refresh()
         self._scale_changed()
@@ -1159,11 +1199,18 @@ class MainWindow(QMainWindow):
         current = self.paint_biome.currentText()
         self.paint_biome.blockSignals(True)
         self.paint_biome.clear()
-        choices = material.biomes if self.paint_kind.currentIndex() == 0 else material.surfaces
+        kind = self.paint_kind.currentIndex()
+        choices = (material.biomes if kind == 0 else material.surfaces if kind == 1
+                   else material.physical_materials)
         for item in choices:
-            self.paint_biome.addItem(swatch(item.color), item.name)
+            if kind == 2:
+                color = list(hashlib.sha256(item.id.encode("utf-8")).digest()[:3])
+                self.paint_biome.addItem(swatch(color), item.name)
+            else:
+                self.paint_biome.addItem(swatch(item.color), item.name)
         self.paint_biome.setCurrentIndex(max(0, self.paint_biome.findText(current)))
         self.paint_biome.blockSignals(False)
+        self.physical_materials_button.setVisible(kind == 2)
         self._road_refresh()
         self._update_tile_info()
         try:
@@ -1177,6 +1224,8 @@ class MainWindow(QMainWindow):
         self._field = None
         if self.map_mode.currentIndex() in (BIOMES_MODE, SURFACES_MODE):
             self._field_timer.start()
+        elif self.map_mode.currentIndex() == PHYSICAL_MODE:
+            self._update_map_image()
         else:
             self._show_material_warnings()
 
@@ -1316,14 +1365,20 @@ class MainWindow(QMainWindow):
                 return
             self.road_mode.setChecked(False)
             material = self._material()
-            surface = self.paint_kind.currentIndex() == 1
-            old = material.surface_paint if surface else material.paint
-            changed = (material.ensure_surface_paint(self.hm.width, self.hm.height) if surface
-                       else material.ensure_paint(self.hm.width, self.hm.height))
+            kind = self.paint_kind.currentIndex()
+            if kind == 2 and not material.physical_materials:
+                self.paint.setChecked(False)
+                QMessageBox.information(self, APP_NAME, "Create a physical material before painting assignments.")
+                return
+            old = (material.paint if kind == 0 else material.surface_paint if kind == 1
+                   else material.physical_paint)
+            ensure = (material.ensure_paint if kind == 0 else material.ensure_surface_paint if kind == 1
+                      else material.ensure_physical_paint)
+            changed = ensure(self.hm.width, self.hm.height)
             if changed and old is not None and np.any(old != PAINT_AUTO):
                 QMessageBox.information(self, APP_NAME, "The stored paint was made for a heightmap of another "
                                                         "size and was cleared.")
-            mode = SURFACES_MODE if surface else BIOMES_MODE
+            mode = (BIOMES_MODE if kind == 0 else SURFACES_MODE if kind == 1 else PHYSICAL_MODE)
             if self.map_mode.currentIndex() != mode:
                 self.map_mode.setCurrentIndex(mode)
             self.map_hint.setText("Left drag paints, right drag restores the underlying rules. "
@@ -1338,14 +1393,16 @@ class MainWindow(QMainWindow):
 
     def _paint_stroke(self, points, erase: bool) -> None:
         material = self._material()
-        surface = self.paint_kind.currentIndex() == 1
-        paint = material.surface_paint if surface else material.paint
+        kind = self.paint_kind.currentIndex()
+        paint = (material.paint if kind == 0 else material.surface_paint if kind == 1
+                 else material.physical_paint)
         if paint is None:
             return
         value = PAINT_AUTO if erase else self.paint_biome.currentIndex()
         if value < 0:
             return
-        cell = material.surface_paint_cell if surface else material.paint_cell
+        cell = (material.paint_cell if kind == 0 else material.surface_paint_cell if kind == 1
+                else material.physical_paint_cell)
         rows, cols = paint.shape
         radius = self.map._brush / cell
         r = int(math.ceil(radius))
@@ -1368,13 +1425,25 @@ class MainWindow(QMainWindow):
 
     def _clear_paint(self) -> None:
         material = self._material()
-        surface = self.paint_kind.currentIndex() == 1
-        if not (material.has_surface_paint() if surface else material.has_paint()):
+        kind = self.paint_kind.currentIndex()
+        has_paint = (material.has_paint() if kind == 0 else material.has_surface_paint() if kind == 1
+                     else material.has_physical_paint())
+        if not has_paint:
             return
         if QMessageBox.question(self, APP_NAME, "Remove all paint of this type?") != QMessageBox.StandardButton.Yes:
             return
-        (material.surface_paint if surface else material.paint)[:] = PAINT_AUTO
+        paint = material.paint if kind == 0 else material.surface_paint if kind == 1 else material.physical_paint
+        paint[:] = PAINT_AUTO
         self._paint_finished()
+
+    def _edit_physical_materials(self) -> None:
+        material = self._material()
+        dialog = PhysicalMaterialDialog(material, self)
+        dialog.exec()
+        if dialog.changed:
+            self.material_panel.refresh()
+            self._material_changed()
+            self._mark_dirty()
 
     def _road_refresh(self) -> None:
         material = self._material()
@@ -1494,6 +1563,14 @@ class MainWindow(QMainWindow):
             elif self.manifest is not None:
                 image = self._read_rgb(self.manifest.get("biomes_preview" if mode == BIOMES_MODE
                                                          else "surfaces_preview"))
+        elif mode == PHYSICAL_MODE:
+            material = self._material()
+            paint = material.physical_paint
+            if paint is not None:
+                image = np.full((*paint.shape, 3), (56, 61, 68), np.uint8)
+                for index, item in enumerate(material.physical_materials):
+                    color = np.asarray(list(hashlib.sha256(item.id.encode("utf-8")).digest()[:3]), np.uint8)
+                    image[paint == index] = color
         if image is None:
             image = self._relief
         self.map.set_density_visible(mode == DENSITY_MODE)
@@ -1546,6 +1623,14 @@ class MainWindow(QMainWindow):
         for lod in manifest["lods"]:
             lines.append(f"LOD {lod['index']}: ≤ {lod['max_error_m']:g} m (measured "
                          f"{lod['measured_error_m']:.3f} m), {lod['triangles']:,} triangles")
+        collision = manifest.get("collision")
+        if collision:
+            boundary_vertices = sum(tile["collision"]["boundary_vertices"] for tile in manifest["tiles"])
+            lines.append(f"Collision: ≤ {collision['max_error_m']:g} m (measured "
+                         f"{collision['max_measured_error_m']:.3f} m), "
+                         f"{collision['triangles']:,} triangles; "
+                         f"{boundary_vertices:,} refined tile-edge vertices; physical boundaries "
+                         f"≤ {collision['physical_boundary_max_edge_m']:g} m")
         tex = manifest.get("texturing", {})
         if tex:
             lines.append(f"Vertex layers: {len(tex.get('surfaces', []))} surfaces from "
@@ -1711,9 +1796,22 @@ class MainWindow(QMainWindow):
         lines = [f"Wrote {written:,} tiles ({result['bytes'] / 2**20:,.1f} MiB) in "
                  f"{result['seconds']:.1f} s, {result['skipped']:,} up to date",
                  f"Up to {result.get('max_primitives', 1)} materials per tile LOD (four surfaces each)"]
+        if self._material().has_physical_paint():
+            lines.append(f"{result.get('physical_triangles', 0):,} collision triangles have physical assignments.")
         if result.get("conflicts"):
-            lines.append(f"{result['conflicts']:,} triangles touched more than four surfaces; the weakest "
-                         "were dropped and visible seams may result. Lower Texture detail or simplify the biomes.")
+            lines.append(f"{result['conflicts']:,} triangles needed approximate palettes with at most four "
+                         "surfaces.")
+            for detail in result.get("conflict_details", []):
+                dropped = ", ".join(
+                    f"{surface['name']} ({surface['id']}) U8 (0-255) {surface['corner_weights']}"
+                    for surface in detail["dropped_surfaces"])
+                lines.append(f"{detail['tile_id']} LOD {detail['lod']} triangle "
+                             f"{detail['triangle_index']}: dropped corner weights for {dropped}")
+            if result.get("conflict_details_truncated"):
+                lines.append(f"{result['conflict_details_truncated']:,} more conflicting triangles omitted "
+                             "from the detail list.")
+            lines.append("Suggestion: reduce overlapping surface weights or paint fewer active surfaces "
+                         "with Surface on the Map tab.")
         lines += list(result.get("warnings", []))
         lines += [f"Folder: {result['out_dir']}",
                   "Import in Blender: File > Import > ADM Model, one .adm per tile."]
@@ -1861,6 +1959,9 @@ class MainWindow(QMainWindow):
         self.lods.setText(", ".join(f"{e:g}" for e in params.max_errors_m))
         self.texture_error.setValue(params.texture_error)
         self.texture_detail.setValue(params.texture_detail_m)
+        self.collision_error.setValue(params.collision_max_error_m)
+        self.collision_boundary_edge.setValue(params.collision_boundary_max_edge_m)
+        self.collision_triangles.setValue(params.collision_max_triangles_per_tile)
         self.out_dir.setText(params.out_dir)
         self.threads.setValue(params.threads)
         self.material_panel.set_material(project.material)
@@ -1870,6 +1971,12 @@ class MainWindow(QMainWindow):
         self.embed.setChecked(export.embed_textures)
         self.validate.setChecked(export.validate)
         self.convert_gpu_sources.setChecked(export.convert_gpu_sources)
+        policy_index = self.palette_conflict_policy.findData(export.palette_conflict_policy)
+        if policy_index < 0:
+            self.palette_conflict_policy.addItem(f"Unsupported: {export.palette_conflict_policy}",
+                                                 export.palette_conflict_policy)
+            policy_index = self.palette_conflict_policy.count() - 1
+        self.palette_conflict_policy.setCurrentIndex(policy_index)
         for combo, value in ((self.gpu_container, export.gpu_container),
                              (self.gpu_encoding, export.gpu_encoding)):
             index = combo.findData(value)

@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from awt.material import TerrainMaterial
+from awt.material import PhysicalMaterial, TerrainMaterial
 from awt.roads import Road
 from awt.terrain_presets import list_presets, load_preset, save_preset
 from awt.terrain_setup import apply_profile
@@ -49,6 +49,10 @@ class TerrainSetupTest(unittest.TestCase):
         material.paint[0, 0] = 1
         material.ensure_surface_paint(8, 8)
         material.surface_paint[0, 0] = 1
+        material.physical_materials.append(PhysicalMaterial("Ground", 0.6, 0.1))
+        material.surface("grass").physical_material_id = material.physical_materials[0].id
+        material.ensure_physical_paint(8, 8)
+        material.physical_paint[0, 0] = 0
         material.roads = [Road("soil", 4, 2, [[0, 0, 1], [7, 7, 2]])]
         material.biomes[0].noise = 0.65
 
@@ -61,14 +65,19 @@ class TerrainSetupTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(copied))
         self.assertIsNone(loaded.paint)
         self.assertIsNone(loaded.surface_paint)
+        self.assertIsNone(loaded.physical_paint)
         self.assertEqual(loaded.roads, [])
+        self.assertEqual(loaded.physical_materials, material.physical_materials)
+        self.assertEqual(loaded.surface("grass").physical_material_id,
+                         material.surface("grass").physical_material_id)
         self.assertEqual(loaded.surface_names(), material.surface_names())
+        self.assertEqual(loaded.surface("grass").id, material.surface("grass").id)
         self.assertEqual(loaded.biomes[0].surface_names(), material.biomes[0].surface_names())
         self.assertEqual(loaded.biomes[0].noise, 0.65)
         with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["version"], 2)
+            self.assertEqual(json.load(handle)["version"], 6)
 
-    def test_advanced_shader_settings_round_trip_in_preset_version_three(self):
+    def test_advanced_shader_settings_round_trip_in_preset_version_six(self):
         material = TerrainMaterial()
         texture = os.path.join(self.tmp.name, "height.png")
         Image.fromarray(np.full((4, 4), 128, np.uint8)).save(texture)
@@ -80,7 +89,7 @@ class TerrainSetupTest(unittest.TestCase):
         material.parallax_mode = "PARALLAX"
         folder = save_preset(os.path.join(self.tmp.name, "presets"), "Layered", material)
         with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["version"], 3)
+            self.assertEqual(json.load(handle)["version"], 6)
         loaded = load_preset(os.path.dirname(folder), "layered")
         self.assertTrue(loaded.height_blend_enabled)
         self.assertEqual(loaded.parallax_mode, "PARALLAX")
@@ -88,12 +97,12 @@ class TerrainSetupTest(unittest.TestCase):
         self.assertEqual(loaded.surface("grass").ao_strength, 0.6)
         self.assertTrue(loaded.surface("grass").height_map.path.startswith(os.path.join(folder, "textures")))
 
-    def test_per_map_gpu_encodings_round_trip_in_preset_version_four(self):
+    def test_per_map_gpu_encodings_round_trip_in_preset_version_six(self):
         material = TerrainMaterial()
         material.surface("grass").gpu_encodings = {"albedo": "BC7", "height": "RGBA8"}
         folder = save_preset(os.path.join(self.tmp.name, "presets"), "GPU", material)
         with open(os.path.join(folder, "preset.json"), encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["version"], 4)
+            self.assertEqual(json.load(handle)["version"], 6)
         loaded = load_preset(os.path.dirname(folder), "gpu")
         self.assertEqual(loaded.surface("grass").gpu_encodings, {"albedo": "BC7", "height": "RGBA8"})
 

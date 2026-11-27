@@ -11,9 +11,11 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-from awt.adm_export import (INDEX_NAME, ExportSettings, _core, changed_tiles, color1, export_tiles, group_masks,
-                            prepare_adm_texture, rules_outdated, triangle_masks)
-from awt.material import Band, Biome, BiomeSurface, MapSlot, TerrainMaterial, prepare_texture
+from awt.adm_export import (INDEX_NAME, ExportSettings, _core, _palette_conflict_details, changed_tiles, color1,
+                            export_tiles, group_masks, prepare_adm_texture, rules_outdated,
+                            seam_consistent_weights, triangle_masks)
+from awt.material import (Band, Biome, BiomeSurface, MapSlot, PhysicalMaterial, Surface, TerrainMaterial,
+                          prepare_texture)
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields, write_ply
 from awt.project import Project, load_project
@@ -78,7 +80,8 @@ class ExportTest(unittest.TestCase):
         rock.roughness_map.channel = 1
         rock.roughness_map.invert = True
         rock.normal = self.normal
-        self.settings = ExportSettings(out_dir=os.path.join(self.tmp.name, "adm"))
+        self.settings = ExportSettings(out_dir=os.path.join(self.tmp.name, "adm"),
+                                       palette_conflict_policy="APPROXIMATE")
 
     def _primitives(self, doc, chunks, mesh=0):
         out = []
@@ -86,6 +89,235 @@ class ExportTest(unittest.TestCase):
             attrs = {name: _accessor(doc, chunks, index) for name, index in prim["attributes"].items()}
             out.append((prim, attrs, _accessor(doc, chunks, prim["indices"]).reshape(-1, 3)))
         return out
+
+    def test_independent_collision_exports_as_a_mesh_collider(self):
+        self.params.collision_max_error_m = 0.8
+        self.params.collision_max_triangles_per_tile = 4096
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        result = export_tiles(manifest, self.material, self.settings, "all")
+        self.assertEqual(len(result["written"]), len(manifest["tiles"]))
+        tile = manifest["tiles"][0]
+        doc, chunks = _read_adm(os.path.join(self.settings.out_dir, tile["id"] + ".adm"))
+        self.assertEqual(len(doc["colliders"]), 1)
+        collider = doc["colliders"][0]
+        self.assertEqual(collider["shape"], "MESH")
+        self.assertEqual(collider["mesh"], len(tile["lods"]))
+        self.assertNotIn("physicalMaterial", collider)
+        self.assertNotIn("mesh", doc["nodes"][collider["node"]])
+        primitive = doc["meshes"][collider["mesh"]]["primitives"][0]
+        self.assertEqual(set(primitive["attributes"]), {"POSITION"})
+        positions = _accessor(doc, chunks, primitive["attributes"]["POSITION"])
+        indices = _accessor(doc, chunks, primitive["indices"])
+        self.assertEqual(positions.shape[1], 3)
+        self.assertEqual(indices.size, tile["collision"]["triangles"] * 3)
+        self.assertEqual(changed_tiles(manifest, self.material, self.settings), [])
+        original_digest = tile["collision"]["digest"]
+        tile["collision"]["digest"] = "modified-collision-digest"
+        self.assertEqual(changed_tiles(manifest, self.material, self.settings), [tile["id"]])
+        tile["collision"]["digest"] = original_digest
+        tile["collision"]["file"] = r"..\outside.ply"
+        with self.assertRaisesRegex(ValueError, "must remain inside the build directory"):
+            export_tiles(manifest, self.material, self.settings, "all")
+        manifest["tiles"][1].pop("collision")
+        with self.assertRaisesRegex(ValueError, "present for every tile"):
+            export_tiles(manifest, self.material, self.settings, "all")
+
+    def test_physical_paint_exports_stable_per_triangle_references(self):
+        self.params.collision_max_error_m = 0.8
+        self.params.collision_max_triangles_per_tile = 4096
+        physical = PhysicalMaterial("Packed ground", 0.72, 0.05, "adm.phys.ground.v1")
+        self.material.physical_materials.append(physical)
+        self.material.ensure_physical_paint(65, 49)
+        self.material.physical_paint[:, :16] = 0
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        self.assertFalse(rules_outdated(manifest, self.material))
+        result = export_tiles(manifest, self.material, self.settings, "all")
+        self.assertGreater(result["physical_triangles"], 0)
+        self.assertFalse(any("changed since the build" in warning for warning in result["warnings"]))
+        self.assertEqual(changed_tiles(manifest, self.material, self.settings), [])
+
+        tile = next(tile for tile in manifest["tiles"] if tile["id"] == "x000_y000")
+        doc, chunks = _read_adm(os.path.join(self.settings.out_dir, tile["id"] + ".adm"))
+        collider = doc["colliders"][0]
+        self.assertEqual(doc["physicalMaterials"], [{
+            "id": physical.id, "friction": 0.72, "restitution": 0.05, "profile": "adm.phys.ground.v1"
+        }])
+        self.assertIn("ADM_physical_surfaces_v1", doc["extensionsUsed"])
+        self.assertIn("ADM_physical_surfaces_v1", doc["extensionsRequired"])
+        primitives = doc["meshes"][collider["mesh"]]["primitives"]
+        assigned = [prim for prim in primitives if "ADM_physical_surfaces_v1" in prim.get("extensions", {})]
+        unassigned = [prim for prim in primitives if "ADM_physical_surfaces_v1" not in prim.get("extensions", {})]
+        self.assertTrue(assigned)
+        self.assertTrue(unassigned)
+        self.assertTrue(all(set(prim["extensions"]["ADM_physical_surfaces_v1"]["faceMaterials"]) ==
+                            {physical.id} for prim in assigned))
+        root_x = doc["nodes"][0]["translation"][0]
+        physical_map = self.material.physical_paint
+        physical_cell = self.material.physical_paint_cell
+        _source_x = manifest["bounds_m"][0]
+        for primitive, expected_painted in [(prim, True) for prim in assigned] + \
+                [(prim, False) for prim in unassigned]:
+            positions = _accessor(doc, chunks, primitive["attributes"]["POSITION"])
+            triangles = _accessor(doc, chunks, primitive["indices"]).reshape(-1, 3)
+            sample_columns = np.rint(
+                (root_x + positions[triangles, 0].mean(axis=1) - _source_x) / manifest["spacing_m"]
+            ).astype(int)
+            if expected_painted:
+                self.assertTrue(np.all(physical_map[0, np.clip(sample_columns // physical_cell, 0,
+                                                               physical_map.shape[1] - 1)] == 0))
+            else:
+                self.assertTrue(np.all(physical_map[0, np.clip(sample_columns // physical_cell, 0,
+                                                               physical_map.shape[1] - 1)] == 255))
+        from adm_blender.core.physical_surfaces import query_physical_material
+        assigned_index = doc["meshes"][collider["mesh"]]["primitives"].index(assigned[0])
+        self.assertEqual(query_physical_material(doc, 0, assigned_index, 0)["id"], physical.id)
+        unassigned_index = doc["meshes"][collider["mesh"]]["primitives"].index(unassigned[0])
+        self.assertIsNone(query_physical_material(doc, 0, unassigned_index, 0))
+
+        self.material.physical_paint[:, :16] = 255
+        self.assertEqual(set(changed_tiles(manifest, self.material, self.settings)),
+                         {"x000_y000", "x000_y001"})
+
+    def test_automatic_physical_classification_uses_dominant_weights_and_manual_override(self):
+        self.params.collision_max_error_m = 0.8
+        self.params.collision_max_triangles_per_tile = 4096
+        automatic = PhysicalMaterial("Automatic ground", 0.65, 0.02)
+        manual = PhysicalMaterial("Manual road", 0.8, 0.0)
+        self.material.physical_materials.extend((automatic, manual))
+        for surface in self.material.surfaces:
+            surface.physical_material_id = automatic.id
+        self.material.ensure_physical_paint(65, 49)
+        self.material.physical_paint[:, :16] = 1
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        tile = next(tile for tile in manifest["tiles"] if tile["id"] == "x000_y000")
+        vertices, faces = read_ply(os.path.join(self.params.out_dir, tile["collision"]["file"]))
+        fields = weight_fields(vertices)
+        weights = np.column_stack([vertices[name] for name in fields])
+        dominant = np.empty(len(faces), np.int64)
+        for start in range(0, len(faces), 4096):
+            stop = min(start + 4096, len(faces))
+            dominant[start:stop] = np.argmax(
+                weights[faces[start:stop]].astype(np.uint16).sum(axis=1), axis=1)
+        self.assertEqual(tile["collision"]["used_surfaces"], np.unique(dominant).tolist())
+
+        from awt.adm_export import _physical_face_assignments
+
+        expected = [automatic.id] * len(faces)
+        centroids_x = tile["origin_m"][0] + vertices["x"][faces].mean(axis=1)
+        columns = np.rint((centroids_x - manifest["bounds_m"][0]) / manifest["spacing_m"]).astype(int)
+        manual_faces = np.clip(columns, 0, self.material.physical_paint.shape[1] - 1) < 16
+        for index in np.flatnonzero(manual_faces):
+            expected[index] = manual.id
+        actual = _physical_face_assignments(manifest, tile, self.material, vertices, faces)
+        self.assertEqual(actual, expected)
+        self.assertTrue(np.any(manual_faces))
+        self.assertTrue(np.any(~manual_faces))
+
+        settings = ExportSettings(out_dir=os.path.join(self.tmp.name, "automatic-adm"),
+                                  palette_conflict_policy="APPROXIMATE")
+        export_tiles(manifest, self.material, settings, "all")
+        doc, _chunks = _read_adm(os.path.join(settings.out_dir, "x000_y000.adm"))
+        collider = doc["colliders"][0]
+        primitives = doc["meshes"][collider["mesh"]]["primitives"]
+        counts = {}
+        for primitive in primitives:
+            extension = primitive.get("extensions", {}).get("ADM_physical_surfaces_v1")
+            if extension:
+                for ident in extension["faceMaterials"]:
+                    counts[ident] = counts.get(ident, 0) + 1
+        self.assertEqual(counts, {automatic.id: int(np.count_nonzero(~manual_faces)),
+                                  manual.id: int(np.count_nonzero(manual_faces))})
+
+    def test_legacy_collision_manifest_without_dominant_metadata_remains_manual_only(self):
+        self.params.collision_max_error_m = 0.8
+        self.params.collision_max_triangles_per_tile = 4096
+        build(self.params, self.material)
+        manifest = load_manifest(self.params.out_dir)
+        tile = next(tile for tile in manifest["tiles"] if tile["id"] == "x000_y000")
+        vertices, faces = read_ply(os.path.join(self.params.out_dir, tile["collision"]["file"]))
+        physical = PhysicalMaterial("Ground", 0.6, 0.02)
+        self.material.physical_materials.append(physical)
+        self.material.surface("grass").physical_material_id = physical.id
+        legacy_tile = dict(tile)
+        legacy_tile["collision"] = {
+            key: value for key, value in tile["collision"].items() if key != "used_surfaces"
+        }
+        legacy_manifest = dict(manifest, format_version=3)
+
+        from awt.adm_export import _physical_face_assignments
+
+        legacy_assignments = _physical_face_assignments(
+            legacy_manifest, legacy_tile, self.material, vertices, faces)
+        self.assertEqual(legacy_assignments, [None] * len(faces))
+
+        self.material.ensure_physical_paint(65, 49)
+        self.material.physical_paint[:, :16] = 0
+        legacy_assignments = _physical_face_assignments(
+            legacy_manifest, legacy_tile, self.material, vertices, faces)
+        self.assertIn(physical.id, legacy_assignments)
+        self.assertIn(None, legacy_assignments)
+        with self.assertRaisesRegex(ValueError, "used_surfaces metadata is missing"):
+            _physical_face_assignments(manifest, legacy_tile, self.material, vertices, faces)
+        legacy_v4 = dict(legacy_manifest, format_version=4)
+        with self.assertRaisesRegex(ValueError, "used_surfaces metadata is missing"):
+            _physical_face_assignments(legacy_v4, legacy_tile, self.material, vertices, faces)
+        invalid_manifest = dict(
+            manifest,
+            tiles=[legacy_tile if item["id"] == tile["id"] else item for item in manifest["tiles"]])
+        with self.assertRaisesRegex(ValueError, "used_surfaces metadata is missing"):
+            changed_tiles(invalid_manifest, self.material, self.settings)
+
+    def test_physical_paint_requires_collision_meshes(self):
+        self.material.physical_materials.append(PhysicalMaterial("Ground", 0.6, 0.0))
+        self.material.ensure_physical_paint(65, 49)
+        self.material.physical_paint[0, 0] = 0
+        with self.assertRaisesRegex(ValueError, "requires built collision meshes"):
+            export_tiles(self.manifest, self.material, self.settings, "all")
+
+    def test_unused_physical_material_does_not_change_existing_exports(self):
+        export_tiles(self.manifest, self.material, self.settings, "all")
+        self.material.physical_materials.append(PhysicalMaterial("Unused ground", 0.6, 0.0))
+        self.assertEqual(changed_tiles(self.manifest, self.material, self.settings), [])
+
+    def test_surface_physical_mapping_selectively_invalidates_collision_tiles(self):
+        source = os.path.join(self.tmp.name, "flat.npy")
+        np.save(source, np.full((33, 33), 10.0, np.float32))
+        params = BuildParams(input_path=source, out_dir=os.path.join(self.tmp.name, "auto_key_build"),
+                             tile_cells=32, max_errors_m=[0.2], collision_max_error_m=0.5)
+        material = TerrainMaterial()
+        physical = PhysicalMaterial("Ground", 0.6, 0.05)
+        material.physical_materials.append(physical)
+        build(params, material)
+        manifest = load_manifest(params.out_dir)
+        settings = ExportSettings(out_dir=os.path.join(self.tmp.name, "auto_key_adm"),
+                                  palette_conflict_policy="APPROXIMATE")
+        export_tiles(manifest, material, settings, "all")
+        tile = manifest["tiles"][0]
+        used = set(tile["collision"]["used_surfaces"])
+        unused_index = next(index for index in range(len(material.surfaces)) if index not in used)
+        material.surfaces[unused_index].physical_material_id = physical.id
+        self.assertEqual(changed_tiles(manifest, material, settings), [])
+        used_index = min(used)
+        material.surfaces[used_index].physical_material_id = physical.id
+        self.assertEqual(changed_tiles(manifest, material, settings), [tile["id"]])
+
+    def test_removing_physical_material_clears_and_remaps_painted_indices(self):
+        material = TerrainMaterial()
+        material.physical_materials = [
+            PhysicalMaterial("Ground", 0.6, 0.0),
+            PhysicalMaterial("Stone", 0.8, 0.0),
+            PhysicalMaterial("Wood", 0.4, 0.1),
+        ]
+        material.ensure_physical_paint(4, 2)
+        material.physical_paint[0] = [0, 1, 2, 255]
+        material.surface("grass").physical_material_id = material.physical_materials[1].id
+        material.remove_physical_material(1)
+        self.assertEqual(material.physical_paint[0].tolist(), [0, 255, 1, 255])
+        self.assertEqual(material.surface("grass").physical_material_id, "")
+        material.validate_rules()
 
     def test_irregular_tile_and_mixed_lod_shader_phase_at_shared_vertices(self):
         _core()
@@ -267,15 +499,49 @@ class ExportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported terrain shader settings.*future_effect"):
             restored.material.validate()
 
-    def test_advanced_project_uses_version_five_and_legacy_load_defaults(self):
+    def test_project_v12_physical_material_links_and_legacy_load_defaults(self):
         project = Project.new()
         project.material.height_blend_enabled = True
-        project.material.surface("grass").height_map = MapSlot("height.png")
+        height_path = Path(self.tmp.name, "height.png")
+        height_path.write_bytes(b"height")
+        project.material.surface("grass").height_map = MapSlot(str(height_path))
+        physical = PhysicalMaterial("Ground", 0.6, 0.1, "adm.phys.ground.v1")
+        project.material.physical_materials.append(physical)
+        project.material.surface("grass").physical_material_id = physical.id
+        project.material.ensure_physical_paint(8, 8)
+        project.material.physical_paint[2:4, 3:6] = 0
         payload = project.to_dict()
-        self.assertEqual(payload["format_version"], 5)
+        self.assertEqual(payload["format_version"], 12)
+        self.assertEqual(payload["export"]["palette_conflict_policy"], "STRICT")
         restored = Project.from_dict(payload)
         self.assertTrue(restored.material.height_blend_enabled)
-        self.assertEqual(restored.material.surface("grass").height_map.path, "height.png")
+        self.assertEqual(restored.material.surface("grass").height_map.path, str(height_path))
+        self.assertEqual(restored.material.surface("grass").id, project.material.surface("grass").id)
+        self.assertEqual(restored.material.physical_materials, [physical])
+        self.assertEqual(restored.material.surface("grass").physical_material_id, physical.id)
+        self.assertEqual(restored.material.rules_digest(), project.material.rules_digest())
+        self.assertEqual(restored.material.fingerprint(64), project.material.fingerprint(64))
+        self.assertTrue(np.array_equal(restored.material.physical_paint, project.material.physical_paint))
+        legacy = project.to_dict()
+        legacy["export"].pop("palette_conflict_policy")
+        legacy["material"] = TerrainMaterial().to_dict(None)
+        for surface in legacy["material"]["surfaces"]:
+            surface.pop("id")
+        legacy["build"].pop("collision_max_error_m")
+        legacy["build"].pop("collision_max_triangles_per_tile")
+        legacy["build"].pop("collision_boundary_max_edge_m")
+        for version in (2, 3, 4, 5, 6, 7, 8, 9, 10):
+            legacy["format_version"] = version
+            loaded = Project.from_dict(legacy)
+            expected_policy = "APPROXIMATE" if version < 7 else "STRICT"
+            self.assertEqual(loaded.export.palette_conflict_policy, expected_policy)
+            self.assertEqual(loaded.material.surface("grass").id, Surface("grass").id)
+            self.assertEqual(loaded.params.collision_max_error_m, 0.0)
+            self.assertEqual(loaded.params.collision_max_triangles_per_tile, 262144)
+        legacy_v11 = project.to_dict()
+        legacy_v11["format_version"] = 11
+        legacy_v11["build"].pop("collision_boundary_max_edge_m")
+        self.assertEqual(Project.from_dict(legacy_v11).params.collision_boundary_max_edge_m, 4.0)
         for version in (2, 3, 4):
             payload["format_version"] = version
             payload["material"] = TerrainMaterial().to_dict(None)
@@ -364,10 +630,21 @@ class ExportTest(unittest.TestCase):
         self.assertGreater(float(np.ptp(colors[:, 0])), 0.1)
         self.assertTrue(np.any(colors[:, 1] > 0))
 
+    def test_surface_ids_remain_stable_when_renamed(self):
+        material = TerrainMaterial()
+        ident = material.surface("grass").id
+        material.rename_surface("grass", "turf")
+        self.assertEqual(material.surface("turf").id, ident)
+        self.assertEqual(Surface("grass").id, ident)
+        material.surface("turf").id = "x" * 129
+        with self.assertRaisesRegex(ValueError, "128 UTF-8 bytes"):
+            material.validate_rules()
+
     def test_tiles_validate_and_keep_world_placement(self):
         result = export_tiles(self.manifest, self.material, self.settings, "all")
         self.assertEqual(len(result["written"]), len(self.manifest["tiles"]))
-        self.assertEqual(result["warnings"], [])
+        self.assertTrue(any("Approximate palette reduction affected" in warning for warning in result["warnings"]))
+        self.assertGreater(result["max_reduction_error"], 0)
         textures = os.listdir(os.path.join(self.settings.out_dir, "textures"))
         self.assertEqual(len(textures), 6)  # three role-aware textures, each with a DDS and PNG
         self.assertTrue(any(name.startswith("grass_albedo_") and name.endswith(".dds") for name in textures))
@@ -382,6 +659,9 @@ class ExportTest(unittest.TestCase):
         for material in doc["materials"]:
             self.assertEqual(material["shader"]["id"], "adm.terrain.four_layer")
             self.assertEqual(material["shaderParameters"]["uv_scale"][0] > 0, True)
+            surface_names = material["name"].split(" ", 3)[-1].split("+")
+            surface_ids = material["extensions"]["ADM_terrain_surface_v1"]["surfaceIds"]
+            self.assertEqual(surface_ids, [self.material.surface(name).id for name in surface_names])
         self.assertEqual(len(doc["textures"]), len(doc["images"]) // 2)
         for texture in doc["textures"]:
             primary = doc["images"][texture["source"]]
@@ -457,11 +737,118 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(conflicts, 1)  # second triangle touches five surfaces
         self.assertEqual(bin(int(bits[1])).count("1"), 4)
         self.assertFalse(int(bits[1]) >> 3 & 1)  # the weakest surface (index 3) is dropped
+        details = _palette_conflict_details(
+            weights, faces, [Surface(f"surface-{i}") for i in range(6)], "tile-a", 1, 1)
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]["triangle_index"], 1)
+        self.assertEqual(details[0]["dropped_surfaces"], [{
+            "id": Surface("surface-3").id,
+            "name": "surface-3",
+            "corner_weights": [0, 40, 0],
+        }])
         sets, assign = group_masks([0b0011, 0b0110, 0b110000, 0b1111])
         self.assertTrue(all(bin(s).count("1") <= 4 for s in sets))
         for mask, index in assign.items():
             self.assertEqual(mask & ~sets[index], 0)
         self.assertEqual(color1(weights[3:4], [4, 5]).tolist(), [[87, 168, 0, 0]])
+
+    def test_approximate_palette_reduction_keeps_shared_vertex_weights_consistent(self):
+        weights = np.array([[51, 51, 51, 51, 51], [51, 51, 51, 51, 51],
+                            [255, 0, 0, 0, 0], [0, 60, 60, 60, 75]], dtype=np.uint8)
+        faces = np.array([[2, 0, 1], [0, 3, 1]])
+        masks, conflicts = triangle_masks(weights, faces)
+        self.assertEqual(conflicts, 2)
+        sets, assign = group_masks(masks)
+        face_palettes = np.fromiter((sets[assign[int(mask)]] for mask in masks), dtype=np.uint64)
+        effective, errors = seam_consistent_weights(weights, faces, face_palettes)
+
+        edge_values = {}
+        for face, palette in zip(faces, face_palettes):
+            slots = [slot for slot in range(weights.shape[1]) if int(palette) & (1 << slot)]
+            encoded = color1(effective[face], slots)
+            for vertex, values in zip(face, encoded):
+                actual = np.zeros(weights.shape[1], dtype=np.uint8)
+                actual[slots] = values[:len(slots)]
+                if vertex in edge_values:
+                    np.testing.assert_array_equal(actual, edge_values[vertex])
+                else:
+                    edge_values[vertex] = actual
+        self.assertGreater(errors[0], 0)
+        self.assertGreater(errors[1], 0)
+        self.assertEqual(effective[0].argmax(), weights[0].argmax())
+        self.assertEqual(effective[1].argmax(), weights[1].argmax())
+
+    def test_strict_palette_policy_rejects_before_writing_tiles(self):
+        output = os.path.join(self.tmp.name, "strict_adm")
+        settings = ExportSettings(out_dir=output, palette_conflict_policy="STRICT")
+        with patch("awt.adm_export._tile_palette_conflicts", return_value=1):
+            with self.assertRaisesRegex(ValueError, "Strict export rejected 4 triangles"):
+                export_tiles(self.manifest, self.material, settings, "all")
+        self.assertEqual(os.listdir(output), [])
+
+    def test_reference_project_palette_conflicts_and_measured_reduction(self):
+        project_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "reference_project", "advanced_reference.awtp"))
+        project = load_project(project_path)
+        project.params.out_dir = os.path.join(self.tmp.name, "reference_build")
+        build(project.params, project.material)
+        manifest = load_manifest(project.params.out_dir)
+
+        strict_output = os.path.join(self.tmp.name, "reference_strict")
+        strict = ExportSettings(out_dir=strict_output, palette_conflict_policy="STRICT")
+        with self.assertRaisesRegex(ValueError, "Strict export rejected 54 triangles") as raised:
+            export_tiles(manifest, project.material, strict, "all")
+        self.assertEqual(os.listdir(strict_output), [])
+        self.assertIn("x000_y001 LOD 0 triangle", str(raised.exception))
+        self.assertIn("corner weights", str(raised.exception))
+        self.assertIn("Surface on the Map tab", str(raised.exception))
+
+        approximate = ExportSettings(
+            out_dir=os.path.join(self.tmp.name, "reference_approximate"),
+            palette_conflict_policy="APPROXIMATE")
+        result = export_tiles(manifest, project.material, approximate, "all")
+        self.assertEqual(result["conflicts"], 54)
+        self.assertEqual(len(result["conflict_details"]), 20)
+        self.assertEqual(result["conflict_details_truncated"], 34)
+        self.assertEqual(result["conflict_details"], sorted(
+            result["conflict_details"],
+            key=lambda item: (item["tile_id"], item["lod"], item["triangle_index"])))
+        self.assertLess(result["mean_reduction_error"], 0.02)
+        self.assertLess(result["max_reduction_error"], 0.05)
+
+        by_world_position = {}
+        boundary_comparisons = 0
+        cross_tile_or_lod_comparisons = 0
+        max_boundary_error = 0.0
+        for tile in manifest["tiles"]:
+            doc, chunks = _read_adm(os.path.join(approximate.out_dir, tile["id"] + ".adm"))
+            translation = np.asarray(doc["nodes"][0]["translation"])
+            for lod_index, lod in enumerate(doc["meshes"]):
+                by_position = {}
+                for primitive in lod["primitives"]:
+                    surface_names = doc["materials"][primitive["material"]]["name"].split(" ", 3)[-1].split("+")
+                    attributes = {name: _accessor(doc, chunks, index)
+                                  for name, index in primitive["attributes"].items()}
+                    for position, weights in zip(attributes["POSITION"], attributes["COLOR_1"]):
+                        world = position + translation
+                        key = (round(float(world[0]), 5), round(float(world[2]), 5))
+                        values = {name: float(weights[index]) for index, name in enumerate(surface_names)}
+                        for previous in (by_position.get(key), by_world_position.get(key)):
+                            if previous is None:
+                                continue
+                            shared_names = set(previous[2]) | set(values)
+                            total_variation = 0.5 * sum(
+                                abs(previous[2].get(name, 0.0) - values.get(name, 0.0))
+                                for name in shared_names)
+                            max_boundary_error = max(max_boundary_error, total_variation)
+                            boundary_comparisons += 1
+                            if previous[0] != tile["id"] or previous[1] != lod_index:
+                                cross_tile_or_lod_comparisons += 1
+                        by_position[key] = (tile["id"], lod_index, values)
+                        by_world_position[key] = (tile["id"], lod_index, values)
+        self.assertGreater(boundary_comparisons, 0)
+        self.assertGreater(cross_tile_or_lod_comparisons, 0)
+        self.assertLessEqual(max_boundary_error, 0.01)
 
     def test_height_blending_is_independent_of_primitive_slot_order(self):
         from adm_blender.core.material_math import height_blend_weights
@@ -808,7 +1195,7 @@ class ExportTest(unittest.TestCase):
         self.assertTrue(any("retains R16 in KTX2" in warning for warning in result["warnings"]))
         project = Project(self.params, self.material, self.settings)
         data = project.to_dict()
-        self.assertEqual(data["format_version"], 6)
+        self.assertEqual(data["format_version"], 12)
         restored = Project.from_dict(data)
         self.assertEqual((restored.export.gpu_container, restored.export.gpu_encoding), ("KTX2", "RGBA8"))
         self.assertEqual(self.material.rules_digest(), restored.material.rules_digest())
@@ -903,7 +1290,7 @@ class ExportTest(unittest.TestCase):
                         shared = True
         self.assertTrue(shared)
         data = Project(self.params, self.material, self.settings).to_dict()
-        self.assertEqual(data["format_version"], 6)
+        self.assertEqual(data["format_version"], 12)
         self.assertEqual(Project.from_dict(data).material.surface("rock").gpu_encodings, rock.gpu_encodings)
         rock.gpu_encodings["height"] = "UNKNOWN"
         with self.assertRaisesRegex(ValueError, "unsupported per-map GPU encoding"):
@@ -1146,7 +1533,7 @@ class ExportTest(unittest.TestCase):
         for embedded in (False, True):
             with self.subTest(embedded=embedded):
                 settings = ExportSettings(out_dir=os.path.join(self.tmp.name, f"out-{embedded}"),
-                                          embed_textures=embedded)
+                                          embed_textures=embedded, palette_conflict_policy="APPROXIMATE")
                 result = export_tiles(self.manifest, self.material, settings, "all")
                 self.assertTrue(any("uses a 16-bit PNG primary" in warning for warning in result["warnings"]))
                 found = False
@@ -1201,7 +1588,7 @@ class ExportTest(unittest.TestCase):
         for embedded in (False, True):
             with self.subTest(embedded=embedded):
                 settings = ExportSettings(out_dir=os.path.join(self.tmp.name, f"tiff-out-{embedded}"),
-                                          embed_textures=embedded)
+                                          embed_textures=embedded, palette_conflict_policy="APPROXIMATE")
                 result = export_tiles(self.manifest, self.material, settings, "all")
                 self.assertTrue(any("uses a 16-bit PNG primary" in warning for warning in result["warnings"]))
                 found = False
@@ -1277,6 +1664,8 @@ class ExportTest(unittest.TestCase):
             prepare_texture(path)
 
     def test_project_round_trip_uses_relative_paths(self):
+        self.params.collision_max_error_m = 0.6
+        self.params.collision_max_triangles_per_tile = 1234
         project = Project.new(self.src)
         project.params = self.params
         project.material = self.material

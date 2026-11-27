@@ -34,6 +34,9 @@ def _build(args: argparse.Namespace) -> int:
         raw_size=tuple(args.raw_size) if args.raw_size else None,
         texture_error=args.texture_error,
         texture_detail_m=args.texture_detail,
+        collision_max_error_m=args.collision_error,
+        collision_boundary_max_edge_m=args.collision_boundary_max_edge,
+        collision_max_triangles_per_tile=args.collision_max_triangles,
     )
     params.validate()
     project = None
@@ -74,6 +77,10 @@ def _build(args: argparse.Namespace) -> int:
     for lod in manifest["lods"]:
         print(f"LOD {lod['index']}: max error {lod['max_error_m']:g} m, measured {lod['measured_error_m']:.4f} m, "
               f"{lod['triangles']:,} triangles, {lod['vertices']:,} vertices")
+    if "collision" in manifest:
+        collision = manifest["collision"]
+        print(f"Collision: max error {collision['max_error_m']:g} m, measured "
+              f"{collision['max_measured_error_m']:.4f} m, {collision['triangles']:,} triangles total")
     timings = manifest["timings"]
     print(f"{manifest['tiles_x']} x {manifest['tiles_y']} tiles in {timings['total_s']:.1f} s "
           f"(errors {timings['errors_s']:.1f} s, tiles {timings['tiles_s']:.1f} s) -> {params.out_dir}")
@@ -114,8 +121,21 @@ def _export(args: argparse.Namespace) -> int:
     print(f"{len(result['written'])} tiles written ({result['bytes'] / 2**20:,.1f} MiB), "
           f"{result['skipped']} unchanged or not selected, {result['seconds']:.1f} s -> {result['out_dir']}")
     if result["conflicts"]:
-        print(f"warning: {result['conflicts']:,} triangles needed more than four surfaces; "
-              "the weakest were dropped and visible seams may result")
+        print(f"warning: approximate palette policy reduced weights on "
+              f"{result['conflicts']:,} triangles; {result['reduced_vertices']:,} vertex instances "
+              f"had a mean total-variation error of {result['mean_reduction_error']:.1%} and a maximum "
+              f"of {result['max_reduction_error']:.1%}")
+        for detail in result.get("conflict_details", []):
+            dropped = ", ".join(
+                f"{surface['name']} ({surface['id']}) U8 corner weights (0-255) "
+                f"{surface['corner_weights']}"
+                for surface in detail["dropped_surfaces"])
+            print(f"  {detail['tile_id']} LOD {detail['lod']} triangle {detail['triangle_index']}: "
+                  f"dropped {dropped}")
+        if result.get("conflict_details_truncated"):
+            print(f"  ... {result['conflict_details_truncated']:,} more conflicting triangles")
+        print("  suggestion: reduce overlapping surface weights or paint fewer active surfaces "
+              "with Surface on the Map tab")
     for warning in result["warnings"]:
         print(f"warning: {warning}")
     return 0
@@ -158,6 +178,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="split triangles where vertex weights miss the field by more than this (0..1, 0 = off)")
     z.add_argument("--texture-detail", type=float, default=4.0, metavar="M",
                    help="shortest triangle leg the texture split may create, metres (default 4)")
+    b.add_argument("--collision-error", type=float, default=0.0, metavar="M",
+                   help="build an independent collision mesh with this maximum height error; 0 disables it")
+    b.add_argument("--collision-boundary-max-edge", type=float, default=4.0, metavar="M",
+                   help="maximum split-edge length near physical-material boundaries (default 4 m)")
+    b.add_argument("--collision-max-triangles", type=int, default=262144, metavar="COUNT",
+                   help="hard per-tile collision triangle limit (default 262144)")
     b.add_argument("--save-project", metavar="FILE", help="also save these settings as an .awtp project")
     b.set_defaults(func=_build)
 

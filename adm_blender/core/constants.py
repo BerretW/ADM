@@ -1,5 +1,9 @@
 """Normative constant tables of ADM 1.0."""
 
+import json
+from pathlib import Path
+
+
 ADM_MAGIC = b"ADM0"
 ANIM_MAGIC = b"AMA0"
 VERSION_MAJOR = 1
@@ -125,6 +129,8 @@ VERTEX_CONTROL_PARAMS = {
 }
 EXTERNAL_IMAGES_EXT = "ADM_external_images_v1"
 PHYSICAL_SURFACES_EXT = "ADM_physical_surfaces_v1"
+PHYSICAL_SURFACE_TYPES_EXT = "ADM_physical_surface_types_v1"
+TERRAIN_SURFACE_EXT = "ADM_terrain_surface_v1"
 INTERACTIVE_SURFACES_EXT = "ADM_interactive_surfaces_v1"
 INTERACTIVE_SURFACES_VERSION = "1.0.0"
 INTERACTIVE_SURFACES_CAPABILITY = "ADM-INTERACTIVE-SURFACES-1"
@@ -138,12 +144,17 @@ ANIMATION_TIMING_EXT = "ADM_animation_timing_v1"
 ANIMATION_TIMING_VERSION = "1.1.0"
 ANIMATION_TIMING_CAPABILITY = "ADM-ANIMATION-TIMING-1"
 SUPPORTED_EXTENSIONS = (LAYERS_EXT, VERTEX_CONTROL_EXT, MATERIAL_HEIGHT_EXT, EXTERNAL_IMAGES_EXT,
-                        PHYSICAL_SURFACES_EXT, INTERACTIVE_SURFACES_EXT, HUMANOID_SOCKETS_EXT,
-                        JOINT_DISPLAY_EXT, ANIMATION_TIMING_EXT)
+                        PHYSICAL_SURFACES_EXT, PHYSICAL_SURFACE_TYPES_EXT, TERRAIN_SURFACE_EXT,
+                        INTERACTIVE_SURFACES_EXT,
+                        HUMANOID_SOCKETS_EXT, JOINT_DISPLAY_EXT, ANIMATION_TIMING_EXT)
 PHYSICAL_SURFACE_PROFILES = (
     "adm.phys.wood.v1", "adm.phys.metal.v1", "adm.phys.stone.v1",
     "adm.phys.ground.v1", "adm.phys.glass.v1",
 )
+with Path(__file__).with_name("physical_surface_registry.json").open(encoding="utf-8") as _registry_file:
+    PHYSICAL_SURFACE_REGISTRY = json.load(_registry_file)
+PHYSICAL_SURFACE_TYPES = {record["id"]: record for record in PHYSICAL_SURFACE_REGISTRY["types"]}
+PHYSICAL_SURFACE_TAGS = frozenset(PHYSICAL_SURFACE_REGISTRY["tags"])
 SHADER_PARAM_TYPES = ("F32", "VEC2", "VEC3", "VEC4", "BOOL", "TEXTURE", "ENUM")
 SHADER_NUMERIC_DIMS = {"F32": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
 OFFICIAL_SHADER_KINDS = {

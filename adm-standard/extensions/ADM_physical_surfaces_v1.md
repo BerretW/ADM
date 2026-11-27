@@ -46,3 +46,12 @@ Blender collision meshes store the stable IDs in a string FACE attribute named
 `adm_physical_material_id`. The collider-level `physicalMaterial` remains the default. Exporters
 MUST apply the face IDs after triangulation so each emitted triangle has one stable ID. Importers
 MUST restore the FACE attribute without depending on visual material slots.
+
+## Resolve a physical material
+
+For a collider query, return its `physicalMaterial` record when present. For a MESH collider
+triangle query, use that primitive's `faceMaterials[triangleIndex]` when the per-face extension is
+present; otherwise use the collider's `physicalMaterial` default. If neither reference is present,
+the query returns no physical material. `primitiveIndex` and `triangleIndex` address the collider's
+referenced mesh and each primitive's triangulated index order. Visual material slots MUST NOT affect
+the result.

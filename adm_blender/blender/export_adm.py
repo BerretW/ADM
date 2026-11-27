@@ -490,6 +490,19 @@ class ModelExporter:
             if primitive_ids is None or primitive_ids.domain != "FACE" or primitive_ids.data_type != "INT":
                 raise ExportError(f"'{obj.name}': cannot preserve unknown primitive extensions without "
                                   f"the FACE INT attribute {UNKNOWN_PRIMITIVE_ATTRIBUTE}")
+        face_physical_ids = None
+        physical_attr = me.attributes.get("adm_physical_material_id") if collision else None
+        if physical_attr is not None:
+            if physical_attr.domain != "FACE" or physical_attr.data_type != "STRING":
+                raise ExportError(f"collider '{obj.name}': adm_physical_material_id must be a FACE string attribute")
+            try:
+                face_physical_ids = [
+                    value.decode("utf-8") if isinstance(value, bytes) else value
+                    for value in (physical_attr.data[int(poly)].value for poly in tri_polygons)
+                ]
+            except UnicodeDecodeError as exc:
+                raise ExportError(f"collider '{obj.name}': adm_physical_material_id contains invalid UTF-8") from exc
+        fallback_physical_id = obj.adm.physical_material.strip() if collision else ""
         groups = defaultdict(list)
         for ti, (slot, exported_mat, poly) in enumerate(zip(tri_mat, prim_mats, tri_polygons)):
             source = (obj.material_slots[int(slot)].material
@@ -532,7 +545,8 @@ class ModelExporter:
             primitive_id = int(primitive_ids.data[int(poly)].value) if primitive_ids is not None else 0
             if primitive_id < 0 or (primitive_id and primitive_id not in primitive_extensions):
                 raise ExportError(f"'{obj.name}': invalid unknown primitive extension face ID {primitive_id}")
-            group += (primitive_id,)
+            has_physical_id = bool((face_physical_ids and face_physical_ids[ti]) or fallback_physical_id)
+            group += (primitive_id, has_physical_id)
             groups[group].append(ti)
         has_interactive = any(group[1] for group in groups)
         if primitive_ids is not None:
@@ -544,19 +558,6 @@ class ModelExporter:
                 raise ExportError(f"'{obj.name}': a primitive with unknown extensions has no exported faces")
             self.warn(f"'{obj.name}': unknown primitive extensions are preserved as opaque JSON; "
                       "their internal references and meaning cannot be checked or remapped")
-        face_physical_ids = None
-        physical_attr = me.attributes.get("adm_physical_material_id") if collision else None
-        if physical_attr is not None:
-            if physical_attr.domain != "FACE" or physical_attr.data_type != "STRING":
-                raise ExportError(f"collider '{obj.name}': adm_physical_material_id must be a FACE string attribute")
-            try:
-                face_physical_ids = [
-                    value.decode("utf-8") if isinstance(value, bytes) else value
-                    for value in (physical_attr.data[int(poly)].value for poly in tri_polygons)
-                ]
-            except UnicodeDecodeError as exc:
-                raise ExportError(f"collider '{obj.name}': adm_physical_material_id contains invalid UTF-8") from exc
-
         columns = [loop_vert[tri_loops].astype(np.float64)[:, None]]
         normals = tangents = None
         if not collision and self.opts.export_normals:
@@ -672,7 +673,7 @@ class ModelExporter:
             if has_interactive or has_height_parallax or any(uv != 0 for uv in material_uvs.values()):
                 used_uvs = {
                     material_uvs.get(m, 0)
-                    for m, _, _, _, _ in groups
+                    for m, _, _, _, _, _ in groups
                 }
                 for uv_index in used_uvs:
                     if uv_index >= len(uvs):
@@ -722,7 +723,7 @@ class ModelExporter:
         prims = []
         interactive = {}
         mesh_targets_used = bool(key_names)
-        for (m, ident, texcoord, ratio, primitive_id), triangles in sorted(groups.items()):
+        for (m, ident, texcoord, ratio, primitive_id, _has_physical_id), triangles in sorted(groups.items()):
             tri_sel = np.asarray(triangles, dtype=np.int64)
             corner_sel = (tri_sel[:, None] * 3 + np.arange(3)[None, :]).reshape(-1)
             group_tangents = tangents
@@ -767,8 +768,7 @@ class ModelExporter:
             if m >= 0:
                 prim["material"] = int(m)
             if face_physical_ids is not None and any(face_physical_ids[i] for i in tri_sel):
-                fallback_id = obj.adm.physical_material.strip()
-                resolved_ids = [face_physical_ids[i] or fallback_id for i in tri_sel]
+                resolved_ids = [face_physical_ids[i] or fallback_physical_id for i in tri_sel]
                 if any(not ident for ident in resolved_ids):
                     raise ExportError(f"collider '{obj.name}': every face with physical material data must name "
                                       "a physical material ID or use the collider default")
@@ -1018,6 +1018,27 @@ class ModelExporter:
                 record["profile"] = item.profile
                 self.mat.extensions_used.add(K.PHYSICAL_SURFACES_EXT)
                 self.mat.extensions_required.add(K.PHYSICAL_SURFACES_EXT)
+            try:
+                surface_tags = json.loads(item.surface_tags_json)
+            except json.JSONDecodeError as exc:
+                raise ExportError(f"physical material '{item.name}': Physical Tags JSON is invalid") from exc
+            if not isinstance(surface_tags, list):
+                raise ExportError(f"physical material '{item.name}': Physical Tags JSON must be an array")
+            surface_type = item.surface_type.strip()
+            surface_subtype = item.surface_subtype.strip()
+            surface_description = item.surface_description.strip()
+            if surface_type or surface_subtype or surface_tags or surface_description:
+                if not surface_type:
+                    raise ExportError(f"physical material '{item.name}': set a Physical Type before other metadata")
+                record["type"] = surface_type
+                if surface_subtype:
+                    record["subtype"] = surface_subtype
+                if surface_tags:
+                    record["tags"] = surface_tags
+                if surface_description:
+                    record["description"] = surface_description
+                self.mat.extensions_used.add(K.PHYSICAL_SURFACE_TYPES_EXT)
+                self.mat.extensions_required.add(K.PHYSICAL_SURFACE_TYPES_EXT)
             physical.append(record)
         components = []
         for item in props.model_components:

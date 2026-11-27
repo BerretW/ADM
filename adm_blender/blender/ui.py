@@ -244,7 +244,8 @@ def draw_object_props(layout, context, obj):
 def draw_model_metadata(layout, props):
     for collection, index, title, fields in (
             ("physical_materials", "active_physical_material", "Physical Materials",
-             ("profile", "friction", "restitution")),
+             ("profile", "surface_type", "surface_subtype", "surface_tags_json",
+              "surface_description", "friction", "restitution")),
             ("model_components", "active_model_component", "Model Components", ("role", "object", "bone", "socket")),
             ("hitboxes", "active_hitbox", "Hitboxes", ("collider", "object", "bone", "role"))):
         box = layout.box()

@@ -5,30 +5,36 @@ its required verification are recorded in [TESTS.md](TESTS.md). A planned
 design, metadata-only support, or skipped test does not count as completion.
 
 ## M1 - Baseline and persistent state
-- [ ] Record current baseline, preserve worktree changes, and verify dependencies.
-- [ ] Archive the previous `.ai` mission history without losing its records.
-- [ ] Establish the regression baseline and maintain mission state.
+- [x] Record current baseline, preserve worktree changes, and verify dependencies.
+- [x] Archive the previous `.ai` mission history without losing its records.
+- [x] Establish the World Tile regression baseline and maintain mission state.
 
 ## M2 - Terrain palette consistency (P0)
-- [ ] Separate global surface identity from local palette/material slots.
+- [x] Separate global surface identity from local palette/material slots.
 - [ ] Compare seam-safe palette strategies for shared vertices/edges, tiles,
       LOD, irregular boundaries, noise, and biome transitions.
-- [ ] Implement deterministic palette assignment/reduction and quantify error.
-- [ ] Add editor diagnostics, affected-triangle details, suggestions/manual
+- [x] Implement deterministic palette assignment/reduction and quantify error.
+- [x] Add editor diagnostics, affected-triangle details, suggestions/manual
       repair, and strict versus explicitly approximate export.
-- [ ] Render and test two-to-four and five-plus surfaces, height blending, POM,
+- [x] Render and test two-to-four and five-plus surfaces, height blending, POM,
       slot permutations, mixed LOD, curved terrain, and disjoint biomes.
 
 ## M3 - Physical Surface System and colliders (P0)
-- [ ] Define a versioned machine-readable registry, stable/custom IDs, subtypes,
+- [x] Define a versioned machine-readable registry, stable/custom IDs, subtypes,
       tags, unknown-type fallback, and physical-versus-visual independence.
-- [ ] Extend existing physical-material contracts without duplicating physics
+- [x] Extend existing physical-material contracts without duplicating physics
       properties or adding gameplay behavior.
-- [ ] Assign stable physical material references to whole colliders and
+- [x] Assign stable physical material references to whole colliders and
       triangles; preserve them through triangulation and round trips.
-- [ ] Implement and test reference surface queries.
-- [ ] Add independent terrain collision generation, bounded simplification,
-      boundary refinement, manual physical paint, and diagnostics.
+- [x] Implement and test reference surface queries.
+- [x] Generate bounded independent collision geometry with shared-tile
+      boundary refinement, physical-material assignments, and Blender
+      round-trip support.
+- [x] Classify collision faces automatically from stable dominant surface
+      weights, support manual overrides, and inspect collision geometry,
+      physical boundaries, error, counts, and under-cursor material identity.
+- [x] Refine collision geometry around physical-material boundaries under
+      explicit deterministic subdivision and resource limits.
 
 ## M4 - Versioned material and texture contracts
 - [ ] Define versioned Control Map modes, channel order, sampling, filtering,
@@ -57,8 +63,10 @@ design, metadata-only support, or skipped test does not count as completion.
 - [ ] Integrate composable shader components with existing preview
       infrastructure; preserve fast paths and report unsupported combinations.
 - [ ] Add palette conflict UI and strict/approximate export behavior.
-- [ ] Add physical surface library, automatic/manual classification,
-      independent collision authoring, refinement, and inspection.
+- [x] Add the physical-material library, automatic/manual classification, and
+      independent collision authoring with physical assignment inspection.
+- [x] Refine collision geometry around physical-material boundaries under
+      explicit deterministic subdivision and resource limits.
 - [ ] Version AWTP/presets, preserve supported old versions, unknown data,
       relative paths, and non-destructive failure behavior.
 - [ ] Verify Export Changed, fingerprints, selective invalidation, atomic

@@ -24,7 +24,7 @@ from .ply import vertex_dtype, write_ply
 from .roads import rasterize
 
 MANIFEST_FORMAT = "apparatus-world-tile"
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 5
 MANIFEST_NAME = "manifest.json"
 TILE_DIR = "tiles"
 _OLD_DIRS = ("masks",)  # written by version 1 builds; cleaned up on rebuild
@@ -54,6 +54,9 @@ class BuildParams:
     # (0..1 of a weight; 0 = off). Only triangles with legs of at least texture_detail_m split.
     texture_error: float = 0.15
     texture_detail_m: float = 4.0
+    collision_max_error_m: float = 0.0  # 0 = no independent collision mesh
+    collision_boundary_max_edge_m: float = 4.0
+    collision_max_triangles_per_tile: int = 262144
 
     def validate(self) -> None:
         if not (self.spacing_m > 0 and math.isfinite(self.spacing_m)):
@@ -64,6 +67,15 @@ class BuildParams:
             raise ValueError("Texture error must be between 0 and 1")
         if not (self.texture_detail_m > 0 and math.isfinite(self.texture_detail_m)):
             raise ValueError("Texture detail must be a positive number of metres")
+        if not (self.collision_max_error_m >= 0 and math.isfinite(self.collision_max_error_m)):
+            raise ValueError("Collision maximum error must be finite and not negative")
+        if not (self.collision_boundary_max_edge_m > 0
+                and math.isfinite(self.collision_boundary_max_edge_m)):
+            raise ValueError("Collision physical-boundary edge limit must be a positive number of metres")
+        if (not isinstance(self.collision_max_triangles_per_tile, int)
+                or isinstance(self.collision_max_triangles_per_tile, bool)
+                or not 2 <= self.collision_max_triangles_per_tile <= 2_097_152):
+            raise ValueError("Collision triangle limit must be an integer from 2 to 2,097,152")
         if not self.max_errors_m:
             raise ValueError("Set at least one maximum height error")
         for value in self.max_errors_m:
@@ -217,11 +229,12 @@ def _remove_stale(out_dir: str, keep: set[str]) -> None:
         return
     if old.get("format") != MANIFEST_FORMAT:
         return
-    roots = {os.path.realpath(os.path.join(out_dir, name)) for name in (TILE_DIR,) + _OLD_DIRS}
+    roots = {os.path.realpath(os.path.join(out_dir, name)) for name in (TILE_DIR, "collision") + _OLD_DIRS}
     listed = []
     for tile in old.get("tiles", []):
         listed += [lod.get("file") for lod in tile.get("lods", [])]
         listed.append(tile.get("mask"))
+        listed.append((tile.get("collision") or {}).get("file"))
     for rel in listed:
         if not isinstance(rel, str) or rel in keep:
             continue
@@ -330,6 +343,113 @@ def build(
 
     out_dir = os.path.abspath(params.out_dir)
     os.makedirs(os.path.join(out_dir, TILE_DIR), exist_ok=True)
+    collision_splits = no_boundary_splits
+    collision_preflight: dict[tuple[int, int], dict] = {}
+    if params.collision_max_error_m > 0:
+        collision_splits = np.zeros(errors.shape, np.bool_)
+        for tj in range(ctx.ny):
+            for ti in range(ctx.nx):
+                if is_cancelled():
+                    raise Cancelled()
+                grid, _, _ = kernels.extract_tile(
+                    hm.data, ctx.scale, ctx.offset, ctx.width, ctx.height, ctx.t, ti, tj,
+                    ctx.levels, errors, params.collision_max_error_m, werrors, max_werror,
+                    math.inf, no_boundary_splits)
+                x0, y0, x1, y1 = ctx.tile_extent(ti, tj)
+                edge = ((grid[:, 0] == x0) | (grid[:, 0] == x1)
+                        | (grid[:, 1] == y0) | (grid[:, 1] == y1))
+                collision_splits[grid[edge, 1], grid[edge, 0]] = True
+        kernels.propagate_boundary_splits(ctx.t, ctx.nx, ctx.ny, ctx.levels, collision_splits)
+
+        physical_index = {item.id: index for index, item in enumerate(material.physical_materials)}
+        surface_physical = np.full(len(material.surfaces), 255, np.uint8)
+        for index, surface in enumerate(material.surfaces):
+            if surface.physical_material_id:
+                surface_physical[index] = physical_index[surface.physical_material_id]
+        physical_paint = material.physical_paint if material.has_physical_paint() else None
+        if physical_paint is not None:
+            expected_paint_shape = (
+                math.ceil(ctx.height / material.physical_paint_cell),
+                math.ceil(ctx.width / material.physical_paint_cell),
+            )
+            if physical_paint.shape != expected_paint_shape:
+                raise ValueError("Physical paint dimensions do not match the heightmap used to build collision")
+        refine_physical = bool(np.any(surface_physical != 255) or physical_paint is not None)
+
+        def physical_labels(grid: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            weights = texturing.quantize(texturing.weights_serial(
+                hm.data, *field_args, grid[:, 0].astype(np.float64), grid[:, 1].astype(np.float64)))
+            labels = surface_physical[np.argmax(weights, axis=1)]
+            dominant = np.argmax(weights[faces].sum(axis=1, dtype=np.uint16), axis=1)
+            face_labels = surface_physical[dominant]
+            if physical_paint is not None:
+                rows = np.minimum(grid[:, 1] // material.physical_paint_cell, physical_paint.shape[0] - 1)
+                cols = np.minimum(grid[:, 0] // material.physical_paint_cell, physical_paint.shape[1] - 1)
+                painted = physical_paint[rows, cols]
+                manual = painted != 255
+                labels[manual] = painted[manual]
+                centers = grid[faces].mean(axis=1)
+                face_rows = np.rint(centers[:, 1]).astype(np.int64) // material.physical_paint_cell
+                face_cols = np.rint(centers[:, 0]).astype(np.int64) // material.physical_paint_cell
+                face_painted = physical_paint[face_rows, face_cols]
+                face_manual = face_painted != 255
+                face_labels[face_manual] = face_painted[face_manual]
+            return labels, face_labels
+
+        for iteration in range(ctx.levels + 1):
+            collision_preflight.clear()
+            added_splits = False
+            for tj in range(ctx.ny):
+                for ti in range(ctx.nx):
+                    if is_cancelled():
+                        raise Cancelled()
+                    grid, faces, measured = kernels.extract_tile(
+                        hm.data, ctx.scale, ctx.offset, ctx.width, ctx.height, ctx.t, ti, tj,
+                        ctx.levels, errors, params.collision_max_error_m, werrors, max_werror,
+                        math.inf, collision_splits)
+                    if len(faces) > params.collision_max_triangles_per_tile:
+                        raise ValueError(
+                            f"Collision tile {_tile_id(ti, ctx.ny - 1 - tj)} needs {len(faces):,} triangles, "
+                            f"exceeding the configured limit of "
+                            f"{params.collision_max_triangles_per_tile:,}; increase collision maximum error "
+                            "or raise the triangle limit.")
+                    if measured > params.collision_max_error_m + max(1e-5, params.collision_max_error_m * 1e-6):
+                        raise RuntimeError(
+                            f"Collision tile {_tile_id(ti, ctx.ny - 1 - tj)} exceeded its height-error bound "
+                            f"({measured:g} m > {params.collision_max_error_m:g} m).")
+                    x0, y0, x1, y1 = ctx.tile_extent(ti, tj)
+                    edge = ((grid[:, 0] == x0) | (grid[:, 0] == x1)
+                            | (grid[:, 1] == y0) | (grid[:, 1] == y1))
+                    collision_preflight[(ti, tj)] = {
+                        "vertices": int(len(grid)),
+                        "triangles": int(len(faces)),
+                        "boundary_vertices": int(edge.sum()),
+                    }
+                    if not refine_physical:
+                        continue
+                    labels, face_labels = physical_labels(grid, faces)
+                    triangle_labels = labels[faces]
+                    mixed = (np.any(triangle_labels != triangle_labels[:, :1], axis=1)
+                             | np.any(triangle_labels != face_labels[:, None], axis=1))
+                    edge_a = faces[mixed, 0]
+                    edge_b = faces[mixed, 1]
+                    dx = grid[edge_b, 0] - grid[edge_a, 0]
+                    dy = grid[edge_b, 1] - grid[edge_a, 1]
+                    max_edge_cells = params.collision_boundary_max_edge_m / params.spacing_m
+                    split = dx * dx + dy * dy > max_edge_cells * max_edge_cells
+                    if not np.any(split):
+                        continue
+                    mx = (grid[edge_a[split], 0] + grid[edge_b[split], 0]) // 2
+                    my = (grid[edge_a[split], 1] + grid[edge_b[split], 1]) // 2
+                    fresh = ~collision_splits[my, mx]
+                    if np.any(fresh):
+                        collision_splits[my[fresh], mx[fresh]] = True
+                        added_splits = True
+            if not added_splits:
+                break
+            if iteration == ctx.levels:
+                raise RuntimeError("Physical-boundary collision refinement exceeded the RTIN depth limit")
+            kernels.propagate_boundary_splits(ctx.t, ctx.nx, ctx.ny, ctx.levels, collision_splits)
     jobs = [(lod, ti, tj) for lod in range(len(params.max_errors_m))
             for tj in range(ctx.ny) for ti in range(ctx.nx)]
     from PIL import Image
@@ -369,19 +489,70 @@ def build(
             raise
     timings["tiles_s"] = time.perf_counter() - phase
 
+    collision_results: dict[tuple[int, int], dict] = {}
+    if params.collision_max_error_m > 0:
+        phase = time.perf_counter()
+
+        def build_collision(ti: int, tj: int) -> tuple[tuple[int, int], dict]:
+            if is_cancelled():
+                raise Cancelled()
+            grid, faces, measured = kernels.extract_tile(
+                hm.data, ctx.scale, ctx.offset, ctx.width, ctx.height, ctx.t, ti, tj,
+                ctx.levels, errors, params.collision_max_error_m, werrors, max_werror,
+                math.inf, collision_splits)
+            expected = collision_preflight[(ti, tj)]
+            if len(faces) != expected["triangles"] or len(grid) != expected["vertices"]:
+                raise RuntimeError("Collision preflight did not match generated geometry")
+            iy = ctx.ny - 1 - tj
+            rel = f"collision/{_tile_id(ti, iy)}_collision.ply"
+            weights = texturing.quantize(texturing.weights_serial(
+                hm.data, *field_args, grid[:, 0].astype(np.float64), grid[:, 1].astype(np.float64)))
+            vertices = _tile_vertices(ctx, grid, ti, tj, weights)
+            dominant = np.argmax(weights[faces].astype(np.uint16).sum(axis=1), axis=1)
+            write_ply(os.path.join(out_dir, rel), vertices, faces,
+                      f"{MANIFEST_FORMAT} collision {_tile_id(ti, iy)}")
+            return (ti, tj), {
+                "file": rel,
+                "vertices": int(len(grid)),
+                "triangles": int(len(faces)),
+                "measured_error_m": float(measured),
+                "boundary_vertices": expected["boundary_vertices"],
+                "used_surfaces": np.unique(dominant).astype(int).tolist(),
+                "digest": content_digest(vertices, faces),
+            }
+
+        os.makedirs(os.path.join(out_dir, "collision"), exist_ok=True)
+        with ThreadPoolExecutor(max_workers=threads) as pool:
+            futures = [pool.submit(build_collision, ti, tj)
+                       for tj in range(ctx.ny) for ti in range(ctx.nx)]
+            try:
+                for done, future in enumerate(as_completed(futures), 1):
+                    key, record = future.result()
+                    collision_results[key] = record
+                    report(0.94 + 0.01 * done / len(futures),
+                           f"Collision meshes {done} of {len(futures)}")
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+        timings["collision_s"] = time.perf_counter() - phase
+
     tiles = []
     for tj in range(ctx.ny):
         for ti in range(ctx.nx):
             x0, y0 = ctx.tile_origin(ti, tj)
             iy = ctx.ny - 1 - tj
-            tiles.append({
+            tile = {
                 "id": _tile_id(ti, iy),
                 "ix": ti,
                 "iy": iy,
                 "origin_m": [x0, y0, 0.0],
                 "size_m": list(ctx.tile_size(ti, tj)),
                 "lods": [results[(lod, ti, tj)] for lod in range(len(params.max_errors_m))],
-            })
+            }
+            if params.collision_max_error_m > 0:
+                tile["collision"] = collision_results[(ti, tj)]
+            tiles.append(tile)
     tiles.sort(key=lambda tile: (tile["iy"], tile["ix"]))
 
     report(0.95, "Writing previews and manifest")
@@ -448,9 +619,22 @@ def build(
         "tiles": tiles,
         "timings": timings,
     }
+    if params.collision_max_error_m > 0:
+        collision_records = list(collision_results.values())
+        manifest["collision"] = {
+            "algorithm": "independent height-error RTIN",
+            "max_error_m": params.collision_max_error_m,
+            "physical_boundary_max_edge_m": params.collision_boundary_max_edge_m,
+            "max_triangles_per_tile": params.collision_max_triangles_per_tile,
+            "triangles": sum(record["triangles"] for record in collision_records),
+            "max_measured_error_m": max(record["measured_error_m"] for record in collision_records),
+            "boundary_refinement": "physical assignments refined to the configured edge limit; shared tile-edge "
+                                  "vertices propagated through the RTIN hierarchy",
+        }
     if material.roads:
         manifest["edited_height_range_m"] = [float(hm.data.min()), float(hm.data.max())]
     keep = {record["file"] for record in results.values()}
+    keep.update(record["file"] for record in collision_results.values())
     _remove_stale(out_dir, keep)
     temp = os.path.join(out_dir, MANIFEST_NAME + ".tmp")
     with open(temp, "w", encoding="utf-8") as handle:
@@ -469,7 +653,7 @@ def load_manifest(path: str) -> dict:
         raise ValueError(f"{path}: not an {MANIFEST_FORMAT} manifest")
     if manifest.get("format_version", 0) > MANIFEST_VERSION:
         raise ValueError(f"{path}: manifest version {manifest['format_version']} is newer than this tool")
-    if manifest.get("format_version", 0) < MANIFEST_VERSION:
+    if manifest.get("format_version", 0) < 2:
         raise ValueError(f"{path}: the tiles were built by an older version without surface weights; rebuild them")
     manifest["_dir"] = os.path.dirname(os.path.abspath(path))
     source_relative = False

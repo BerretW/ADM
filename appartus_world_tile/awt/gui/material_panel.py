@@ -581,6 +581,9 @@ class SurfaceEditor(QGroupBox):
         self.repeat.setToolTip("Ground size of one texture repeat; rounded so each tile holds a whole number")
         self.repeat_info = QLabel()
         self.repeat_info.setStyleSheet("color: #9aa3ad")
+        self.physical_material = QComboBox()
+        self.physical_material.setToolTip(
+            "Physical material used when this is the stable dominant visual surface")
         self.metallic = MapRow("Metallic")
         self.roughness = MapRow("Roughness")
         self.ao = MapRow("Ambient occlusion")
@@ -611,6 +614,7 @@ class SurfaceEditor(QGroupBox):
         row.addWidget(self.repeat)
         row.addWidget(self.repeat_info, 1)
         form.addRow("Repeat", row)
+        form.addRow("Physical material", self.physical_material)
         form.addRow("Metallic", self.metallic)
         form.addRow("Roughness", self.roughness)
         form.addRow("Ambient occlusion", self.ao)
@@ -645,6 +649,19 @@ class SurfaceEditor(QGroupBox):
         self.show_terrain.clicked.connect(self.terrain_requested)
         self.show_preview.clicked.connect(self.large_preview_requested)
         self.show_blend_preview.clicked.connect(self.height_blend_preview_requested)
+        self.physical_material.currentIndexChanged.connect(
+            lambda: self.changed.emit("physical_material_id"))
+
+    def set_physical_materials(self, physical_materials) -> None:
+        selected = self.physical_material.currentData()
+        self.physical_material.blockSignals(True)
+        self.physical_material.clear()
+        self.physical_material.addItem("No automatic assignment", "")
+        for item in physical_materials:
+            self.physical_material.addItem(item.name, item.id)
+        index = self.physical_material.findData(selected)
+        self.physical_material.setCurrentIndex(max(0, index))
+        self.physical_material.blockSignals(False)
 
     def set_surface(self, surface: Surface) -> None:
         self.setTitle(f"Surface: {surface.name}")
@@ -659,6 +676,12 @@ class SurfaceEditor(QGroupBox):
         self.parallax_scale.setValue(surface.parallax_scale)
         self.emission.set_path(surface.emission)
         self.normal.set_path(surface.normal)
+        index = self.physical_material.findData(surface.physical_material_id)
+        if index < 0 and surface.physical_material_id:
+            self.physical_material.addItem(
+                f"Missing material ({surface.physical_material_id})", surface.physical_material_id)
+            index = self.physical_material.count() - 1
+        self.physical_material.setCurrentIndex(max(0, index))
         for name in ("albedo", "normal", "emission"):
             getattr(self, name).set_encoding(surface.gpu_encodings.get(name, ""))
         for name in ("metallic", "roughness", "ao", "height"):
@@ -687,7 +710,8 @@ class SurfaceEditor(QGroupBox):
                           "invert": row.invert.isChecked}
                 setattr(slot, part, values[part]())
         else:
-            controls = {"tint": ("color", self.tint.rgb), "albedo": ("albedo", self.albedo.path),
+            controls = {"physical_material_id": ("physical_material_id", self.physical_material.currentData),
+                        "tint": ("color", self.tint.rgb), "albedo": ("albedo", self.albedo.path),
                         "repeat": ("repeat_m", self.repeat.value),
                         "height_bias": ("height_bias", self.height_bias.value),
                         "parallax_scale": ("parallax_scale", self.parallax_scale.value),
@@ -1103,6 +1127,7 @@ class MaterialPanel(QWidget):
     # ------------------------------------------------------------ public
     def set_material(self, material: TerrainMaterial) -> None:
         self._material = material
+        self.surface_editor.set_physical_materials(material.physical_materials)
         self._loading = True
         self.auto_upgrade_shader.setChecked(False)
         self.shader_upgrade_status.setText("")
@@ -1150,6 +1175,7 @@ class MaterialPanel(QWidget):
 
     def refresh(self) -> None:
         """Reload after the material was changed elsewhere (fit, paint)."""
+        self.surface_editor.set_physical_materials(self._material.physical_materials)
         self._refresh_lists(self.surface_list.currentRow(), self.biome_list.currentRow())
 
     # ------------------------------------------------------------ lists

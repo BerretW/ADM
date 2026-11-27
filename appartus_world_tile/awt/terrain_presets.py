@@ -14,7 +14,7 @@ from .material import TerrainMaterial, prepare_texture
 
 PRESET_FILE = "preset.json"
 PRESET_FORMAT = "appartus-world-tile-terrain-preset"
-PRESET_VERSION = 4
+PRESET_VERSION = 6
 MAX_PRESET_BYTES = 5 * 1024 * 1024
 _KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -44,7 +44,8 @@ def _document(path: str) -> dict:
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
     if (not isinstance(data, dict) or data.get("format") != PRESET_FORMAT
-            or data.get("version") not in (1, 2, 3, PRESET_VERSION) or not isinstance(data.get("material"), dict)
+            or data.get("version") not in (1, 2, 3, 4, 5, PRESET_VERSION)
+            or not isinstance(data.get("material"), dict)
             or not isinstance(data.get("name"), str)):
         raise ValueError("This is not a supported AWT terrain preset")
     return data
@@ -90,6 +91,7 @@ def save_preset(root: str, name: str, material: TerrainMaterial, overwrite: bool
     prepared_material = copy.deepcopy(material)
     prepared_material.paint = None
     prepared_material.surface_paint = None
+    prepared_material.physical_paint = None
     prepared_material.roads = []
     prepared_material.validate()
     for surface in prepared_material.surfaces:
@@ -115,9 +117,7 @@ def save_preset(root: str, name: str, material: TerrainMaterial, overwrite: bool
 
     document = {
         "format": PRESET_FORMAT,
-        "version": (4 if any(s.gpu_encodings for s in prepared_material.surfaces) else
-                    3 if prepared_material.has_advanced_shader_features() else
-                    2 if any(b.noise != 0.0 for b in prepared_material.biomes) else 1),
+        "version": PRESET_VERSION,
         "name": name.strip(),
         "material": prepared_material.to_dict(folder),
     }
@@ -163,7 +163,7 @@ def load_preset(root: str, key: str) -> TerrainMaterial:
     if os.path.islink(folder) or not _inside(root, folder) or folder == root:
         raise ValueError("Preset folder is outside the preset library")
     document = _document(os.path.join(folder, PRESET_FILE))
-    if any(key in document["material"] for key in ("paint", "surface_paint", "roads")):
+    if any(key in document["material"] for key in ("paint", "surface_paint", "physical_paint", "roads")):
         raise ValueError("Terrain presets cannot contain map-specific paint or roads")
 
     material = TerrainMaterial.from_dict(document["material"], folder)

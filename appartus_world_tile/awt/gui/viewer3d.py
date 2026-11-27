@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 import numpy as np
@@ -16,6 +17,8 @@ TRIANGLE_BUDGET = 8_000_000
 DETAIL_TRIANGLE_BUDGET = 250_000
 DETAIL_PALETTE_BUDGET = 128
 DETAIL_TEXTURE_BUDGET = 512 * 1024 * 1024
+COLLISION_PREVIEW_TRIANGLE_BUDGET = 250_000
+COLLISION_PREVIEW_FILE_BUDGET = 256 * 1024 * 1024
 COLOR_MODES = ("Height", "Surfaces (vertex layers)", "Tiles", "Material", "Detailed material",
                "COLOR_1 palette channel")
 MATERIAL_MODE = 3
@@ -29,12 +32,16 @@ def triangle_count(manifest: dict, tiles, lod: int) -> int:
 
 
 def _palette_groups(tile):
-    from ..adm_export import group_masks, triangle_masks
+    from ..adm_export import group_masks, seam_consistent_weights, triangle_masks
 
     masks, conflicts = triangle_masks(tile["weights"], tile["faces"])
     sets, assign = group_masks(masks)
+    face_palettes = np.fromiter(
+        (sets[assign[int(mask)]] for mask in masks), dtype=np.uint64, count=len(masks))
+    effective_weights, errors = seam_consistent_weights(tile["weights"], tile["faces"], face_palettes)
     groups = np.array([assign[int(mask)] for mask in masks])
-    return ((mask, tile["faces"][groups == group]) for group, mask in enumerate(sets)), conflicts
+    return ((mask, tile["faces"][groups == group]) for group, mask in enumerate(sets)), conflicts, (
+        effective_weights, errors)
 
 
 def _tile_color(ix: int, iy: int) -> np.ndarray:
@@ -100,17 +107,139 @@ def load_tiles(manifest: dict, tiles, lod: int, detailed: bool = False) -> dict:
     return result
 
 
+def load_collision_tiles(manifest: dict, tiles, material) -> dict:
+    """Load bounded collision geometry with physical assignments and hover metadata."""
+    from ..adm_export import _collision_file_path, _physical_face_assignments
+
+    wanted = set(tiles)
+    points, faces, colors, info = [], [], [], []
+    base = 0
+    triangle_total = 0
+    measured_error = 0.0
+    surface_names = (manifest.get("texturing") or {}).get("surfaces") or []
+    if not isinstance(surface_names, list) or not all(isinstance(name, str) for name in surface_names):
+        raise ValueError("Manifest surface names are invalid for collision inspection")
+    materials = {item.id: item for item in material.physical_materials}
+    root = manifest.get("_dir")
+    if not isinstance(root, str) or not root:
+        raise ValueError("Collision inspection requires a manifest directory")
+    seen = set()
+    for tile in manifest.get("tiles", []):
+        if not isinstance(tile, dict):
+            raise ValueError("Manifest tile records must be objects")
+        ix, iy = tile.get("ix"), tile.get("iy")
+        if (isinstance(ix, bool) or not isinstance(ix, int)
+                or isinstance(iy, bool) or not isinstance(iy, int)):
+            raise ValueError("Manifest tile coordinates must be integers")
+        if (ix, iy) not in wanted:
+            continue
+        seen.add((ix, iy))
+        collision = tile.get("collision")
+        if not isinstance(collision, dict):
+            raise ValueError(f"{tile.get('id', 'Tile')}: collision mesh is unavailable")
+        declared_count = collision.get("triangles")
+        if (isinstance(declared_count, bool) or not isinstance(declared_count, int)
+                or declared_count < 1):
+            raise ValueError(f"{tile['id']}: collision triangle count is invalid")
+        triangle_total += declared_count
+        if triangle_total > COLLISION_PREVIEW_TRIANGLE_BUDGET:
+            raise ValueError(f"Collision preview exceeds the {COLLISION_PREVIEW_TRIANGLE_BUDGET:,}-triangle budget")
+        relative = collision.get("file")
+        path = _collision_file_path(root, relative)
+        if os.path.getsize(path) > COLLISION_PREVIEW_FILE_BUDGET:
+            raise ValueError(f"{tile['id']}: collision mesh exceeds the "
+                             f"{COLLISION_PREVIEW_FILE_BUDGET // (1024 * 1024)} MiB preview limit")
+        vertices, tile_faces = read_ply(path)
+        if len(tile_faces) != declared_count:
+            raise ValueError(f"{tile['id']}: collision triangle count does not match the manifest")
+        if (tile_faces.ndim != 2 or tile_faces.shape[1] != 3 or len(vertices) < 3
+                or np.any(tile_faces < 0) or np.any(tile_faces >= len(vertices))):
+            raise ValueError(f"{tile['id']}: collision mesh faces are invalid")
+        origin = tile.get("origin_m")
+        if (not isinstance(origin, list) or len(origin) != 3
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not np.isfinite(value) for value in origin)):
+            raise ValueError(f"{tile['id']}: collision tile origin is invalid")
+        local_points = np.column_stack((vertices["x"], vertices["y"], vertices["z"]))
+        if not np.isfinite(local_points).all():
+            raise ValueError(f"{tile['id']}: collision vertices must be finite")
+        points.append((local_points + np.asarray(origin, dtype=np.float64)).astype(np.float32))
+        faces.append(tile_faces.astype(np.int64) + base)
+        base += len(vertices)
+        assignments = _physical_face_assignments(manifest, tile, material, vertices, tile_faces)
+        fields = weight_fields(vertices)
+        if fields:
+            if len(fields) != len(surface_names):
+                raise ValueError(f"{tile['id']}: collision surface weights do not match the manifest")
+            weights = np.column_stack([vertices[name] for name in fields])
+            dominant = np.argmax(weights[tile_faces].astype(np.uint16).sum(axis=1), axis=1)
+        else:
+            dominant = np.full(len(tile_faces), -1, dtype=np.int64)
+        tile_colors = np.empty((len(tile_faces), 3), dtype=np.uint8)
+        for index, (surface_index, physical_id) in enumerate(zip(dominant, assignments)):
+            surface_name = (surface_names[int(surface_index)]
+                            if 0 <= surface_index < len(surface_names) else "Unknown surface")
+            physical = materials.get(physical_id) if physical_id else None
+            if not physical_id:
+                color = (96, 101, 108)
+                physical_name = "Unassigned"
+            elif physical is None:
+                color = (214, 72, 196)
+                physical_name = "Unknown"
+            else:
+                digest = hashlib.sha256(physical_id.encode("utf-8")).digest()
+                color = tuple(64 + value % 160 for value in digest[:3])
+                physical_name = physical.name
+            tile_colors[index] = color
+            info.append({
+                "tile": tile["id"],
+                "triangle": index,
+                "surface": surface_name,
+                "physical_id": physical_id or "",
+                "physical_name": physical_name,
+            })
+        colors.append(tile_colors)
+        error = collision.get("measured_error_m")
+        if (isinstance(error, bool) or not isinstance(error, (int, float))
+                or not np.isfinite(error) or error < 0):
+            raise ValueError(f"{tile['id']}: measured collision error is invalid")
+        measured_error = max(measured_error, float(error))
+    if seen != wanted:
+        raise ValueError("One or more selected tiles are missing from the collision manifest")
+    if not points:
+        return {}
+    summary = manifest.get("collision") or {}
+    error_limit = summary.get("max_error_m")
+    if (isinstance(error_limit, bool) or not isinstance(error_limit, (int, float))
+            or not np.isfinite(error_limit) or error_limit < 0):
+        raise ValueError("Manifest collision error limit is invalid")
+    return {
+        "points": np.concatenate(points),
+        "faces": np.concatenate(faces),
+        "physical_colors": np.concatenate(colors),
+        "collision_info": info,
+        "collision_triangles": triangle_total,
+        "collision_error_m": float(error_limit),
+        "collision_measured_error_m": measured_error,
+    }
+
+
 class _Loader(QThread):
     loaded = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, manifest, tiles, lod, detailed, parent=None):
+    def __init__(self, manifest, tiles, lod, detailed, collision=False, material=None, parent=None):
         super().__init__(parent)
         self._args = (manifest, list(tiles), lod, detailed)
+        self._collision = collision
+        self._material = material
 
     def run(self):
         try:
-            self.loaded.emit(load_tiles(*self._args))
+            if self._collision:
+                self.loaded.emit(load_collision_tiles(self._args[0], self._args[1], self._material))
+            else:
+                self.loaded.emit(load_tiles(*self._args))
         except Exception as exc:  # reported in the UI
             self.failed.emit(f"Could not load tiles: {exc}")
 
@@ -149,6 +278,9 @@ class Viewer3D(QWidget):
         self._baked_key = None
         self._bake_generation = 0
         self._baker: _Baker | None = None
+        self._collision_info = []
+        self._picker = None
+        self._hover_observer = None
 
         self.lod = QComboBox()
         self.lod.setToolTip("Level of detail to display")
@@ -168,6 +300,9 @@ class Viewer3D(QWidget):
         self.exaggeration.setSuffix(" ×")
         self.exaggeration.setToolTip("Vertical exaggeration")
         self.wire = QCheckBox("Wireframe")
+        self.collision = QCheckBox("Collision mesh")
+        self.collision.setToolTip("Show collision geometry with physical-material colours instead of render tiles.")
+        self.collision.setEnabled(False)
         self.reset = QPushButton("Reset view")
         self.status = QLabel("Build or open tiles, then pick them on the map")
         self.status.setStyleSheet("color: #9aa3ad")
@@ -179,6 +314,7 @@ class Viewer3D(QWidget):
             bar.addWidget(widget)
         bar.addWidget(self.weight_channel)
         bar.addWidget(self.wire)
+        bar.addWidget(self.collision)
         bar.addWidget(self.reset)
         bar.addStretch(1)
 
@@ -188,6 +324,7 @@ class Viewer3D(QWidget):
         self.plotter.set_background("#15181c", top="#3b4652")
         self.plotter.add_axes(color="#c8ced6")
         self.plotter.enable_terrain_style(mouse_wheel_zooms=True)
+        self._hover_observer = self.plotter.iren.add_observer("MouseMoveEvent", self._on_mouse_move)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -199,6 +336,7 @@ class Viewer3D(QWidget):
         self.color.currentIndexChanged.connect(self._color_changed)
         self.weight_channel.currentIndexChanged.connect(self._redraw)
         self.wire.toggled.connect(self._redraw)
+        self.collision.toggled.connect(self._collision_changed)
         self.exaggeration.valueChanged.connect(self._rescale)
         self.reset.clicked.connect(self._reset_camera)
 
@@ -207,6 +345,11 @@ class Viewer3D(QWidget):
         self._manifest = manifest
         self._tiles = []
         self._data = {}
+        self._collision_info = []
+        self.collision.blockSignals(True)
+        self.collision.setChecked(False)
+        self.collision.setEnabled(bool(manifest and manifest.get("collision")))
+        self.collision.blockSignals(False)
         self.lod.blockSignals(True)
         self.lod.clear()
         if manifest:
@@ -218,6 +361,25 @@ class Viewer3D(QWidget):
         self._actor = None
         self._extra_actors = []
         self.plotter.render()
+
+    def _on_mouse_move(self, interactor, _event) -> None:
+        if not self.collision.isChecked() or self._actor is None or not self._collision_info:
+            return
+        if self._picker is None:
+            from vtkmodules.vtkRenderingCore import vtkCellPicker
+
+            self._picker = vtkCellPicker()
+            self._picker.SetTolerance(0.005)
+        x, y = interactor.GetEventPosition()
+        if not self._picker.Pick(x, y, 0, self.plotter.renderer) or self._picker.GetActor() != self._actor:
+            return
+        cell = self._picker.GetCellId()
+        if 0 <= cell < len(self._collision_info):
+            info = self._collision_info[cell]
+            physical = (f"{info['physical_name']} ({info['physical_id']})"
+                        if info["physical_id"] else info["physical_name"])
+            self.status.setText(
+                f"{info['tile']} face {info['triangle'] + 1}: {info['surface']} - {physical}")
 
     def show_tiles(self, tiles, lod: int | None = None) -> None:
         if not self._manifest:
@@ -235,12 +397,16 @@ class Viewer3D(QWidget):
         self._bake_generation += 1
         if self.color.currentIndex() in (MATERIAL_MODE, DETAILED_MATERIAL_MODE) and self._data:
             self._redraw()
+        elif self.collision.isChecked() and self._manifest:
+            self._reload()
 
     def shutdown(self) -> None:
         if self._loader is not None:
             self._loader.wait()
         if self._baker is not None:
             self._baker.wait()
+        if self._hover_observer is not None:
+            self.plotter.iren.remove_observer(self._hover_observer)
         self.plotter.close()
 
     # ------------------------------------------------------------ loading
@@ -252,6 +418,14 @@ class Viewer3D(QWidget):
         else:
             self._redraw()
 
+    def _collision_changed(self, enabled: bool) -> None:
+        self.color.setEnabled(not enabled)
+        if enabled and self._material is None:
+            self.collision.setChecked(False)
+            self.status.setText("Choose a material before inspecting physical assignments.")
+            return
+        self._reload()
+
     def _reload(self) -> None:
         if not self._manifest or not self._tiles or self.lod.currentIndex() < 0:
             return
@@ -259,15 +433,26 @@ class Viewer3D(QWidget):
             self._pending = True
             return
         lod = self.lod.currentIndex()
-        count = triangle_count(self._manifest, self._tiles, lod)
+        collision = self.collision.isChecked()
+        if collision:
+            selected = {(tile["ix"], tile["iy"]): tile for tile in self._manifest["tiles"]}
+            try:
+                count = sum(selected[key]["collision"]["triangles"] for key in self._tiles)
+            except (KeyError, TypeError):
+                self.status.setText("Collision meshes are unavailable for one or more selected tiles.")
+                return
+        else:
+            count = triangle_count(self._manifest, self._tiles, lod)
         detailed = self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE)
-        budget = DETAIL_TRIANGLE_BUDGET if detailed else TRIANGLE_BUDGET
+        budget = (COLLISION_PREVIEW_TRIANGLE_BUDGET if collision else
+                  DETAIL_TRIANGLE_BUDGET if detailed else TRIANGLE_BUDGET)
         if count > budget:
             self.status.setText(f"{len(self._tiles)} tiles at LOD {lod} have {count:,} triangles, above the "
                                 f"{budget:,} preview budget. Select fewer tiles or a coarser LOD.")
             return
-        self.status.setText(f"Loading {len(self._tiles)} tiles, {count:,} triangles…")
-        self._loader = _Loader(self._manifest, self._tiles, lod, detailed, self)
+        mode = "collision" if collision else "tiles"
+        self.status.setText(f"Loading {len(self._tiles)} {mode}, {count:,} triangles…")
+        self._loader = _Loader(self._manifest, self._tiles, lod, detailed, collision, self._material, self)
         self._loader.loaded.connect(self._on_loaded)
         self._loader.failed.connect(self.status.setText)
         self._loader.finished.connect(self._on_finished)
@@ -282,17 +467,21 @@ class Viewer3D(QWidget):
         if self._loader is not None:
             manifest, tiles, lod, detailed = self._loader._args
             if (manifest is not self._manifest or tiles != self._tiles or lod != self.lod.currentIndex()
-                    or detailed != (self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE))):
+                    or detailed != (self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE))
+                    or self._loader._collision != self.collision.isChecked()
+                    or self._loader._material is not self._material):
                 self._pending = True
                 return
         key = tuple(self._tiles)
         first = self._framed != key
         self._framed = key
         self._data = data
+        self._collision_info = data.get("collision_info", [])
         self._redraw()
         if first:
             self._reset_camera()
-        if data and self.color.currentIndex() not in (DETAILED_MATERIAL_MODE, COLOR1_MODE):
+        if (data and "physical_colors" not in data
+                and self.color.currentIndex() not in (DETAILED_MATERIAL_MODE, COLOR1_MODE)):
             self.status.setText(f"{len(self._tiles)} tiles, LOD {self.lod.currentIndex()}: "
                                 f"{len(data['faces']):,} triangles, {len(data['points']):,} vertices. "
                                 "Left drag rotates, right drag or wheel zooms, middle drag pans.")
@@ -306,6 +495,23 @@ class Viewer3D(QWidget):
         self._actor = None
         self._extra_actors = []
         if not self._data:
+            self.plotter.render()
+            return
+        if self.collision.isChecked():
+            if "physical_colors" not in self._data:
+                self._reload()
+                return
+            mesh = pv.PolyData.from_regular_faces(self._data["points"], self._data["faces"])
+            mesh.cell_data["physical"] = self._data["physical_colors"]
+            self._actor = self.plotter.add_mesh(
+                mesh, scalars="physical", rgb=True, lighting=False, show_scalar_bar=False,
+                show_edges=self.wire.isChecked(), edge_color="#e2e4e8", line_width=0.7)
+            self._actor.scale = (1.0, 1.0, self.exaggeration.value())
+            self.status.setText(
+                f"Collision: {self._data['collision_triangles']:,} triangles; "
+                f"error <= {self._data['collision_error_m']:g} m "
+                f"(measured {self._data['collision_measured_error_m']:.3f} m). "
+                "Move the pointer over a face for surface and physical-material details.")
             self.plotter.render()
             return
         if self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE):
@@ -369,7 +575,7 @@ class Viewer3D(QWidget):
         conflicts = 0
         try:
             for tile in self._data["material_tiles"]:
-                groups, count = _palette_groups(tile)
+                groups, count, (effective_weights, _errors) = _palette_groups(tile)
                 conflicts += count
                 for mask, selected_faces in groups:
                     if len(actors) >= DETAIL_PALETTE_BUDGET:
@@ -377,7 +583,7 @@ class Viewer3D(QWidget):
                                          "select fewer tiles")
                     keep, local = np.unique(selected_faces.ravel(), return_inverse=True)
                     mesh = pv.PolyData.from_regular_faces(tile["points"][keep], local.reshape(-1, 3))
-                    weights = color1(tile["weights"][keep], _slots(mask))
+                    weights = color1(effective_weights[keep], _slots(mask))
                     mesh.point_data["COLOR_1"] = weights
                     mesh.point_data["channel"] = weights[:, self.weight_channel.currentIndex()]
                     actors.append(self.plotter.add_mesh(mesh, scalars="channel", cmap="gray", clim=(0, 255),
@@ -410,7 +616,7 @@ class Viewer3D(QWidget):
         texture_cache = {}
         try:
             for tile in self._data["material_tiles"]:
-                groups, count = _palette_groups(tile)
+                groups, count, (effective_weights, _errors) = _palette_groups(tile)
                 conflicts += count
                 for mask, selected_faces in groups:
                     if len(actors) >= DETAIL_PALETTE_BUDGET:
@@ -422,7 +628,7 @@ class Viewer3D(QWidget):
                     mesh.point_data.active_normals_name = "Normals"
                     mesh.active_texture_coordinates = tile["uv"][keep]
                     slots = _slots(mask)
-                    mesh.point_data["layer_weights"] = color1(tile["weights"][keep], slots).astype(np.float32) / 255
+                    mesh.point_data["layer_weights"] = color1(effective_weights[keep], slots).astype(np.float32) / 255
                     mesh = _mesh_with_tangents(mesh, pv)
                     actor = self.plotter.add_mesh(mesh, texture=white, pbr=True, metallic=1, roughness=1,
                                                   smooth_shading=True, show_edges=self.wire.isChecked(),

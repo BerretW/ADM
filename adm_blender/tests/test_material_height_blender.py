@@ -1,4 +1,4 @@
-"""Verify optional material-height metadata survives Blender round trips."""
+"""Verify material-height and physical-type metadata survives Blender round trips."""
 
 import copy
 import os
@@ -44,6 +44,20 @@ def main():
     M.set_slot_image(mat, "NORMAL", image)
     bpy.ops.adm.create_model_root(name="Height root")
     root = bpy.data.objects["Height root"]
+    physical = root.adm.physical_materials.add()
+    physical.name = "meadow"
+    physical.surface_type = "adm.physical.grass.v1"
+    physical.surface_subtype = "adm.physical.grass.tall.v1"
+    physical.surface_tags_json = '["adm.physical.tag.organic.v1","adm.physical.tag.vegetated.v1"]'
+    physical.surface_description = "Tall meadow grass"
+    physical.surface_tags_json = "{}"
+    try:
+        ModelExporter(bpy.context, root, ExportOptions()).export()
+    except ExportError as exc:
+        assert "Physical Tags JSON must be an array" in str(exc)
+    else:
+        raise AssertionError("non-array physical tags were accepted")
+    physical.surface_tags_json = '["adm.physical.tag.organic.v1","adm.physical.tag.vegetated.v1"]'
     original, report = ModelExporter(
         bpy.context, root, ExportOptions(image_format="DDS", gpu_compression="RGBA8")).export()
     assert report.ok, report.errors
@@ -65,6 +79,11 @@ def main():
               "extras": {"uneditable": ["keep", 3]},
               "extensions": {"EXAMPLE_height_metadata": {"value": "keep"}}}
     material.setdefault("extensions", {})[K.MATERIAL_HEIGHT_EXT] = height
+    terrain_surface = {
+        "version": "1.0.0",
+        "surfaceIds": ["awt.surface.0123456789abcdef01234567"],
+    }
+    material["extensions"][K.TERRAIN_SURFACE_EXT] = terrain_surface
     unknown_material = {"unrecognized": True, "future": {"values": [0.2, "text"]}}
     material["extensions"]["EXAMPLE_unknown_material"] = unknown_material
     unknown_root = {"opaque": {"index": 2, "values": [True, "preserve"]}}
@@ -80,6 +99,7 @@ def main():
     doc["meshes"][mesh_node["mesh"]]["primitives"][0].setdefault("extensions", {})[
         "EXAMPLE_unknown_primitive"] = unknown_primitive
     doc.setdefault("extensionsUsed", []).append(K.MATERIAL_HEIGHT_EXT)
+    doc["extensionsUsed"].append(K.TERRAIN_SURFACE_EXT)
     doc["extensionsUsed"].append("EXAMPLE_height_metadata")
     doc["extensionsUsed"].append("EXAMPLE_unknown_material")
     doc["extensionsUsed"].append("EXAMPLE_unknown_root")
@@ -117,6 +137,9 @@ def main():
         source = exported["images"][tex["source"]]
         assert read_view(exported, binary, source["bufferView"]) == source_blob
         assert K.MATERIAL_HEIGHT_EXT in exported["extensionsUsed"]
+        assert K.TERRAIN_SURFACE_EXT in exported["extensionsUsed"]
+        assert K.TERRAIN_SURFACE_EXT not in exported.get("extensionsRequired", [])
+        assert exported["materials"][0]["extensions"][K.TERRAIN_SURFACE_EXT] == terrain_surface
         assert "EXAMPLE_height_metadata" in exported["extensionsUsed"]
         assert exported["materials"][0]["extensions"]["EXAMPLE_unknown_material"] == unknown_material
         assert "EXAMPLE_unknown_material" in exported["extensionsUsed"]
@@ -130,6 +153,16 @@ def main():
         assert "EXAMPLE_unknown_scene" in exported["extensionsUsed"]
         assert exported["meshes"][0]["primitives"][0]["extensions"]["EXAMPLE_unknown_primitive"] == unknown_primitive
         assert "EXAMPLE_unknown_primitive" in exported["extensionsUsed"]
+        assert exported["physicalMaterials"] == [{
+            "id": "meadow",
+            "friction": 0.5,
+            "restitution": 0.0,
+            "type": "adm.physical.grass.v1",
+            "subtype": "adm.physical.grass.tall.v1",
+            "tags": ["adm.physical.tag.organic.v1", "adm.physical.tag.vegetated.v1"],
+            "description": "Tall meadow grass",
+        }]
+        assert K.PHYSICAL_SURFACE_TYPES_EXT in exported["extensionsRequired"]
         check_uv1_tangent(exported, binary)
 
     with tempfile.TemporaryDirectory(prefix="adm_material_height_") as folder:
@@ -287,6 +320,12 @@ def main():
         print("PHASE import optional material height", flush=True)
         importer = ModelImporter(bpy.context, path, ImportOptions())
         importer.run()
+        physical = importer.root.adm.physical_materials[0]
+        assert physical.surface_type == "adm.physical.grass.v1"
+        assert physical.surface_subtype == "adm.physical.grass.tall.v1"
+        assert physical.surface_tags_json == (
+            '["adm.physical.tag.organic.v1","adm.physical.tag.vegetated.v1"]')
+        assert physical.surface_description == "Tall meadow grass"
         assert any("MATERIAL_HEIGHT_FALLBACK" in warning for warning in importer.warnings)
         assert any("MATERIAL_HEIGHT_UNKNOWN" in warning and "futureControl" in warning
                    for warning in importer.warnings)
@@ -305,6 +344,22 @@ def main():
         assert any("OPTIONAL_EXTENSIONS_UNSUPPORTED" in warning and "EXAMPLE_unknown_material" in warning
                    for warning in exporter.warnings)
         check_export(encoded)
+        unknown_surface_doc = copy.deepcopy(doc)
+        unknown_surface_doc["physicalMaterials"][0]["type"] = "org.example.physical.soft_wood.v1"
+        unknown_surface_doc["physicalMaterials"][0]["subtype"] = "org.example.physical.soft_wood_oak.v1"
+        unknown_surface_path = os.path.join(folder, "unknown_surface_type.adm")
+        with open(unknown_surface_path, "wb") as stream:
+            stream.write(write_container(K.ADM_MAGIC, unknown_surface_doc, chunks))
+        unknown_surface_importer = ModelImporter(bpy.context, unknown_surface_path, ImportOptions())
+        unknown_surface_importer.run()
+        unknown_surface = unknown_surface_importer.root.adm.physical_materials[0]
+        assert unknown_surface.surface_type == "org.example.physical.soft_wood.v1"
+        unknown_surface_data, unknown_surface_report = ModelExporter(
+            bpy.context, unknown_surface_importer.root, ExportOptions()).export()
+        assert unknown_surface_report.ok, unknown_surface_report.errors
+        unknown_surface_exported, _ = read_container(unknown_surface_data, K.ADM_MAGIC)
+        assert unknown_surface_exported["physicalMaterials"][0]["type"] == (
+            "org.example.physical.soft_wood.v1")
         print("PHASE save and reopen Blender project", flush=True)
         root_name = importer.root.name
         blend_path = os.path.join(folder, "height.blend")

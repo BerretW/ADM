@@ -49,6 +49,11 @@
 
 ### Added
 
+- Added `ADM_physical_surface_types_v1` with a machine-readable type, subtype and tag registry.
+  Blender preserves custom IDs and unknown types while keeping the existing friction,
+  restitution and per-face assignment contracts unchanged. Documented reference lookup precedence
+  for collider defaults and triangle overrides.
+- Added `ADM_terrain_surface_v1` to map material-local terrain layers to stable surface IDs.
 - Added opt-in `ADM-TEX-KTX2-2` and `ADM-TEX-DDS-2` format contracts for R8, R16, BC4, BC5, and
   BC7 while retaining the original version 1 capability meanings and portable fallback rules.
 - Added renderer-independent layer AO, effective-height, height-blend, and tangent-space

@@ -9,7 +9,7 @@ import numpy as np
 
 from awt.heightmap import load_heightmap
 from awt.adm_export import export_tiles
-from awt.material import PAINT_AUTO, Band, Biome, BiomeSurface, TerrainMaterial, default_biomes
+from awt.material import PAINT_AUTO, Band, Biome, BiomeSurface, PhysicalMaterial, TerrainMaterial, default_biomes
 from awt.pipeline import BuildParams, build, load_manifest
 from awt.ply import read_ply, weight_fields
 from awt.project import load_project
@@ -96,6 +96,11 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(loaded["source"]["path"],
                          os.path.normpath(os.path.join(self.tmp.name, "../heightmap.png")))
         self.assertEqual(loaded["params"]["input_path"], r"C:\terrain\heightmap.png")
+        manifest["format_version"] = 4
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.assertEqual(load_manifest(manifest_path)["format_version"], 4)
+        manifest["format_version"] = 2
         manifest["source"]["path"] = 42
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle)
@@ -311,6 +316,167 @@ class PipelineTest(unittest.TestCase):
         self.assertLessEqual(worst, eps + 1e-4)
         self.assertLessEqual(manifest["lods"][0]["measured_error_m"], eps + 1e-4)
         self.assertLess(len(faces), 2 * (cols - 1) * (rows - 1) // 3)
+
+    def test_independent_collision_is_error_bounded_capped_and_seam_refined(self):
+        data = _terrain(65, 97, seed=7)
+        src = os.path.join(self.tmp.name, "collision.npy")
+        np.save(src, data)
+        common = dict(input_path=src, tile_cells=32, max_errors_m=[0.6, 2.0],
+                      spacing_m=1.5, texture_error=0.0, threads=2)
+        render_only = BuildParams(out_dir=os.path.join(self.tmp.name, "render_only"), **common)
+        with_collision = BuildParams(
+            out_dir=os.path.join(self.tmp.name, "with_collision"), collision_max_error_m=0.8,
+            collision_max_triangles_per_tile=4096, **common)
+        build(render_only)
+        render_manifest = load_manifest(render_only.out_dir)
+        build(with_collision)
+        collision_manifest = load_manifest(with_collision.out_dir)
+
+        self.assertEqual(collision_manifest["format_version"], 5)
+        self.assertEqual(len(collision_manifest["tiles"]), len(render_manifest["tiles"]))
+        self.assertLessEqual(collision_manifest["collision"]["max_measured_error_m"], 0.80001)
+        by_xy = {(tile["ix"], tile["iy"]): tile for tile in collision_manifest["tiles"]}
+        for tile in collision_manifest["tiles"]:
+            collision = tile["collision"]
+            self.assertLessEqual(collision["triangles"], with_collision.collision_max_triangles_per_tile)
+            self.assertLessEqual(collision["measured_error_m"], with_collision.collision_max_error_m + 1e-5)
+            vertices, faces = read_ply(os.path.join(collision_manifest["_dir"], collision["file"]))
+            fields = weight_fields(vertices)
+            self.assertEqual(fields, [f"w{i}" for i in range(len(fields))])
+            weights = np.column_stack([vertices[name] for name in fields])
+            np.testing.assert_array_equal(weights.sum(axis=1), 255)
+            dominant = np.argmax(weights[faces].astype(np.uint16).sum(axis=1), axis=1)
+            self.assertEqual(collision["used_surfaces"], np.unique(dominant).tolist())
+            original = next(t for t in render_manifest["tiles"] if t["id"] == tile["id"])
+            self.assertEqual([lod["digest"] for lod in tile["lods"]],
+                             [lod["digest"] for lod in original["lods"]])
+
+            if (tile["ix"] + 1, tile["iy"]) in by_xy:
+                neighbour = by_xy[(tile["ix"] + 1, tile["iy"])]
+                other, _ = read_ply(os.path.join(collision_manifest["_dir"], neighbour["collision"]["file"]))
+                edge_x = tile["origin_m"][0] + tile["size_m"][0]
+                other_edge_x = neighbour["origin_m"][0]
+                y0 = set(np.round(vertices["y"][np.isclose(vertices["x"], tile["size_m"][0])], 6))
+                y1 = set(np.round(other["y"][np.isclose(other["x"], 0.0)], 6))
+                self.assertEqual(y0, y1, f"vertical collision seam differs at x={edge_x}/{other_edge_x}")
+            if (tile["ix"], tile["iy"] + 1) in by_xy:
+                neighbour = by_xy[(tile["ix"], tile["iy"] + 1)]
+                other, _ = read_ply(os.path.join(collision_manifest["_dir"], neighbour["collision"]["file"]))
+                y_edge = tile["origin_m"][1] + tile["size_m"][1]
+                y_other = neighbour["origin_m"][1]
+                x0 = set(np.round(vertices["x"][np.isclose(vertices["y"], tile["size_m"][1])], 6))
+                x1 = set(np.round(other["x"][np.isclose(other["y"], 0.0)], 6))
+                self.assertEqual(x0, x1, f"horizontal collision seam differs at y={y_edge}/{y_other}")
+
+    def test_collision_triangle_budget_fails_explicitly(self):
+        data = np.zeros((33, 33), np.float32)
+        data[16, 16] = 10.0
+        src = os.path.join(self.tmp.name, "collision_budget.npy")
+        np.save(src, data)
+        params = BuildParams(
+            input_path=src, out_dir=os.path.join(self.tmp.name, "collision_budget"),
+            tile_cells=32, max_errors_m=[0.0], texture_error=0.0,
+            collision_max_error_m=0.1, collision_max_triangles_per_tile=2)
+        with self.assertRaisesRegex(ValueError, "exceeding the configured limit"):
+            build(params)
+
+    def test_collision_refines_physical_boundaries_deterministically(self):
+        source = os.path.join(self.tmp.name, "physical_boundary.npy")
+        np.save(source, np.zeros((65, 65), np.float32))
+        material = TerrainMaterial(physical_materials=[
+            PhysicalMaterial("Soil", 0.8, 0.0, id="test.physical.soil"),
+            PhysicalMaterial("Rock", 0.6, 0.0, id="test.physical.rock"),
+        ])
+        material.ensure_physical_paint(65, 65)
+        material.physical_paint.fill(0)
+        material.physical_paint[:, 20:] = 1
+        common = dict(
+            input_path=source, tile_cells=32, max_errors_m=[1.0], spacing_m=1.0, texture_error=0.0,
+            collision_max_error_m=10.0, collision_boundary_max_edge_m=4.0,
+            collision_max_triangles_per_tile=4096, threads=1,
+        )
+        first = BuildParams(out_dir=os.path.join(self.tmp.name, "physical_boundary_a"), **common)
+        second = BuildParams(out_dir=os.path.join(self.tmp.name, "physical_boundary_b"), **common)
+        first_manifest = build(first, material)
+        second_manifest = build(second, material)
+        capped = BuildParams(out_dir=os.path.join(self.tmp.name, "physical_boundary_capped"),
+                             **{**common, "collision_max_triangles_per_tile": 2})
+        with self.assertRaisesRegex(ValueError, "exceeding the configured limit"):
+            build(capped, material)
+
+        self.assertEqual(first_manifest["collision"]["physical_boundary_max_edge_m"], 4.0)
+        first_tiles = {(tile["ix"], tile["iy"]): tile for tile in first_manifest["tiles"]}
+        second_tiles = {(tile["ix"], tile["iy"]): tile for tile in second_manifest["tiles"]}
+        self.assertGreater(first_tiles[(0, 0)]["collision"]["triangles"], 2)
+        collision_vertices = {}
+        for key, tile in first_tiles.items():
+            collision = tile["collision"]
+            other = second_tiles[key]["collision"]
+            self.assertEqual(collision["digest"], other["digest"])
+            self.assertLessEqual(collision["triangles"], 4096)
+            vertices, faces = read_ply(os.path.join(first.out_dir, collision["file"]))
+            collision_vertices[key] = vertices
+            grid_x = np.rint(vertices["x"][faces] + tile["origin_m"][0]).astype(int)
+            grid_y = np.rint(64 - vertices["y"][faces] - tile["origin_m"][1]).astype(int)
+            labels = material.physical_paint[
+                grid_y, grid_x,
+            ]
+            center_x = np.rint(grid_x.mean(axis=1)).astype(int)
+            center_y = np.rint(grid_y.mean(axis=1)).astype(int)
+            face_labels = material.physical_paint[center_y, center_x]
+            mixed = (np.any(labels != labels[:, :1], axis=1)
+                     | np.any(labels != face_labels[:, None], axis=1))
+            if np.any(mixed):
+                dx = vertices["x"][faces[mixed, 1]] - vertices["x"][faces[mixed, 0]]
+                dy = vertices["y"][faces[mixed, 1]] - vertices["y"][faces[mixed, 0]]
+                self.assertLessEqual(float(np.hypot(dx, dy).max()), 4.0)
+        for key, tile in first_tiles.items():
+            vertices = collision_vertices[key]
+            if (key[0] + 1, key[1]) in first_tiles:
+                other = collision_vertices[(key[0] + 1, key[1])]
+                y0 = set(np.round(vertices["y"][np.isclose(vertices["x"], tile["size_m"][0])], 6))
+                y1 = set(np.round(other["y"][np.isclose(other["x"], 0.0)], 6))
+                self.assertEqual(y0, y1)
+            if (key[0], key[1] + 1) in first_tiles:
+                other = collision_vertices[(key[0], key[1] + 1)]
+                x0 = set(np.round(vertices["x"][np.isclose(vertices["y"], tile["size_m"][1])], 6))
+                x1 = set(np.round(other["x"][np.isclose(other["y"], 0.0)], 6))
+                self.assertEqual(x0, x1)
+
+    def test_collision_refines_automatic_surface_physical_boundaries(self):
+        source = os.path.join(self.tmp.name, "automatic_physical_boundary.npy")
+        np.save(source, np.zeros((33, 33), np.float32))
+        material = TerrainMaterial(physical_materials=[
+            PhysicalMaterial("Soil", 0.8, 0.0, id="test.physical.soil"),
+            PhysicalMaterial("Rock", 0.6, 0.0, id="test.physical.rock"),
+        ])
+        material.surface("grass").physical_material_id = "test.physical.soil"
+        material.surface("soil").physical_material_id = "test.physical.rock"
+        material.ensure_surface_paint(33, 33)
+        material.surface_paint.fill(0)
+        material.surface_paint[:, 12:] = 1
+        params = BuildParams(
+            input_path=source, out_dir=os.path.join(self.tmp.name, "automatic_physical_boundary"),
+            tile_cells=32, max_errors_m=[1.0], texture_error=0.0, collision_max_error_m=10.0,
+            collision_boundary_max_edge_m=4.0, collision_max_triangles_per_tile=4096,
+        )
+        manifest = build(params, material)
+        self.assertGreater(manifest["tiles"][0]["collision"]["triangles"], 2)
+
+    def test_collision_settings_reject_invalid_bounds(self):
+        params = BuildParams(input_path="", out_dir="")
+        for error, limit in ((-1.0, 100), (float("inf"), 100), (0.5, 1),
+                             (0.5, 2_097_153), (0.5, 2.5)):
+            with self.subTest(error=error, limit=limit):
+                params.collision_max_error_m = error
+                params.collision_max_triangles_per_tile = limit
+                with self.assertRaises(ValueError):
+                    params.validate()
+        for edge_limit in (0.0, -1.0, float("inf"), float("nan")):
+            with self.subTest(edge_limit=edge_limit):
+                params.collision_boundary_max_edge_m = edge_limit
+                with self.assertRaisesRegex(ValueError, "physical-boundary edge limit"):
+                    params.validate()
 
     def test_zero_error_is_full_resolution_and_flat_is_two_triangles(self):
         data = _terrain(40, 50)

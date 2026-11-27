@@ -14,6 +14,7 @@ from adm_blender.core.buffers import BinBuilder
 from adm_blender.core.component_animation import component_track_issues, sample_track_values
 from adm_blender.core.container import ChunkCollection, read_container, write_container
 from adm_blender.core.png import encode_png
+from adm_blender.core import physical_surfaces as PS
 from adm_blender.core.validate import validate_adm, validate_adm_resolved, validate_anim
 
 
@@ -225,6 +226,100 @@ class Draft4Tests(unittest.TestCase):
         self.doc["physicalMaterials"][0]["profile"] = "adm.phys.unknown.v1"
         self.assertIn("PHYSICAL_MATERIAL_PROFILE", self.codes())
 
+    def test_registered_and_custom_physical_surface_types(self):
+        self.add_metadata()
+        material = self.doc["physicalMaterials"][0]
+        material.update({
+            "type": "adm.physical.grass.v1",
+            "subtype": "adm.physical.grass.tall.v1",
+            "tags": ["adm.physical.tag.organic.v1", "adm.physical.tag.vegetated.v1"],
+            "description": "Tall meadow grass",
+        })
+        self.doc["extensionsUsed"] = [K.PHYSICAL_SURFACE_TYPES_EXT]
+        self.doc["extensionsRequired"] = [K.PHYSICAL_SURFACE_TYPES_EXT]
+        self.assertTrue(self.validate().ok, self.validate().format())
+
+        material["type"] = "org.example.physical.soft_wood.v1"
+        material["subtype"] = "org.example.physical.soft_wood_oak.v1"
+        report = self.validate()
+        self.assertTrue(report.ok, report.format())
+        self.assertIn("PHYSICAL_SURFACE_TYPE_UNKNOWN", {issue.code for issue in report.warnings})
+        self.assertEqual(PS.resolve_type_id(material["type"]), K.PHYSICAL_SURFACE_REGISTRY["unknownType"])
+
+    def test_physical_surface_registry_is_well_formed(self):
+        types = K.PHYSICAL_SURFACE_REGISTRY["types"]
+        type_ids = [record["id"] for record in types]
+        self.assertEqual(len(type_ids), len(set(type_ids)))
+        self.assertIn(K.PHYSICAL_SURFACE_REGISTRY["unknownType"], type_ids)
+        self.assertEqual(len(K.PHYSICAL_SURFACE_REGISTRY["tags"]),
+                         len(set(K.PHYSICAL_SURFACE_REGISTRY["tags"])))
+        for record in types:
+            with self.subTest(type_id=record["id"]):
+                self.assertEqual(len(record["subtypes"]), len(set(record["subtypes"])))
+                self.assertTrue(all(subtype.startswith(record["id"][:-3] + ".")
+                                    for subtype in record["subtypes"]))
+
+    def test_physical_surface_types_validate_fallbacks_and_limits(self):
+        self.add_metadata()
+        material = self.doc["physicalMaterials"][0]
+        material["type"] = "adm.physical.grass.v1"
+        self.doc["extensionsUsed"] = [K.PHYSICAL_SURFACE_TYPES_EXT]
+        self.doc["extensionsRequired"] = [K.PHYSICAL_SURFACE_TYPES_EXT]
+        material["subtype"] = "adm.physical.grass.short.v1"
+        self.assertTrue(self.validate().ok, self.validate().format())
+
+        doc = copy.deepcopy(self.doc)
+        doc["physicalMaterials"][0]["type"] = "user.surface.v1"
+        self.assertIn("PHYSICAL_SURFACE_TYPE_ID", self.codes(doc))
+        doc = copy.deepcopy(self.doc)
+        doc["physicalMaterials"][0]["subtype"] = "org.example.physical.grass_variation.v1"
+        report = self.validate(doc)
+        self.assertTrue(report.ok, report.format())
+        self.assertIn("PHYSICAL_SURFACE_SUBTYPE_UNKNOWN", {issue.code for issue in report.warnings})
+        doc = copy.deepcopy(self.doc)
+        doc["physicalMaterials"][0]["tags"] = ["adm.physical.tag.wet.v1"] * 2
+        self.assertIn("PHYSICAL_SURFACE_TAG_DUPLICATE", self.codes(doc))
+        doc = copy.deepcopy(self.doc)
+        doc["extensionsRequired"] = []
+        self.assertIn("PHYSICAL_SURFACE_TYPES_REQUIRED", self.codes(doc))
+        doc = copy.deepcopy(self.doc)
+        doc["extensionsUsed"] = []
+        self.assertIn("PHYSICAL_SURFACE_TYPES_USED", self.codes(doc))
+        doc = copy.deepcopy(self.doc)
+        doc["physicalMaterials"][0]["description"] = "x" * 513
+        self.assertIn("PHYSICAL_SURFACE_DESCRIPTION", self.codes(doc))
+
+    def test_physical_surface_query_uses_triangle_override_then_collider_default(self):
+        self.add_metadata()
+        self.doc["physicalMaterials"].append({
+            "id": "stone",
+            "friction": 0.7,
+            "restitution": 0.0,
+        })
+        self.doc["colliders"][0] = {
+            "node": 0, "shape": "MESH", "mesh": 0, "physicalMaterial": "rubber",
+        }
+        primitive = self.doc["meshes"][0]["primitives"][0]
+        triangle_count = self.doc["accessors"][primitive["indices"]]["count"] // 3
+        primitive["extensions"] = {
+            K.PHYSICAL_SURFACES_EXT: {"faceMaterials": ["stone"] * triangle_count},
+        }
+        self.doc["extensionsUsed"] = [K.PHYSICAL_SURFACES_EXT]
+        self.doc["extensionsRequired"] = [K.PHYSICAL_SURFACES_EXT]
+        report = self.validate()
+        self.assertTrue(report.ok, report.format())
+        self.assertEqual(PS.query_physical_material(self.doc, 0, 0, 0)["id"], "stone")
+        self.assertEqual(PS.query_physical_material(self.doc, 0)["id"], "rubber")
+
+        del primitive["extensions"][K.PHYSICAL_SURFACES_EXT]
+        self.assertEqual(PS.query_physical_material(self.doc, 0, 0, 0)["id"], "rubber")
+        self.doc["colliders"][0].pop("physicalMaterial")
+        self.assertIsNone(PS.query_physical_material(self.doc, 0, 0, 0))
+        with self.assertRaises(IndexError):
+            PS.query_physical_material(self.doc, 0, 0, triangle_count)
+        with self.assertRaises(ValueError):
+            PS.query_physical_material(self.doc, 0, 0)
+
     def test_physical_face_material_ids_are_stable_references(self):
         self.doc["physicalMaterials"] = [{"id": "wood", "profile": "adm.phys.wood.v1",
                                           "friction": 0.65, "restitution": 0.15}]
@@ -236,6 +331,27 @@ class Draft4Tests(unittest.TestCase):
         self.assertTrue(self.validate().ok, self.validate().format())
         prim["extensions"][K.PHYSICAL_SURFACES_EXT]["faceMaterials"][0] = "missing"
         self.assertIn("PHYSICAL_FACE_REFERENCE", self.codes())
+
+    def test_terrain_surface_ids_map_local_layers_and_allow_custom_ids(self):
+        self.doc["materials"] = [{"baseColorFactor": [1.0, 1.0, 1.0, 1.0]}]
+        material = self.doc["materials"][0]
+        material["extensions"] = {K.TERRAIN_SURFACE_EXT: {
+            "version": "1.0.0",
+            "surfaceIds": ["awt.surface.0123456789abcdef01234567", "org.example.custom-rock"],
+        }}
+        self.doc["extensionsUsed"] = [K.TERRAIN_SURFACE_EXT]
+        self.assertTrue(self.validate().ok, self.validate().format())
+
+        material["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] = ["same", "same"]
+        self.assertIn("TERRAIN_SURFACE_DUPLICATE", self.codes())
+        material["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] = ["x" * 129]
+        self.assertIn("TERRAIN_SURFACE_ID", self.codes())
+        material["extensions"][K.TERRAIN_SURFACE_EXT]["surfaceIds"] = ["one"]
+        self.doc["extensionsRequired"] = [K.TERRAIN_SURFACE_EXT]
+        self.assertIn("TERRAIN_SURFACE_REQUIRED", self.codes())
+        self.doc["extensionsRequired"] = []
+        self.doc["extensions"] = {K.TERRAIN_SURFACE_EXT: {}}
+        self.assertIn("TERRAIN_SURFACE_SCOPE", self.codes())
 
     def test_external_image_uri_hash_and_resolved_validation(self):
         blob = encode_png(2, 1, bytes((255, 0, 0, 255, 0, 255, 0, 255)))

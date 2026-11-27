@@ -35,6 +35,8 @@ SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 LIBRARY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(@[a-z][a-z0-9_]*)*$")
 EVENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
 PROFILE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*\.v[0-9]+$")
+CUSTOM_PHYSICAL_ID_RE = re.compile(
+    r"^org(?:\.[a-z][a-z0-9-]*){2,}\.[a-z][a-z0-9_-]*\.v[1-9][0-9]*$")
 RIG_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -51,6 +53,13 @@ BCP47_RE = re.compile(
     r"(?:-[0-9A-WY-Za-wy-z](?:-[A-Za-z0-9]{2,8})+)*"
     r"(?:-[Xx](?:-[A-Za-z0-9]{1,8})+)?"
     r"|[Xx](?:-[A-Za-z0-9]{1,8})+)$")
+
+
+def _utf8_size(value):
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return None
 
 
 # ------------------------------------------------------------------------------------------------
@@ -226,6 +235,9 @@ class _Base:
         for name in ext:
             if not isinstance(used, list) or name not in used:
                 self.r.error("EXTENSION_NOT_DECLARED", path, f"extension '{name}' not listed in extensionsUsed")
+            if name == K.TERRAIN_SURFACE_EXT and not path.startswith("materials["):
+                self.r.error("TERRAIN_SURFACE_SCOPE", path,
+                             f"'{K.TERRAIN_SURFACE_EXT}' is valid only on materials")
 
     def array(self, name, required=False):
         if name not in self.doc:
@@ -930,6 +942,42 @@ class AdmValidator(_Base):
             self._mi = i
             self.check_material_shader(m, p, ntex)
             self.check_material_height(m, p, ntex)
+            self.check_terrain_surface(m, p)
+
+    def check_terrain_surface(self, material, path):
+        extensions = material.get("extensions", {})
+        data = extensions.get(K.TERRAIN_SURFACE_EXT) if isinstance(extensions, dict) else None
+        if data is None:
+            return
+        p = f"{path}.extensions.{K.TERRAIN_SURFACE_EXT}"
+        if not self.keys(data, p, ("version", "surfaceIds")):
+            return
+        if data["version"] != "1.0.0":
+            self.r.error("TERRAIN_SURFACE_VERSION", p + ".version", "must be '1.0.0'")
+        ids = data["surfaceIds"]
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 4:
+            self.r.error("TERRAIN_SURFACE_IDS", p + ".surfaceIds", "must contain one to four IDs")
+            return
+        seen = set()
+        for index, ident in enumerate(ids):
+            entry = f"{p}.surfaceIds[{index}]"
+            if not isinstance(ident, str) or not ident.strip():
+                self.r.error("TERRAIN_SURFACE_ID", entry, "must be a non-empty string")
+                continue
+            try:
+                encoded_length = len(ident.encode("utf-8"))
+            except UnicodeEncodeError:
+                self.r.error("TERRAIN_SURFACE_ID", entry, "must be valid UTF-8")
+                continue
+            if encoded_length > 128:
+                self.r.error("TERRAIN_SURFACE_ID", entry, "must not exceed 128 UTF-8 bytes")
+            if ident in seen:
+                self.r.error("TERRAIN_SURFACE_DUPLICATE", entry, f"duplicate surface ID {ident!r}")
+            seen.add(ident)
+        required = self.doc.get("extensionsRequired", [])
+        if isinstance(required, list) and K.TERRAIN_SURFACE_EXT in required:
+            self.r.error("TERRAIN_SURFACE_REQUIRED", p,
+                         "must not be listed in extensionsRequired because it does not change rendering")
 
     def check_material_height(self, material, path, texture_count):
         extensions = material.get("extensions", {})
@@ -2115,7 +2163,8 @@ class AdmValidator(_Base):
         materials = set()
         for i, item in enumerate(self.array("physicalMaterials")):
             p = f"physicalMaterials[{i}]"
-            if not self.keys(item, p, ("id", "friction", "restitution"), ("profile",)):
+            if not self.keys(item, p, ("id", "friction", "restitution"),
+                             ("profile", "type", "subtype", "tags", "description")):
                 continue
             ident = item["id"]
             if not _nonblank(ident):
@@ -2133,6 +2182,78 @@ class AdmValidator(_Base):
             elif "profile" in item and K.PHYSICAL_SURFACES_EXT not in self.doc.get("extensionsRequired", []):
                 self.r.error("PHYSICAL_SURFACE_REQUIRED", p + ".profile",
                              f"'{K.PHYSICAL_SURFACES_EXT}' must be listed in extensionsRequired")
+            semantic_fields = {"type", "subtype", "tags", "description"} & item.keys()
+            if semantic_fields:
+                used = self.doc.get("extensionsUsed", [])
+                required = self.doc.get("extensionsRequired", [])
+                if K.PHYSICAL_SURFACE_TYPES_EXT not in used:
+                    self.r.error("PHYSICAL_SURFACE_TYPES_USED", p,
+                                 f"'{K.PHYSICAL_SURFACE_TYPES_EXT}' must be listed in extensionsUsed")
+                if K.PHYSICAL_SURFACE_TYPES_EXT not in required:
+                    self.r.error("PHYSICAL_SURFACE_TYPES_REQUIRED", p,
+                                 f"'{K.PHYSICAL_SURFACE_TYPES_EXT}' must be listed in extensionsRequired")
+                physical_type = item.get("type")
+                type_path = p + ".type"
+                if not isinstance(physical_type, str) or not physical_type:
+                    self.r.error("PHYSICAL_SURFACE_TYPE_ID", type_path, "must be a nonempty string")
+                elif not PROFILE_ID_RE.match(physical_type) or _utf8_size(physical_type) is None \
+                        or _utf8_size(physical_type) > 160:
+                    self.r.error("PHYSICAL_SURFACE_TYPE_ID", type_path,
+                                 "must be a versioned identifier no longer than 160 UTF-8 bytes")
+                elif physical_type not in K.PHYSICAL_SURFACE_TYPES:
+                    if not CUSTOM_PHYSICAL_ID_RE.match(physical_type):
+                        self.r.error("PHYSICAL_SURFACE_TYPE_ID", type_path,
+                                     "unregistered IDs must use org.<reverse-domain>.<name>.vN")
+                    else:
+                        self.r.warning("PHYSICAL_SURFACE_TYPE_UNKNOWN", type_path,
+                                       f"unknown type {physical_type!r}; readers use "
+                                       f"{K.PHYSICAL_SURFACE_REGISTRY['unknownType']!r} as fallback")
+                if "subtype" in item:
+                    subtype = item["subtype"]
+                    subtype_path = p + ".subtype"
+                    if not isinstance(subtype, str) or not PROFILE_ID_RE.match(subtype) \
+                            or _utf8_size(subtype) is None or _utf8_size(subtype) > 160:
+                        self.r.error("PHYSICAL_SURFACE_SUBTYPE_ID", subtype_path,
+                                     "must be a versioned identifier no longer than 160 UTF-8 bytes")
+                    elif isinstance(physical_type, str) and physical_type in K.PHYSICAL_SURFACE_TYPES:
+                        if subtype not in K.PHYSICAL_SURFACE_TYPES[physical_type]["subtypes"]:
+                            if not CUSTOM_PHYSICAL_ID_RE.match(subtype):
+                                self.r.error("PHYSICAL_SURFACE_SUBTYPE_ID", subtype_path,
+                                             "unregistered IDs must use org.<reverse-domain>.<name>.vN")
+                            else:
+                                self.r.warning("PHYSICAL_SURFACE_SUBTYPE_UNKNOWN", subtype_path,
+                                               "subtype is not registered for this type; readers treat it as unspecified")
+                    elif not CUSTOM_PHYSICAL_ID_RE.match(subtype):
+                        self.r.error("PHYSICAL_SURFACE_SUBTYPE_ID", subtype_path,
+                                     "unregistered IDs must use org.<reverse-domain>.<name>.vN")
+                if "tags" in item:
+                    tags = item["tags"]
+                    tags_path = p + ".tags"
+                    if not isinstance(tags, list) or len(tags) > 32:
+                        self.r.error("PHYSICAL_SURFACE_TAGS", tags_path,
+                                     "must be an array with no more than 32 entries")
+                    else:
+                        seen_tags = set()
+                        for tag_index, tag in enumerate(tags):
+                            tag_path = f"{tags_path}[{tag_index}]"
+                            if not isinstance(tag, str) or not PROFILE_ID_RE.match(tag) \
+                                    or _utf8_size(tag) is None or _utf8_size(tag) > 160:
+                                self.r.error("PHYSICAL_SURFACE_TAG_ID", tag_path,
+                                             "must be a versioned identifier no longer than 160 UTF-8 bytes")
+                            elif tag in seen_tags:
+                                self.r.error("PHYSICAL_SURFACE_TAG_DUPLICATE", tag_path,
+                                             "duplicate semantic tag")
+                            else:
+                                seen_tags.add(tag)
+                                if tag not in K.PHYSICAL_SURFACE_TAGS and not CUSTOM_PHYSICAL_ID_RE.match(tag):
+                                    self.r.error("PHYSICAL_SURFACE_TAG_ID", tag_path,
+                                                 "unregistered IDs must use org.<reverse-domain>.<name>.vN")
+                if "description" in item:
+                    description = item["description"]
+                    if not isinstance(description, str) or _utf8_size(description) is None \
+                            or _utf8_size(description) > 512:
+                        self.r.error("PHYSICAL_SURFACE_DESCRIPTION", p + ".description",
+                                     "must be a string no longer than 512 UTF-8 bytes")
         colliders = self.array("colliders")
         for i, collider in enumerate(colliders):
             if isinstance(collider, dict) and "physicalMaterial" in collider:

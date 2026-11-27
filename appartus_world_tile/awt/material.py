@@ -41,6 +41,11 @@ MAX_BIOMES = 16
 SURFACES_PER_BIOME = 4
 PAINT_AUTO = 255  # paint value meaning "use the automatic rules"
 PAINT_MAX_SIDE = 4096
+MAX_PHYSICAL_MATERIALS = 255
+PHYSICAL_SURFACE_PROFILES = (
+    "adm.phys.wood.v1", "adm.phys.metal.v1", "adm.phys.stone.v1",
+    "adm.phys.ground.v1", "adm.phys.glass.v1",
+)
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.tga *.tif *.tiff *.bmp *.dds *.ktx2 *.webp);;All files (*)"
 TERRAIN_SHADER_FIELDS = frozenset({
     "version", "height_blend_enabled", "height_blend_transition", "height_blend_strength",
@@ -76,6 +81,14 @@ class Surface:
     parallax_scale: float = 0.0
     emission: str = ""
     gpu_encodings: dict[str, str] = field(default_factory=dict)
+    id: str = ""
+    physical_material_id: str = ""
+
+    def __post_init__(self):
+        if not self.id:
+            digest = hashlib.sha256(
+                ("appartus-world-tile\0surface\0" + self.name).encode("utf-8")).hexdigest()[:24]
+            self.id = "awt.surface." + digest
 
     def textures(self) -> list[str]:
         return [p for p in (self.albedo, self.metallic_map.path, self.roughness_map.path, self.normal,
@@ -119,6 +132,23 @@ class Biome:
 
     def surface_names(self) -> list[str]:
         return [entry.surface for entry in self.surfaces]
+
+
+@dataclass
+class PhysicalMaterial:
+    """A stable physical-surface reference, independent of visual terrain surfaces."""
+
+    name: str
+    friction: float
+    restitution: float
+    profile: str = ""
+    id: str = ""
+
+    def __post_init__(self):
+        if not self.id:
+            digest = hashlib.sha256(
+                ("appartus-world-tile\0physical\0" + self.name).encode("utf-8")).hexdigest()[:24]
+            self.id = "awt.physical." + digest
 
 
 def _surface(name, color, roughness, repeat_m=4.0) -> Surface:
@@ -217,6 +247,9 @@ class TerrainMaterial:
     paint_cell: int = 1
     surface_paint: np.ndarray | None = field(default=None, repr=False, compare=False)
     surface_paint_cell: int = 1
+    physical_materials: list[PhysicalMaterial] = field(default_factory=list)
+    physical_paint: np.ndarray | None = field(default=None, repr=False, compare=False)
+    physical_paint_cell: int = 1
     roads: list[Road] = field(default_factory=list)
     height_blend_enabled: bool = False
     height_blend_transition: float = 0.2
@@ -328,6 +361,33 @@ class TerrainMaterial:
     def has_surface_paint(self) -> bool:
         return self.surface_paint is not None and bool(np.any(self.surface_paint != PAINT_AUTO))
 
+    def ensure_physical_paint(self, width: int, height: int) -> bool:
+        cell = max(1, math.ceil(max(width, height) / PAINT_MAX_SIDE))
+        shape = (max(1, math.ceil(height / cell)), max(1, math.ceil(width / cell)))
+        if self.physical_paint is not None and self.physical_paint.shape == shape \
+                and self.physical_paint_cell == cell:
+            return False
+        self.physical_paint = np.full(shape, PAINT_AUTO, np.uint8)
+        self.physical_paint_cell = cell
+        return True
+
+    def has_physical_paint(self) -> bool:
+        return self.physical_paint is not None and bool(np.any(self.physical_paint != PAINT_AUTO))
+
+    def remove_physical_material(self, index: int) -> None:
+        if not 0 <= index < len(self.physical_materials):
+            raise IndexError(index)
+        removed_id = self.physical_materials[index].id
+        del self.physical_materials[index]
+        if self.physical_paint is not None:
+            paint = self.physical_paint
+            hit = paint == index
+            paint[(paint > index) & (paint != PAINT_AUTO)] -= 1
+            paint[hit] = PAINT_AUTO
+        for surface in self.surfaces:
+            if surface.physical_material_id == removed_id:
+                surface.physical_material_id = ""
+
     @staticmethod
     def fitted_levels(heights_m: np.ndarray) -> dict:
         """Water, shore, snow and depth levels (``default_biomes`` arguments) for a height distribution."""
@@ -365,6 +425,17 @@ class TerrainMaterial:
             raise ValueError(f"At most {MAX_SURFACES} surfaces are supported")
         if len(set(names)) != len(names) or not all(n.strip() for n in names):
             raise ValueError("Surface names must be unique and not empty")
+        surface_ids = [surface.id for surface in self.surfaces]
+        if (not all(isinstance(ident, str) and ident.strip() for ident in surface_ids)
+                or len(set(surface_ids)) != len(surface_ids)):
+            raise ValueError("Surface IDs must be unique and not empty")
+        for ident in surface_ids:
+            try:
+                encoded_length = len(ident.encode("utf-8"))
+            except UnicodeEncodeError as exc:
+                raise ValueError("Surface IDs must be valid UTF-8") from exc
+            if encoded_length > 128:
+                raise ValueError("Surface IDs must not exceed 128 UTF-8 bytes")
         if not 1 <= len(self.biomes) <= MAX_BIOMES:
             raise ValueError(f"Use between 1 and {MAX_BIOMES} biomes")
         for road in self.roads:
@@ -391,6 +462,7 @@ class TerrainMaterial:
             for band in bands:
                 if band.fade < 0 or (band.min is not None and band.max is not None and band.max < band.min):
                     raise ValueError(f"Biome '{biome.name}': a band ends below its start or fades negatively")
+        self.validate_physical_materials()
 
     def validate(self) -> None:
         self.validate_rules()
@@ -481,7 +553,10 @@ class TerrainMaterial:
                             raise ValueError(f"Texture file is larger than the {MAX_TEXTURE_BYTES // (1024 * 1024)} MiB limit")
                         digest.update(chunk)
                 hashes[path] = digest.hexdigest()
-        data = {"surfaces": [_surface_dict(s, None) for s in selected],
+        surface_data = [_surface_dict(s, None) for s in selected]
+        for item in surface_data:
+            item.pop("physical_material_id", None)
+        data = {"surfaces": surface_data,
                 "uv_scale": self.uv_scale(tile_size_m, selected), "double_sided": self.double_sided,
                 "files": {path: hashes[path] for path in paths}}
         if surfaces is not None or self.has_advanced_shader_features():
@@ -530,6 +605,15 @@ class TerrainMaterial:
             Image.fromarray(self.surface_paint).save(out, "PNG", optimize=True)
             data["surface_paint"] = {
                 "cell": self.surface_paint_cell, "png": base64.b64encode(out.getvalue()).decode("ascii")}
+        if self.physical_materials:
+            data["physical_materials"] = [asdict(item) for item in self.physical_materials]
+        if self.has_physical_paint():
+            from PIL import Image
+
+            out = io.BytesIO()
+            Image.fromarray(self.physical_paint).save(out, "PNG", optimize=True)
+            data["physical_paint"] = {
+                "cell": self.physical_paint_cell, "png": base64.b64encode(out.getvalue()).decode("ascii")}
         if self.roads:
             data["roads"] = [road.to_dict() for road in self.roads]
         return data
@@ -552,7 +636,7 @@ class TerrainMaterial:
         if raw_surfaces:
             material.surfaces = []
             for raw in raw_surfaces:
-                surface = Surface(name=str(raw["name"]))
+                surface = Surface(name=str(raw["name"]), id=raw.get("id", ""))
                 surface.color = _color(raw.get("color"), surface.color)
                 surface.repeat_m = float(raw.get("repeat_m", surface.repeat_m))
                 surface.albedo = absolute(raw.get("albedo"))
@@ -572,6 +656,10 @@ class TerrainMaterial:
                 if not isinstance(encodings, dict):
                     raise ValueError(f"Surface '{surface.name}': per-map GPU encodings must be an object")
                 surface.gpu_encodings = copy.deepcopy(encodings)
+                physical_material_id = raw.get("physical_material_id", "")
+                if not isinstance(physical_material_id, str):
+                    raise ValueError(f"Surface '{surface.name}': physical material ID must be a string")
+                surface.physical_material_id = physical_material_id
                 material.surfaces.append(surface)
         raw_biomes = [b for b in data.get("biomes", []) if isinstance(b, dict) and b.get("name")]
         if raw_biomes:
@@ -617,6 +705,34 @@ class TerrainMaterial:
                 material.surface_paint = np.array(image.convert("L"), np.uint8)
             material.surface_paint_cell = max(1, int(paint.get("cell", 1)))
         try:
+            raw_physical_materials = data.get("physical_materials", [])
+            if not isinstance(raw_physical_materials, list):
+                raise ValueError("physical_materials must be an array")
+            for raw in raw_physical_materials:
+                if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
+                    raise ValueError("physical material record must have a string name")
+                if (isinstance(raw.get("friction"), bool) or not isinstance(raw.get("friction"), (int, float))
+                        or isinstance(raw.get("restitution"), bool)
+                        or not isinstance(raw.get("restitution"), (int, float))):
+                    raise ValueError("physical material coefficients must be numbers")
+                profile = raw.get("profile", "")
+                ident = raw.get("id", "")
+                if not isinstance(profile, str) or not isinstance(ident, str):
+                    raise ValueError("physical material profile and ID must be strings")
+                material.physical_materials.append(PhysicalMaterial(
+                    name=raw["name"], friction=float(raw["friction"]),
+                    restitution=float(raw["restitution"]), profile=profile, id=ident))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid physical material data: {exc}") from exc
+        paint = data.get("physical_paint")
+        if isinstance(paint, dict) and paint.get("png"):
+            from PIL import Image
+
+            with Image.open(io.BytesIO(base64.b64decode(paint["png"]))) as image:
+                material.physical_paint = np.array(image.convert("L"), np.uint8)
+            material.physical_paint_cell = max(1, int(paint.get("cell", 1)))
+        material.validate_physical_materials()
+        try:
             for road in data.get("roads", []):
                 item = Road(surface=str(road["surface"]), width_m=float(road["width_m"]),
                             shoulder_m=float(road["shoulder_m"]),
@@ -626,6 +742,49 @@ class TerrainMaterial:
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Invalid road data: {exc}") from exc
         return material
+
+    def validate_physical_materials(self) -> None:
+        if len(self.physical_materials) > MAX_PHYSICAL_MATERIALS:
+            raise ValueError(f"At most {MAX_PHYSICAL_MATERIALS} physical materials are supported")
+        names = [item.name for item in self.physical_materials]
+        ids = [item.id for item in self.physical_materials]
+        if (not all(isinstance(name, str) and name.strip() for name in names)
+                or len(set(names)) != len(names)):
+            raise ValueError("Physical material names must be unique and not empty")
+        if (not all(isinstance(ident, str) and ident.strip() for ident in ids)
+                or len(set(ids)) != len(ids)):
+            raise ValueError("Physical material IDs must be unique and not empty")
+        for item in self.physical_materials:
+            try:
+                encoded_length = len(item.id.encode("utf-8"))
+            except UnicodeEncodeError as exc:
+                raise ValueError(f"Physical material '{item.name}': ID must be valid UTF-8") from exc
+            if encoded_length > 128:
+                raise ValueError(f"Physical material '{item.name}': ID must not exceed 128 UTF-8 bytes")
+            if item.profile and item.profile not in PHYSICAL_SURFACE_PROFILES:
+                raise ValueError(f"Physical material '{item.name}': unsupported profile {item.profile!r}")
+            for value, label in ((item.friction, "friction"), (item.restitution, "restitution")):
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or not 0.0 <= value <= 1.0):
+                    raise ValueError(f"Physical material '{item.name}': {label} must be finite and in 0..1")
+        known_ids = set(ids)
+        for surface in self.surfaces:
+            if (not isinstance(surface.physical_material_id, str)
+                    or surface.physical_material_id and surface.physical_material_id not in known_ids):
+                raise ValueError(f"Surface '{surface.name}': physical material ID does not exist")
+        if self.physical_paint is not None:
+            if self.physical_paint.dtype != np.uint8 or self.physical_paint.ndim != 2:
+                raise ValueError("Physical paint must be a two-dimensional uint8 image")
+            if any(dimension > PAINT_MAX_SIDE for dimension in self.physical_paint.shape):
+                raise ValueError(f"Physical paint dimensions cannot exceed {PAINT_MAX_SIDE} cells per side")
+            if (not isinstance(self.physical_paint_cell, int) or isinstance(self.physical_paint_cell, bool)
+                    or self.physical_paint_cell < 1):
+                raise ValueError("Physical paint cell size must be positive")
+            invalid = np.unique(self.physical_paint)
+            invalid = [int(value) for value in invalid
+                       if value != PAINT_AUTO and value >= len(self.physical_materials)]
+            if invalid:
+                raise ValueError(f"Physical paint references missing material indices: {invalid[:8]}")
 
     def has_advanced_shader_features(self) -> bool:
         return (bool(self.unknown_terrain_shader_settings)
@@ -665,6 +824,7 @@ def _surface_dict(surface: Surface, base_dir: str | None) -> dict:
         "parallax_scale": 0.0,
         "emission": "",
         "gpu_encodings": {},
+        "physical_material_id": "",
     }
     for key, default in defaults.items():
         if data[key] == default:
