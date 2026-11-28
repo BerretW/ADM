@@ -30,7 +30,7 @@ from ..core.validate import PARAM_NAME_RE, validate_adm, validate_adm_resolved
 from . import convert as cv
 from .materials import MaterialExporter, ShaderExportError, TextureExportError
 
-GENERATOR = "ADM Tools for Blender 1.24.45 (ADM 1.0)"
+GENERATOR = "ADM Tools for Blender 1.24.46 (ADM 1.0)"
 UNSUPPORTED_EXTENSIONS_PROPERTY = "_adm_unsupported_optional_extensions"
 UNKNOWN_ROOT_EXTENSIONS_PROPERTY = "_adm_unknown_root_extensions"
 UNKNOWN_NODE_EXTENSIONS_PROPERTY = "_adm_unknown_node_extensions"

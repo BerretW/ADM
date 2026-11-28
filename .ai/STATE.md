@@ -552,3 +552,12 @@ remain open. A separate rendered comparison confirms that Macro Color output
 stays unchanged within 2/255 when per-layer Parallax or POM is enabled, while
 both effects visibly alter the base albedo without Macro Color. Physical
 collider assignments remain based on authored data and are unaffected.
+
+The user-requested Blender release build completed on 2026-11-28. The root
+build matrix passed 39 steps and 2,216 cases with 10 documented skips and no
+failures, then bumped ADM Tools from 1.24.45 to 1.24.46 and created
+`dist/adm_tools-1.24.46.zip`. ZIP integrity, manifest presence, and exclusion
+of tests/caches were checked. The package is a verified distribution of the
+current implementation, not evidence that the whole mission is complete:
+M2 comparisons and M4-M14 requirements remain open. See `.ai/TESTS.md` and the
+versioned QA reports under `dist/`.
