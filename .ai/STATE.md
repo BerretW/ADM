@@ -286,9 +286,11 @@ work. Do not treat unavailable platforms or unrun tests as passes.
   weight and coordinate math, golden vectors, and validator coverage.
 - Added the material feature compatibility matrix. World Tile Control Map
   external-mask authoring, source-rule and external-mask seam evidence are
-  implemented; shader-composed final-weight diagnostics remain open. Blender
-  preserves, authors and previews Control Maps, but filtered sampling,
-  mip/border continuity and complete mode conformance remain open.
+  implemented. The height-blend preview renders per-layer shader base/final
+  weights and parallax offsets; the Detailed viewer also displays Control Map
+  final weights after height blending. Blender preserves, authors and previews
+  Control Maps, but mip/border continuity and complete mode conformance remain
+  open.
 - Control Maps intentionally do not feed physical classification. A focused
   export regression changes every external visual mask sample to one surface
   and confirms independently painted two-ID collision assignments and geometry
@@ -462,11 +464,14 @@ cross-reader filtering, and parallax-at-border remain open.
 
 Source-rule seams now also have a VTK rendered regression. It builds adjacent
 tiles with a softened painted transition and verifies median RGB discontinuity
-below 8/255 and 95th percentile below 20/255 at magnified and minified views.
+below 8/255 and 95th percentile below 20/255 at magnified views. At high
+minification, it compares the seam jump with the neighboring local gradient so
+the intended painted transition is not misclassified as a seam.
 The complete World Tile test suite passes 167 tests with five pre-existing
 PyVista future warnings. Blender parity, seam behavior under per-layer
-parallax/mip selection, and shader-composed final-weight diagnostics remain
-open. No release build or package was produced.
+parallax/mip selection remain open. Per-layer shader base/final/offset
+diagnostics and the combined Control Map/final-weight view are implemented and
+verified. No release build or package was produced.
 
 World Tile now authors Macro Color image paths, projection, blend mode,
 strength, per-layer influence, scale, offset, and shared-world origin in the
@@ -525,14 +530,14 @@ after the successful test summary during interpreter shutdown. Physical
 collider classification remains independent of Control Maps and view-dependent
 shader effects; no release build or package was produced.
 
-Control Map minification now checks the same linear 0.5/0.5 red/green average
-in World Tile VTK and Blender Cycles. Blender renders 0.499744/0.500256; the
-World Tile test decodes its sRGB framebuffer before comparing against the
-linear vector. These are separate render fixtures, so same-asset cross-reader
-filter parity remains open. Blender's current preview also lacks POM and does
-not expose explicit mip-level selection; per-layer parallax ordering and
-explicit mip-selection evidence are blocked until a supported preview path is
-available.
+Control Map minification now uses the same 256-by-256 linear red/green checker
+and 32-by-32 plane/UV sampling grid in World Tile VTK and Blender Cycles. Every
+pixel is checked against the linear 0.5/0.5 vector at 0.02 tolerance. Blender's
+mean is 0.499749/0.500251; the World Tile test decodes its sRGB framebuffer.
+Direct raw output-array comparison and separately tiled mip gutters remain
+open. Blender's current preview also lacks POM and does not expose explicit
+mip-level selection; per-layer parallax ordering and explicit mip-selection
+evidence are blocked until a supported preview path is available.
 
 The World Tile shared-world Macro Color seam regression initially measured an
 81/255 median edge jump. Each tile is a separate preview actor, so the preview

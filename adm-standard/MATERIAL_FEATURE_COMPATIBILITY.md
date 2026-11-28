@@ -20,7 +20,7 @@ The status labels describe repository evidence:
 
 | Feature | ADM contract | Reference math and validation | World Tile | Blender | Collision classification |
 |---|---|---|---|---|---|
-| Terrain Control Maps | `ADM_terrain_control_map_v1@1.0.0` specified for registered four-layer profiles | Six weight modes, coordinate transforms, profile/channel/reference validation, and golden vectors; VTK and Cycles both test a minified red/green checker against the linear 0.5/0.5 average, but use separate render fixtures | Partial: bounded source-rule export and external RGBA mask import, stable-ID channel assignment, AWTP v14 persistence, export, and Detailed preview; external-mask and source-rule seam pixels are tested in VTK at magnified/minified scales, while shader-composed weights remain open | Partial: import/export and save/reload, authoring controls, Cycles tests for all six modes, UV0/UV1, offsets, translated world positions, minified filtered weights, and an adjacent-mesh world-XZ seam; direct same-asset filtering parity, explicit mip selection, and per-layer POM ordering remain open | External masks affect visual weights only; export continues to assign collision materials from authored physical data and manual paint |
+| Terrain Control Maps | `ADM_terrain_control_map_v1@1.0.0` specified for registered four-layer profiles | Six weight modes, coordinate transforms, profile/channel/reference validation, and golden vectors; VTK and Cycles compare every pixel from the same 32-by-32 plane/UV grid against a shared linear vector at 0.02 tolerance; raw backend-array comparison and gutter coverage remain open | Partial: bounded source-rule export and external RGBA mask import, stable-ID channel assignment, AWTP v14 persistence, export, and Detailed preview; external-mask and source-rule seams are tested at magnified and high-minification scales. The Detailed viewer renders selected final shader weights after Control Map sampling and height blending; parallax-at-border remains open | Partial: import/export and save/reload, authoring controls, Cycles tests for all six modes, UV0/UV1, offsets, translated world positions, per-pixel minification, and an adjacent-mesh world-XZ seam; raw backend-array comparison, separately tiled mip gutters, explicit mip selection, and per-layer POM ordering remain open | External masks affect visual weights only; export continues to assign collision materials from authored physical data and manual paint |
 | Terrain Macro Color | `ADM_terrain_macro_color_v1@1.0.0` specified for registered four-layer profiles | sRGB color/coordinate reference math, profile/image/color-space/sampler validation, and independent vectors; renderer conformance remains incomplete | Partial: AWTP v15 path/settings, image authoring, sRGB validation, required export with four stable local IDs and portable fallback, and local/shared VTK preview for all blend modes; a shared-world map renders across adjacent tile actors at magnified/minified views with measured edge thresholds, and Macro Color stays fixed when per-layer Parallax/POM visibly changes the base albedo; exact mip selection, separate-image gutters, and cross-reader parity remain open | Partial: required import/export, authoring controls, sRGB channel-packed preview image, Cycles tests for all blend modes and local/shared projections, plus save/reload; sampler, tile-edge mip/gutter and cross-reader conformance remain open | Changes rendered albedo only; stable authored weights and physical collider assignments remain independent |
 | Terrain Macro Normal | `ADM_terrain_macro_normal_v1@1.0.0` specified for registered four-layer profiles | BC5 reconstruction, RNM, tangent-frame and coordinate reference math; profile/image/format/sampler validation and independent vectors | Partial: AWTP v16 authoring, BC5 UNORM export plus reconstructed RGB fallback, compatible source-byte preservation, preset v7 packaging, and local/shared RNM preview; parallax independence and unchanged collider assignments are tested. Shared-world Macro Normal renders continuously across adjacent tiles at magnified and minified views; filtered mip/gutter and cross-reader fallback equivalence remain open | Partial: shared-world required import/export preserves exact BC5 primary bytes and reconstructed RGB fallback; Cycles verifies mirrored UV, zero scale components, and degenerate UV fallback on aligned and rotated surfaces. Required LOCAL_UV import stays guarded because Blender's native degenerate-frame fallback differs near world +X; mip/filter, tile continuity, and cross-reader parity remain open | Independent of physical classification |
 | Anti-tiling and stochastic sampling | Not defined | Not implemented | Not implemented | Not implemented | Independent of visual effects |
@@ -44,20 +44,23 @@ modes.
 
 The Control Map contract specifies derivative-based mip selection and shared
 border behavior. The reference math evaluates weights and coordinates at a
-sample. Separate VTK and Cycles renders now match a linear 0.5/0.5 checker
-average under minification, but do not use the same asset and therefore do not
-establish direct cross-reader filtering parity. Explicit Blender mip
-selection, separately tiled image gutters, and per-layer parallax ordering
-remain open. World Tile's opt-in exporter samples the original
+sample. VTK and Cycles use the same checker image, plane dimensions, UV scale,
+and 32-by-32 sample grid. Each pixel matches the linear 0.5/0.5 vector within
+0.02 under minification. The test does not yet compare raw backend arrays or
+separately tiled mip gutters.
+Explicit Blender mip selection, separately tiled image gutters, and per-layer
+parallax ordering remain open. World Tile's opt-in exporter samples the original
 heightmap and current surface rules into bounded per-palette RGBA maps. Its
 detailed preview samples those maps before per-layer parallax and height
 blending. World Tile also imports bounded external RGBA masks, stores their
 path and four stable channel IDs in AWTP v14, and uses the resampled weights in
 export and its Detailed preview. The image covers the heightmap grid; R, G, B,
 and A map to distinct stable surface IDs. VTK render tests measure external-
-mask and source-rule seam pixels at magnified and minified scales. Shader-
-composed final weights, seam behavior with per-layer parallax/mip selection,
-and cross-reader seam/mip parity remain open.
+mask and source-rule seam pixels at magnified and high-minification scales.
+The Detailed viewer displays selected final shader weights after Control Map
+sampling and height blending. Seam behavior with per-layer parallax/mip
+selection, separately tiled mip gutters, and raw cross-reader output parity
+remain open.
 Blender imports and preserves required Control Maps, exposes authoring
 properties, and previews supported modes. Its render and sampler conformance
 remains incomplete; unsupported axis-specific wrap settings fall back to

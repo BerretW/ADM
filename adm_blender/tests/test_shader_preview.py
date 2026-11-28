@@ -66,8 +66,8 @@ def bake(obj, mat, kind):
     return px
 
 
-def bake_socket(obj, mat, socket):
-    target = bpy.data.images.new("bake_socket", RES, RES, float_buffer=True)
+def bake_socket(obj, mat, socket, resolution=RES):
+    target = bpy.data.images.new("bake_socket", resolution, resolution, float_buffer=True)
     target.colorspace_settings.name = "Non-Color"
     nodes = mat.node_tree.nodes
     out = next(n for n in nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output)
@@ -85,7 +85,7 @@ def bake_socket(obj, mat, socket):
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.bake(type="EMIT", margin=0)
-    px = np.array(target.pixels[:], dtype=np.float32).reshape(RES, RES, 4)
+    px = np.array(target.pixels[:], dtype=np.float32).reshape(resolution, resolution, 4)
     for link in list(surface.links):
         mat.node_tree.links.remove(link)
     for source in original:
@@ -302,10 +302,15 @@ def main():
     control_mat.adm.control_map_image = filtering_image
     M.refresh_shader_preview(control_mat)
     bsdf = preview_bsdf(control_mat, M)
-    minified = bake_socket(plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket)[8, 8, :3]
-    check(close(minified, CONTROL_MAP_FILTERING["expectedLinearAverage"][:3],
-                tol=CONTROL_MAP_FILTERING["tolerance"]),
-          f"TERRAIN_4: minified linear Control Map resolves to averaged weights ({minified})")
+    filtering_resolution = CONTROL_MAP_FILTERING["renderResolution"]
+    minified = bake_socket(
+        plane, control_mat, bsdf.inputs["Base Color"].links[0].from_socket,
+        resolution=filtering_resolution,
+    )[..., :3]
+    check(np.all(np.abs(minified - CONTROL_MAP_FILTERING["expectedLinearAverage"][:3])
+                 <= CONTROL_MAP_FILTERING["tolerance"]),
+          f"TERRAIN_4: every minified linear Control Map pixel matches the shared vector "
+          f"({minified.mean(axis=(0, 1))})")
 
     control_mat.adm.control_map_mapping = "WORLD_PLANAR_XZ"
     control_mat.adm.control_map_origin = (0.0, 0.0)

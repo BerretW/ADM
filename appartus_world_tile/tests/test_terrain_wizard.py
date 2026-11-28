@@ -150,6 +150,16 @@ raise SystemExit(app.exec())
             self.assertTrue(np.all(pixels[..., 2] == 255))
             self.assertTrue(np.all(pixels[..., (0, 1, 3)] == 0))
 
+    def test_final_weight_preview_mode_exposes_local_layer_selector(self):
+        from awt.gui.viewer3d import FINAL_WEIGHT_MODE, Viewer3D
+
+        viewer = Viewer3D()
+        self.addCleanup(viewer.shutdown)
+        self.assertEqual(viewer.color.itemText(FINAL_WEIGHT_MODE), "Shader final layer weight")
+        viewer.color.setCurrentIndex(FINAL_WEIGHT_MODE)
+        self.assertFalse(viewer.weight_channel.isHidden())
+        self.assertIn("local palette layer", viewer.weight_channel.toolTip())
+
     def test_external_control_map_render_is_continuous_across_adjacent_tiles(self):
         import pyvista as pv
         from PIL import Image
@@ -166,7 +176,7 @@ raise SystemExit(app.exec())
             mask[..., 1] = 255 - mask[..., 0]
             Image.fromarray(mask).save(mask_path)
 
-            material = TerrainMaterial(height_blend_enabled=False)
+            material = TerrainMaterial(height_blend_enabled=True)
             material.surfaces[0].color = [255, 0, 0]
             material.surfaces[1].color = [0, 0, 255]
             material.surfaces[2].color = [0, 0, 0]
@@ -189,6 +199,7 @@ raise SystemExit(app.exec())
             preview = SimpleNamespace(
                 _manifest=manifest, _material=material, _control_map_resolution=32,
                 _data=data, plotter=plotter, wire=SimpleNamespace(isChecked=lambda: False),
+                weight_channel=SimpleNamespace(currentIndex=lambda: 0),
             )
             Viewer3D._draw_detailed(preview, pv)
             plotter.show(auto_close=False)
@@ -208,7 +219,7 @@ raise SystemExit(app.exec())
             plotter.camera_position = [
                 (center_x, center_y, 100), (center_x, center_y, 0), (0, 1, 0)]
 
-            for scale in (18, 32):
+            for scale in (18, 32, 256):
                 camera.parallel_scale = scale
                 plotter.render()
                 pixels = plotter.screenshot(return_img=True).astype(np.int16)
@@ -220,6 +231,30 @@ raise SystemExit(app.exec())
                                 f"Rendered Control Map seam differs at scale {scale}: {differences}")
                 self.assertLess(float(np.percentile(differences, 95)), 20,
                                 f"Rendered seam outliers at scale {scale}: {differences}")
+
+            final_plotter = pv.Plotter(off_screen=True, window_size=(480, 240))
+            self.addCleanup(final_plotter.close)
+            final_plotter.set_background("black")
+            final_preview = SimpleNamespace(
+                _manifest=manifest, _material=material, _control_map_resolution=32,
+                _data=data, plotter=final_plotter, wire=SimpleNamespace(isChecked=lambda: False),
+                weight_channel=SimpleNamespace(currentIndex=lambda: 0),
+            )
+            Viewer3D._draw_detailed(final_preview, pv, final_weight_diagnostic=True)
+            final_plotter.camera.parallel_projection = True
+            final_plotter.camera_position = [
+                (center_x, center_y, 100), (center_x, center_y, 0), (0, 1, 0)]
+            final_plotter.camera.parallel_scale = 18
+            final_plotter.show(auto_close=False)
+            final_weights = final_plotter.screenshot(return_img=True).astype(np.int16)
+            left = final_weights[120, 100, :3]
+            right = final_weights[120, 380, :3]
+            self.assertTrue(np.max(left) - np.min(left) < 3, f"Expected grayscale weight, got {left}")
+            self.assertTrue(np.max(right) - np.min(right) < 3, f"Expected grayscale weight, got {right}")
+            self.assertGreater(right[0], left[0] + 50,
+                               f"Final shader weight must follow the external Control Map: "
+                               f"{left} -> {right}; image max={final_weights.max()}, "
+                               f"center={final_weights[120, 240, :3]}")
 
     def test_source_rule_control_map_render_is_continuous_across_adjacent_tiles(self):
         import pyvista as pv
@@ -273,7 +308,7 @@ raise SystemExit(app.exec())
             plotter.camera_position = [
                 (center_x, center_y, 100), (center_x, center_y, 0), (0, 1, 0)]
 
-            for scale in (18, 32):
+            for scale in (18, 32, 256):
                 camera.parallel_scale = scale
                 plotter.render()
                 pixels = plotter.screenshot(return_img=True).astype(np.int16)
@@ -281,10 +316,22 @@ raise SystemExit(app.exec())
                 left = pixels[30:-30, seam_column - 1, :3]
                 right = pixels[30:-30, seam_column + 1, :3]
                 differences = np.max(np.abs(left - right), axis=1)
-                self.assertLess(float(np.median(differences)), 8,
-                                f"Source-rule seam differs at scale {scale}: {differences}")
-                self.assertLess(float(np.percentile(differences, 95)), 20,
-                                f"Source-rule seam outliers at scale {scale}: {differences}")
+                if scale == 256:
+                    local = pixels[30:-30, seam_column - 4:seam_column + 5, :3]
+                    local_differences = np.max(np.abs(np.diff(local, axis=1)), axis=2)
+                    seam_jump = local_differences[:, 3]
+                    surrounding = np.concatenate(
+                        (local_differences[:, :3], local_differences[:, 4:]), axis=1)
+                    self.assertLessEqual(
+                        float(np.percentile(seam_jump, 95)),
+                        float(np.percentile(surrounding, 95)) + 2,
+                        f"Minified source-rule seam adds a discontinuity at scale {scale}: "
+                        f"seam={seam_jump}, nearby={surrounding}")
+                else:
+                    self.assertLess(float(np.median(differences)), 8,
+                                    f"Source-rule seam differs at scale {scale}: {differences}")
+                    self.assertLess(float(np.percentile(differences, 95)), 20,
+                                    f"Source-rule seam outliers at scale {scale}: {differences}")
 
     def test_biome_noise_slider_updates_and_saves_project(self):
         window = MainWindow()
@@ -1501,7 +1548,7 @@ raise SystemExit(app.exec())
         filtering = json.loads(vector_path.read_text(encoding="utf-8"))
         y, x = np.indices((filtering["height"], filtering["width"]))
         red = (((x + y) % 2) * 255).astype(np.uint8)
-        control = np.zeros((256, 256, 4), dtype=np.uint8)
+        control = np.zeros((filtering["height"], filtering["width"], 4), dtype=np.uint8)
         control[..., 0] = red
         control[..., 1] = 255 - red
 
@@ -1530,22 +1577,27 @@ raise SystemExit(app.exec())
         plotter.show(auto_close=False)
 
         minified = plotter.screenshot(return_img=True).astype(np.float32)
-        plotter.camera.parallel_scale = 1
+        plotter.camera.parallel_scale = 0.25
         plotter.render()
         magnified = plotter.screenshot(return_img=True).astype(np.float32)
-        minified_std = float(np.std(minified[48:80, 48:80, 0]))
+        render_resolution = filtering["renderResolution"]
+        start = (128 - render_resolution) // 2
+        end = start + render_resolution
+        minified_pixels = minified[start:end, start:end, :2]
+        minified_std = float(np.std(minified_pixels[..., 0]))
         magnified_std = float(np.std(magnified[16:-16, 16:-16, 0]))
         self.assertLess(minified_std, 5, f"minified output varied by {minified_std}")
-        display_weights = minified[48:80, 48:80, :2] / 255.0
+        display_weights = minified_pixels / 255.0
         minified_linear = np.where(
             display_weights <= 0.04045,
             display_weights / 12.92,
             ((display_weights + 0.055) / 1.055) ** 2.4,
         )
-        minified_mean = np.mean(minified_linear, axis=(0, 1))
         np.testing.assert_allclose(
-            minified_mean, filtering["expectedLinearAverage"][:2], atol=filtering["tolerance"],
-            err_msg="Minified red/green Control Map channels must match the shared linear 0.5/0.5 vector")
+            minified_linear,
+            np.broadcast_to(filtering["expectedLinearAverage"][:2], minified_linear.shape),
+            atol=filtering["tolerance"],
+            err_msg="Every minified VTK pixel must match the shared linear Control Map vector")
         self.assertGreater(magnified_std, 20, f"magnified output varied by {magnified_std}")
 
     def test_control_map_weights_are_sampled_before_view_dependent_parallax(self):

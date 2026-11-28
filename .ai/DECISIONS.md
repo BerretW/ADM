@@ -201,20 +201,25 @@ confirmed.
   export, and an opt-in Detailed preview that samples maps before per-layer
   parallax and height blending. External image bytes remain external to the
   project file. VTK tests cover source-rule and external-mask seam pixels at
-  magnified and minified scales, and generated maps use clamp-to-edge sampling.
-  Manual map painting, combined/final weight diagnostics, and parallax behavior
-  at tile borders remain open.
+  magnified and high-minification scales, and generated maps use clamp-to-edge
+  sampling. The high-minification source-rule test compares the seam jump with
+  the adjacent local gradient to avoid mistaking a real painted transition for
+  a seam.
+  The height-blend preview renders and tests per-layer shader base/final weights
+  and parallax offsets. The Detailed viewer also renders a selected final
+  shader-weight channel after Control Map sampling and height blending. Manual
+  map painting and parallax behavior at tile borders remain open.
   Blender imports/exports required Control Maps, exposes authoring settings and
   stable layer IDs, and has Cycles pixel tests for all six modes with UV
   sampling, UV0/UV1 selection, coordinate offsets, and a world-planar
   XZ/origin sample. Cycles also verifies translated world positions, a
   compensating floating-origin shift, filtered minification, and an adjacent
-  shared-world mesh seam. World Tile VTK and Blender Cycles now both check the
-  linear 0.5/0.5 result for a minified red/green checker; Blender renders
-  0.499744/0.500256 after filtering. The fixtures are not the same asset, so
-  this does not establish direct cross-reader parity. Explicit Blender mip
-  selection and per-layer POM ordering remain open because Blender's current
-  preview does not expose mip levels or implement POM.
+  shared-world mesh seam. World Tile VTK and Blender Cycles now sample the same
+  256-by-256 linear red/green checker on a 32-by-32 plane/UV grid. Both compare
+  every pixel against the linear 0.5/0.5 vector at 0.02 tolerance; Blender's
+  mean is 0.499749/0.500251. The renderer outputs are not yet compared directly.
+  Explicit Blender mip selection and per-layer POM ordering remain open because
+  Blender's current preview does not expose mip levels or implement POM.
   The wider M2 comparison of palette reduction, boundary refinement, Control
   Maps, wider profiles, and arrays remains open.
 

@@ -68,7 +68,10 @@ def evaluate_coordinates(vector):
 class TerrainControlMapVectors(unittest.TestCase):
     def test_shared_filtering_checker_vector_is_balanced(self):
         self.assertEqual(FILTERING["extension"], VECTORS["extension"])
+        self.assertEqual(FILTERING["pattern"], "alternating-red-green-single-texel")
         width, height = FILTERING["width"], FILTERING["height"]
+        self.assertIsInstance(FILTERING["renderResolution"], int)
+        self.assertGreaterEqual(FILTERING["renderResolution"], 2)
         self.assertGreaterEqual(width, 2)
         self.assertGreaterEqual(height, 2)
         self.assertEqual(width % 2, 0)

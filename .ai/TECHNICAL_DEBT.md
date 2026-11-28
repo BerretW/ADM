@@ -24,11 +24,13 @@ severity, cause, workaround, proposed fix, and source/test evidence.
 - **Workaround:** When an imported sampler uses different wrap modes by axis,
   Blender warns and previews normalized vertex weights instead. Treat current
   renderer support as partial.
-- **Next step:** Complete shader-composed final-weight diagnostics and verify
-  explicit Blender mip selection and same-asset cross-reader sampler/filter
-  parity. World Tile VTK and Blender Cycles now both check the 0.5/0.5 average
-  for a minified red/green checker, but use separate render fixtures. The
-  Blender preview has no POM implementation, so per-layer parallax ordering
+- **Next step:** Directly compare raw renderer output arrays and verify
+  separately tiled mip gutters. The Detailed viewer now shows selected final
+  shader weights after Control Map sampling and height blending. World Tile VTK and Blender Cycles now
+  consume the same 256-by-256 checker texture on a matched 32-by-32 plane/UV
+  sample grid. Every pixel matches the shared 0.5/0.5 vector within 0.02;
+  direct backend-array parity is not yet measured.
+  The Blender preview has no POM implementation, so per-layer parallax ordering
   cannot yet be rendered there; do not claim parity until a supported path
   exists.
   Keep collider classification based on authored physical weights and stable

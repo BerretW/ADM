@@ -5,6 +5,7 @@
   "height": 256,
   "pattern": "alternating-red-green-single-texel",
   "uvScale": [1.0, 1.0],
+  "renderResolution": 32,
   "expectedLinearAverage": [0.5, 0.5, 0.0, 0.0],
-  "tolerance": 0.08
+  "tolerance": 0.02
 }

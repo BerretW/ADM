@@ -20,11 +20,12 @@ DETAIL_TEXTURE_BUDGET = 512 * 1024 * 1024
 COLLISION_PREVIEW_TRIANGLE_BUDGET = 250_000
 COLLISION_PREVIEW_FILE_BUDGET = 256 * 1024 * 1024
 COLOR_MODES = ("Height", "Surfaces (vertex layers)", "Tiles", "Material", "Detailed material",
-               "COLOR_1 palette channel", "Control Map channel")
+               "COLOR_1 palette channel", "Control Map channel", "Shader final layer weight")
 MATERIAL_MODE = 3
 DETAILED_MATERIAL_MODE = 4
 COLOR1_MODE = 5
 CONTROL_MAP_MODE = 6
+FINAL_WEIGHT_MODE = 7
 
 
 def triangle_count(manifest: dict, tiles, lod: int) -> int:
@@ -293,8 +294,8 @@ class Viewer3D(QWidget):
                               "shader, including height blending and parallax.")
         self.weight_channel = QComboBox()
         self.weight_channel.addItems(("R", "G", "B", "A"))
-        self.weight_channel.setToolTip("COLOR_1 channels refer to local palette slots, which can differ "
-                                       "between primitives.")
+        self.weight_channel.setToolTip("Select a local palette slot; slots can refer to different "
+                                       "surfaces across primitives.")
         self.weight_channel.setVisible(False)
         self.exaggeration = QDoubleSpinBox()
         self.exaggeration.setRange(0.1, 20.0)
@@ -398,7 +399,8 @@ class Viewer3D(QWidget):
         self._material = material
         self._baked_key = None
         self._bake_generation += 1
-        if self.color.currentIndex() in (MATERIAL_MODE, DETAILED_MATERIAL_MODE, CONTROL_MAP_MODE) and self._data:
+        if self.color.currentIndex() in (
+                MATERIAL_MODE, DETAILED_MATERIAL_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE) and self._data:
             self._redraw()
         elif self.collision.isChecked() and self._manifest:
             self._reload()
@@ -406,7 +408,8 @@ class Viewer3D(QWidget):
     def set_control_map_resolution(self, resolution: int) -> None:
         """Set the optional source-rule map resolution used by detailed previews."""
         self._control_map_resolution = resolution
-        if self.color.currentIndex() in (DETAILED_MATERIAL_MODE, CONTROL_MAP_MODE) and self._data:
+        if self.color.currentIndex() in (
+                DETAILED_MATERIAL_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE) and self._data:
             self._redraw()
 
     def shutdown(self) -> None:
@@ -421,8 +424,14 @@ class Viewer3D(QWidget):
     # ------------------------------------------------------------ loading
     def _color_changed(self) -> None:
         mode = self.color.currentIndex()
-        self.weight_channel.setVisible(mode in (COLOR1_MODE, CONTROL_MAP_MODE))
-        if mode in (DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE) and "material_tiles" not in self._data:
+        self.weight_channel.setVisible(mode in (COLOR1_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE))
+        if mode == FINAL_WEIGHT_MODE:
+            self.weight_channel.setToolTip("Select the local palette layer whose final shader weight is shown.")
+        else:
+            self.weight_channel.setToolTip("Select a local palette slot; slots can refer to different "
+                                           "surfaces across primitives.")
+        if mode in (DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE) \
+                and "material_tiles" not in self._data:
             self._reload()
         else:
             self._redraw()
@@ -452,7 +461,8 @@ class Viewer3D(QWidget):
                 return
         else:
             count = triangle_count(self._manifest, self._tiles, lod)
-        detailed = self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE)
+        detailed = self.color.currentIndex() in (
+            DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE)
         budget = (COLLISION_PREVIEW_TRIANGLE_BUDGET if collision else
                   DETAIL_TRIANGLE_BUDGET if detailed else TRIANGLE_BUDGET)
         if count > budget:
@@ -477,7 +487,7 @@ class Viewer3D(QWidget):
             manifest, tiles, lod, detailed = self._loader._args
             if (manifest is not self._manifest or tiles != self._tiles or lod != self.lod.currentIndex()
                     or detailed != (self.color.currentIndex() in (
-                        DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE))
+                        DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE))
                     or self._loader._collision != self.collision.isChecked()
                     or self._loader._material is not self._material):
                 self._pending = True
@@ -491,7 +501,8 @@ class Viewer3D(QWidget):
         if first:
             self._reset_camera()
         if (data and "physical_colors" not in data
-                and self.color.currentIndex() not in (DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE)):
+                and self.color.currentIndex() not in (
+                    DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE)):
             self.status.setText(f"{len(self._tiles)} tiles, LOD {self.lod.currentIndex()}: "
                                 f"{len(data['faces']):,} triangles, {len(data['points']):,} vertices. "
                                 "Left drag rotates, right drag or wheel zooms, middle drag pans.")
@@ -524,7 +535,8 @@ class Viewer3D(QWidget):
                 "Move the pointer over a face for surface and physical-material details.")
             self.plotter.render()
             return
-        if self.color.currentIndex() in (DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE):
+        if self.color.currentIndex() in (
+                DETAILED_MATERIAL_MODE, COLOR1_MODE, CONTROL_MAP_MODE, FINAL_WEIGHT_MODE):
             if "material_tiles" not in self._data:
                 self._reload()
                 return
@@ -533,10 +545,13 @@ class Viewer3D(QWidget):
                     actors, conflicts = self._draw_color1(pv)
                 else:
                     actors, conflicts = self._draw_detailed(
-                        pv, control_map_diagnostic=self.color.currentIndex() == CONTROL_MAP_MODE)
+                        pv,
+                        control_map_diagnostic=self.color.currentIndex() == CONTROL_MAP_MODE,
+                        final_weight_diagnostic=self.color.currentIndex() == FINAL_WEIGHT_MODE)
             except (OSError, ValueError) as exc:
                 label = ("COLOR_1 preview" if self.color.currentIndex() == COLOR1_MODE else
                          "Control Map preview" if self.color.currentIndex() == CONTROL_MAP_MODE else
+                         "final weight preview" if self.color.currentIndex() == FINAL_WEIGHT_MODE else
                          "detailed material")
                 self.status.setText(f"Could not configure {label}: {exc}")
                 self.plotter.render()
@@ -550,6 +565,9 @@ class Viewer3D(QWidget):
                 source_kind = "external-mask" if self._material.external_control_map_path else "source-rule"
                 message = (f"Control Map shows the selected {source_kind} channel in local palette order; "
                            "unused channels remain zero.")
+            elif self.color.currentIndex() == FINAL_WEIGHT_MODE:
+                message = ("Shader final weight shows the selected local palette layer after Control Map "
+                           "sampling and height blending; collision assignments remain independent.")
             elif self._control_map_resolution:
                 source_kind = "external-mask" if self._material.external_control_map_path else "source-rule"
                 message = (f"Detailed material uses {self._control_map_resolution}px {source_kind} Control Maps "
@@ -617,7 +635,7 @@ class Viewer3D(QWidget):
             raise
         return actors, conflicts
 
-    def _draw_detailed(self, pv, control_map_diagnostic=False):
+    def _draw_detailed(self, pv, control_map_diagnostic=False, final_weight_diagnostic=False):
         from vtkmodules.vtkRenderingCore import vtkPolyDataMapper
         from ..adm_export import _slots, build_surfaces, color1
         from .material_panel import _mesh_with_tangents
@@ -629,6 +647,8 @@ class Viewer3D(QWidget):
         control_source = None
         if control_map_diagnostic and not self._control_map_resolution:
             raise ValueError("Set a nonzero Control Map resolution to preview its channels")
+        if final_weight_diagnostic and not self._control_map_resolution:
+            raise ValueError("Set a nonzero Control Map resolution to preview final shader weights")
         if self._control_map_resolution:
             from ..adm_export import _control_map_source
 
@@ -670,6 +690,13 @@ class Viewer3D(QWidget):
                     slots = _slots(mask)
                     mesh.point_data["layer_weights"] = color1(effective_weights[keep], slots).astype(np.float32) / 255
                     mesh = _mesh_with_tangents(mesh, pv)
+                    selected_channel = self.weight_channel.currentIndex() if final_weight_diagnostic else -1
+                    if final_weight_diagnostic and selected_channel >= len(slots):
+                        mesh.point_data["final_weight"] = np.zeros(len(mesh.points), dtype=np.float32)
+                        actors.append(self.plotter.add_mesh(
+                            mesh, scalars="final_weight", cmap="gray", clim=(0, 1),
+                            lighting=False, show_scalar_bar=False, render=False))
+                        continue
                     control_map_pixels = None
                     if control_source is not None:
                         from ..adm_export import _tile_source_bounds
@@ -716,8 +743,9 @@ class Viewer3D(QWidget):
                         texture_cache=texture_cache, texture_budget_bytes=DETAIL_TEXTURE_BUDGET,
                         control_map_pixels=control_map_pixels,
                         asset_position_attribute=asset_position_attribute,
-                        diagnostic=("control", self.weight_channel.currentIndex())
-                        if control_map_diagnostic else None)
+                        diagnostic=(("control", self.weight_channel.currentIndex())
+                                    if control_map_diagnostic else
+                                    ("final", selected_channel) if final_weight_diagnostic else None))
         except (OSError, ValueError):
             for actor in actors:
                 self.plotter.remove_actor(actor, render=False)

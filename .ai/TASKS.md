@@ -64,9 +64,14 @@ design, metadata-only support, or skipped test does not count as completion.
 - [x] World Tile VTK: verify sampled Control Map weights stay fixed before
       view-dependent per-layer parallax while parallax offsets change with view.
 - [x] Compare the minified balanced red/green Control Map against the shared
-      0.5/0.5 average in World Tile VTK and Blender Cycles.
-- [ ] Control Maps: compare both readers on the same asset and texture,
-      including mip/filter and separately tiled border-gutter seams.
+      0.5/0.5 average in World Tile VTK and Blender Cycles using one checker
+      fixture, UV scale, and 0.02 tolerance.
+- [x] Control Maps: compare every minified sample from both readers against the
+      shared 0.5/0.5 vector on a matched 32-by-32 plane/UV grid at 0.02 tolerance.
+- [ ] Control Maps: directly compare raw VTK and Cycles pixel arrays in one
+      conformance harness.
+- [ ] Control Maps: validate separately tiled border and mip-gutter seams
+      across the full filter footprint.
 - [ ] Blender Control Maps: verify per-layer parallax ordering when a supported
       Blender preview path can render that effect; Blender's current preview
       does not implement POM.
@@ -148,11 +153,16 @@ design, metadata-only support, or skipped test does not count as completion.
 - [x] Aggregate the exported `COLOR_1` vertex-input means by stable surface ID,
       tile, and LOD; label them as input data, not shader-composed results.
 - [x] Render adjacent external-mask Control Map tiles at magnified and
-      minified scales and measure the shared-edge pixel difference.
-- [x] Render adjacent source-rule Control Map tiles at magnified and minified
-      scales and measure the shared-edge pixel difference.
-- [ ] Diagnose shader-composed final weights and verify mip/border continuity,
-      parallax at tile edges, and cross-reader output.
+      high-minification scales and measure the shared-edge pixel difference.
+- [x] Render adjacent source-rule Control Map tiles at magnified and
+      high-minification scales; compare the seam jump with its local gradient.
+- [x] Diagnose shader base/final per-layer weights and parallax offsets in the
+      height-blend preview; verify rendered values and configuration failures.
+- [x] Integrate Control Map samples into final shader-weight diagnostics after
+      height blending in the Detailed preview; verify the rendered gradient.
+- [ ] Verify separately tiled Control Map mip gutters across the full filter
+      footprint.
+- [ ] Verify per-layer parallax continuity at tile edges.
 - [x] Macro Color: author/import color maps; persist source path and settings in
       AWTP v15, fingerprint content, and preserve PNG fallbacks and compatible
       GPU source bytes.
@@ -217,8 +227,9 @@ design, metadata-only support, or skipped test does not count as completion.
       stability.
 - [x] Blender Control Maps: render filtered minification and shared world-XZ
       samples across adjacent tile meshes.
-- [ ] Blender Control Maps: compare filtered samples with World Tile on the
-      same asset and texture, including shared tile borders and mip gutters.
+- [x] Blender Control Maps: use the common linear checker fixture, UV scale,
+      32-by-32 plane sample grid, and per-pixel 0.02 tolerance also exercised
+      by World Tile VTK.
 - [ ] Blender Control Maps: verify explicit mip selection and per-layer POM
       ordering only after a supported Blender preview path can render them.
 - [x] Blender Macro Color: preserve metadata, authoring settings and nodes.
